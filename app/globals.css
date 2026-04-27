@@ -1,26 +1,168 @@
 @import "tailwindcss";
 
+/* Default theme variables — overridden at runtime by ThemeProvider */
 :root {
-  --background: #ffffff;
-  --foreground: #171717;
+  --bg-primary:    #1a1a1a;
+  --bg-secondary:  #222222;
+  --bg-tertiary:   #2a2a2a;
+  --text-primary:  #e8e8e8;
+  --text-secondary:#aaaaaa;
+  --text-muted:    #666666;
+  --border:        rgba(255,255,255,0.08);
+  --accent:        #3b82f6;
+  --sidebar-bg:    rgba(30,30,30,0.85);
+  --scrollbar-thumb:       rgba(255,255,255,0.15);
+  --scrollbar-thumb-hover: rgba(255,255,255,0.25);
+  --cm-h1:  #f0f0f0;
+  --cm-h2:  #e8e8e8;
+  --cm-h3:  #e0e0e0;
+  --cm-strong:     #f0f0f0;
+  --cm-em:         #d4d4d4;
+  --cm-formatting: #555555;
+  --cm-code-bg:    rgba(255,255,255,0.08);
+  --cm-code-fg:    #e2b96f;
+  --cm-activeline: rgba(255,255,255,0.025);
+  --cm-hr:         rgba(255,255,255,0.15);
+  --font-editor: "SF Pro Text", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
 }
 
-@theme inline {
-  --color-background: var(--background);
-  --color-foreground: var(--foreground);
-  --font-sans: var(--font-geist-sans);
-  --font-mono: var(--font-geist-mono);
+* {
+  box-sizing: border-box;
 }
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
-  }
+html, body {
+  height: 100%;
+  overflow: hidden;
+  background: var(--bg-primary);
+  color: var(--text-primary);
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  -webkit-font-smoothing: antialiased;
 }
 
-body {
-  background: var(--background);
-  color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
+/* Glassy Sidebar */
+.sidebar-glass {
+  background: var(--sidebar-bg);
+  backdrop-filter: blur(20px);
+  -webkit-backdrop-filter: blur(20px);
+}
+
+/* Custom Scrollbar */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background: var(--scrollbar-thumb);
+  border-radius: 3px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: var(--scrollbar-thumb-hover);
+}
+
+/* CodeMirror container */
+.cm-editor-container {
+  height: 100%;
+}
+.cm-editor-container .cm-editor {
+  height: 100%;
+}
+.cm-editor-container .cm-scroller {
+  overflow: auto;
+}
+
+/* ── Drag Handle Gutter ──────────────────────────────────────────────────── */
+.cm-drag-handle-gutter {
+  padding: 0 2px;
+}
+.cm-drag-handle {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 100%;
+  color: transparent;
+  cursor: grab;
+  transition: color 0.1s;
+  user-select: none;
+  -webkit-user-select: none;
+}
+.cm-drag-handle--on {
+  color: var(--text-muted);
+}
+.cm-drag-handle--on:active {
+  cursor: grabbing;
+  color: var(--text-secondary);
+}
+
+/* Task & checklist line styles (applied by Decoration.line) */
+
+/* Open task and checklist: crisp text — override any HighlightStyle span colours */
+.cm-line.cm-task-open span,
+.cm-line.cm-checklist span {
+  color: var(--text-primary) !important;
+}
+
+.cm-line.cm-task-done {
+  opacity: 0.55;
+}
+.cm-line.cm-task-done span:not(.cm-task-checkbox) {
+  text-decoration: line-through;
+  text-decoration-color: #555;
+}
+.cm-line.cm-task-cancelled {
+  opacity: 0.35;
+}
+.cm-line.cm-task-scheduled {
+  color: #a78bfa;
+}
+.cm-line.cm-checklist {
+  color: var(--text-primary);
+}
+
+/* ── Horizontal rule: CSS-only, cursor-position-independent ─────────── */
+/* Decoration.line adds cm-hr-rule to the .cm-line element.              */
+/* font-size:1px collapses the "---" text to near-invisible;             */
+/* ::after draws the 1px visual divider.                                 */
+.cm-line.cm-hr-rule {
+  position: relative !important;
+  font-size: 1px !important;
+  line-height: 1px !important;
+  /* 14px each side → 14 + 1 + 14 = 29px total ≈ regular line height */
+  padding: 14px 0 !important;
+  overflow: visible !important;
+}
+.cm-line.cm-hr-rule * {
+  font-size: 1px !important;
+  color: transparent !important;
+}
+.cm-line.cm-hr-rule::after {
+  content: '';
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 50%;
+  height: 1px;
+  transform: translateY(-50%);
+  background: var(--cm-hr);
+  pointer-events: none;
+}
+
+/* ── Setext heading: neutralise large/bold font ──────────────────────── */
+/* markdownWYSIWYG.ts adds cm-setext-header via Decoration.line.         */
+/* Use both span and * selectors to beat HighlightStyle with !important.  */
+.cm-line.cm-setext-header span,
+.cm-line.cm-setext-header * {
+  font-size: 1em !important;
+  font-weight: normal !important;
+  color: var(--text-primary) !important;
+  line-height: 1.8 !important;
+}
+
+/* ── Drag drop indicator ──────────────────────────────────────────────── */
+/* box-shadow avoids layout shift; appears as yellow line above the target line */
+.cm-line.cm-drop-target {
+  box-shadow: 0 -2px 0 0 #f59e0b;
 }
