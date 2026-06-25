@@ -1,76 +1,18 @@
 {
   "name": "noteplan-clone",
-  "version": "0.6.0",
+  "version": "0.7.0",
   "private": true,
   "description": "NotePlan clone — markdown daily notes app",
   "author": "biinggala",
-  "main": "electron/main.js",
   "scripts": {
     "dev": "next dev",
     "build": "next build",
     "build:static": "STATIC_EXPORT=true next build",
     "tauri": "tauri",
     "start": "next start",
-    "lint": "eslint",
-    "electron:dev": "NODE_ENV=development electron .",
-    "electron:static": "STATIC_EXPORT=true next build && STATIC_LOCAL=true electron .",
-    "electron:build": "STATIC_EXPORT=true next build && electron-builder",
-    "electron:mac": "STATIC_EXPORT=true next build && electron-builder --mac"
-  },
-  "build": {
-    "appId": "com.biinggala.noteplan-clone",
-    "productName": "NotePlan Clone",
-    "asar": true,
-    "protocols": [
-      {
-        "name": "NotePlan Clone Protocol",
-        "schemes": [
-          "noteplan"
-        ]
-      }
-    ],
-    "directories": {
-      "output": "dist"
-    },
-    "files": [
-      "electron/**/*",
-      "!node_modules/**/*"
-    ],
-    "extraResources": [
-      {
-        "from": "out",
-        "to": "static-app",
-        "filter": [
-          "**/*"
-        ]
-      }
-    ],
-    "electronLanguages": [
-      "en"
-    ],
-    "mac": {
-      "category": "public.app-category.productivity",
-      "target": [
-        {
-          "target": "dmg",
-          "arch": [
-            "arm64"
-          ]
-        }
-      ],
-      "icon": "build/icon.icns"
-    },
-    "dmg": {
-      "title": "NotePlan Clone",
-      "format": "ULFO",
-      "window": {
-        "width": 540,
-        "height": 380
-      }
-    }
+    "lint": "eslint"
   },
   "dependencies": {
-    "@supabase/ssr": "^0.10.2",
     "@supabase/supabase-js": "^2.104.1",
     "@tauri-apps/api": "^2.11.1",
     "@tauri-apps/plugin-deep-link": "^2.4.9",
@@ -92,8 +34,6 @@
     "@types/uuid": "^10.0.0",
     "codemirror": "^6.0.2",
     "date-fns": "^4.1.0",
-    "electron": "^40.8.0",
-    "electron-builder": "^26.8.1",
     "eslint": "^9",
     "eslint-config-next": "16.1.6",
     "framer-motion": "^12.35.0",

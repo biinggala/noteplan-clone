@@ -43,13 +43,6 @@ export default function LoginPage() {
     })
   }, []) // eslint-disable-line react-hooks/exhaustive-deps
 
-  // ── Electron 딥링크 콜백 ────────────────────────────────────────────────────
-  useEffect(() => {
-    const api = window.electronAPI
-    if (!api?.onOAuthCallback) return
-    return api.onOAuthCallback(exchangeAndGo)
-  }, []) // eslint-disable-line react-hooks/exhaustive-deps
-
   // ── Tauri 딥링크 콜백 ───────────────────────────────────────────────────────
   useEffect(() => {
     if (!isTauri()) return
@@ -88,15 +81,6 @@ export default function LoginPage() {
       if (!url) { setWaiting(false); return }
       const { openUrl } = await import('@tauri-apps/plugin-opener')
       await openUrl(url)
-      return
-    }
-
-    // ── Electron: 시스템 브라우저 + noteplan:// 딥링크 ────────────────────────
-    if (window.electronAPI?.isElectron) {
-      setWaiting(true)
-      const url = await desktopOAuthUrl()
-      if (!url) { setWaiting(false); return }
-      await window.electronAPI.openExternal(url)
       return
     }
 
