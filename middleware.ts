@@ -44,6 +44,8 @@ export async function middleware(request: NextRequest) {
 
 export const config = {
   matcher: [
-    '/((?!_next/static|_next/image|favicon.ico|.*\\.(?:svg|png|jpg|jpeg|gif|webp)$).*)',
+    // Exclude Next internals, favicon, and public PWA assets (manifest, service
+    // worker, icons) so they stay reachable without an auth redirect.
+    '/((?!_next/static|_next/image|favicon.ico|manifest.webmanifest|sw.js|icons/|.*\\.(?:svg|png|jpg|jpeg|gif|webp|webmanifest|ico)$).*)',
   ],
 }

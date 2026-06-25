@@ -166,3 +166,22 @@ html, body {
 .cm-line.cm-drop-target {
   box-shadow: 0 -2px 0 0 #f59e0b;
 }
+
+/* ── Mobile / PWA tweaks ──────────────────────────────────────────────── */
+@media (max-width: 767px) {
+  /* Tighten the editor gutter padding for narrow screens */
+  .cm-editor .cm-content {
+    padding: 16px 16px 96px 4px !important;
+  }
+  /* Larger touch text in the editor */
+  .cm-editor {
+    font-size: 16px;
+  }
+}
+
+/* Standalone (installed PWA): pad for the status bar / home indicator */
+@media all and (display-mode: standalone) {
+  body {
+    overscroll-behavior-y: none;
+  }
+}

@@ -144,7 +144,7 @@ export default function DailyNotePage({ params }: Props) {
   return (
     <div className="flex flex-col h-full">
       {/* Header */}
-      <div className="flex items-center justify-between px-12 py-3 border-b border-[var(--border)] flex-shrink-0">
+      <div className="flex items-center justify-between px-4 md:px-12 py-3 border-b border-[var(--border)] flex-shrink-0">
         <div>
           <h1 className="text-lg font-semibold text-[var(--text-primary)]">
             {format(validDate, 'EEEE')}

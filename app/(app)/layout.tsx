@@ -5,12 +5,15 @@ import LeftSidebar from '@/components/sidebar/LeftSidebar'
 import RightSidebar from '@/components/sidebar/RightSidebar'
 import CommandBar from '@/components/sidebar/CommandBar'
 import ThemeProvider from '@/components/ThemeProvider'
+import MobileLayout from '@/components/mobile/MobileLayout'
+import { useIsMobile } from '@/lib/hooks/useIsMobile'
 import { createClient } from '@/lib/supabase/client'
 import { useAuthStore } from '@/lib/stores/authStore'
 
 export default function AppLayout({ children }: { children: React.ReactNode }) {
   const { setSession, setLoading } = useAuthStore()
   const supabase = createClient()
+  const isMobile = useIsMobile()
 
   useEffect(() => {
     // 초기 세션 로드
@@ -31,11 +34,15 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
   return (
     <>
       <ThemeProvider />
-      <ThreePanelLayout
-        left={<LeftSidebar />}
-        center={children}
-        right={<RightSidebar />}
-      />
+      {isMobile ? (
+        <MobileLayout>{children}</MobileLayout>
+      ) : (
+        <ThreePanelLayout
+          left={<LeftSidebar />}
+          center={children}
+          right={<RightSidebar />}
+        />
+      )}
       <CommandBar />
     </>
   )
