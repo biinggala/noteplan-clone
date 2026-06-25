@@ -5,7 +5,7 @@ import {
   addMonths, subMonths, parseISO,
   getISOWeek, getISOWeekYear,
 } from 'date-fns'
-import { useState, useEffect } from 'react'
+import { useEffect } from 'react'
 import { useCalendarStore } from '@/lib/stores/calendarStore'
 import { useCalendarEventStore } from '@/lib/stores/calendarEventStore'
 import { useAuthStore } from '@/lib/stores/authStore'
@@ -18,9 +18,7 @@ const WEEKDAYS = ['Su', 'Mo', 'Tu', 'We', 'Th', 'Fr', 'Sa']
 
 export default function MiniCalendar() {
   const router = useRouter()
-  const { selectedDate, setSelectedDate, today } = useCalendarStore()
-  const [viewDate, setViewDate] = useState<Date>(new Date(0))
-  useEffect(() => { setViewDate(new Date()) }, [])
+  const { selectedDate, setSelectedDate, today, viewMonthDate: viewDate, setViewMonthDate: setViewDate } = useCalendarStore()
 
   const { googleAccessToken } = useAuthStore()
   const {
@@ -42,7 +40,7 @@ export default function MiniCalendar() {
 
   // ── 미니 캘린더 뷰 월 단위 이벤트 fetch ────────────────────────────────────
   useEffect(() => {
-    if (!googleAccessToken || calendars.length === 0 || viewDate.getTime() === 0) return
+    if (!googleAccessToken || calendars.length === 0) return
     const monthKey = format(viewDate, 'yyyy-MM')
     if (fetchingMonths.has(monthKey)) return
 
@@ -70,7 +68,6 @@ export default function MiniCalendar() {
 
   // ── 월 단위 노트 fetch → 태스크 점 계산 ─────────────────────────────────
   useEffect(() => {
-    if (viewDate.getTime() === 0) return
     const startStr = format(calStart, 'yyyy-MM-dd')
     const endStr   = format(calEnd,   'yyyy-MM-dd')
 
@@ -91,7 +88,7 @@ export default function MiniCalendar() {
   const handleDayClick = (day: Date) => {
     const dateStr = format(day, 'yyyy-MM-dd')
     setSelectedDate(dateStr)
-    router.push(`/daily/${dateStr}`)
+    router.push(`/daily?date=${dateStr}`)
   }
 
   const cwKey = (sunday: Date) => {
@@ -115,12 +112,27 @@ export default function MiniCalendar() {
             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
           </svg>
         </button>
-        <button
-          onClick={() => setViewDate(new Date())}
-          className="text-sm font-medium text-[var(--text-primary)] hover:text-blue-400 transition-colors"
-        >
-          {format(viewDate, 'MMMM yyyy')}
-        </button>
+        <div className="flex items-center gap-1">
+          {/* 월 클릭 → 해당 월 Monthly Note */}
+          <button
+            onClick={() => router.push(`/monthly?month=${format(viewDate, 'yyyy-MM')}`)}
+            className="text-sm font-medium text-[var(--text-primary)] hover:text-emerald-400 transition-colors"
+            title="Open monthly note"
+          >
+            {format(viewDate, 'MMMM yyyy')}
+          </button>
+          {/* 오늘로 복귀 (현재 월이 아닐 때만 표시) */}
+          {format(viewDate, 'yyyy-MM') !== format(new Date(), 'yyyy-MM') && (
+            <button
+              onClick={() => setViewDate(new Date())}
+              className="text-[10px] px-1 py-0.5 rounded bg-white/10 text-[var(--text-muted)]
+                hover:bg-white/20 hover:text-[var(--text-primary)] transition-colors"
+              title="Go to today"
+            >
+              today
+            </button>
+          )}
+        </div>
         <button
           onClick={() => setViewDate(addMonths(viewDate, 1))}
           className="p-1 rounded hover:bg-white/10 text-[var(--text-muted)] transition-colors"
@@ -154,7 +166,7 @@ export default function MiniCalendar() {
             <div key={wk} className="grid grid-cols-8">
               {/* CW week number */}
               <button
-                onClick={() => router.push(`/weekly/${wk}`)}
+                onClick={() => router.push(`/weekly?week=${wk}`)}
                 className="flex items-center justify-center text-[10px] font-semibold
                            text-amber-500/60 hover:text-amber-400 hover:bg-amber-500/10
                            rounded transition-colors"

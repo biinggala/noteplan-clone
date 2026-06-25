@@ -69,9 +69,9 @@ export default function CommandBar() {
 
   const handleSelect = (note: Note) => {
     if (note.type === 'daily' && note.date) {
-      router.push(`/daily/${note.date}`)
+      router.push(`/daily?date=${note.date}`)
     } else {
-      router.push(`/notes/${note.id}`)
+      router.push(`/notes?id=${note.id}`)
     }
     setCommandBarOpen(false)
   }

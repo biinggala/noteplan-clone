@@ -16,7 +16,7 @@ export default function ThreePanelLayout({ left, center, right }: ThreePanelLayo
     setLeftSidebarWidth, setRightSidebarWidth,
   } = useUIStore()
 
-  const isResizingLeft = useRef(false)
+  const isResizingLeft  = useRef(false)
   const isResizingRight = useRef(false)
 
   const startResizeLeft = useCallback((e: React.MouseEvent) => {
@@ -62,6 +62,7 @@ export default function ThreePanelLayout({ left, center, right }: ThreePanelLayo
   }, [rightSidebarWidth, setRightSidebarWidth])
 
   return (
+    // 패널들이 y=0부터 시작 — 각 패널이 자체 헤더로 traffic light 영역을 처리
     <div className="flex h-screen w-screen overflow-hidden bg-[var(--bg-primary)] text-[var(--text-primary)]">
       {/* Left Sidebar */}
       <AnimatePresence initial={false}>

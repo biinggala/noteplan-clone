@@ -1,5 +1,6 @@
 'use client'
-import { use, useEffect, useRef, useState, useCallback } from 'react'
+import { Suspense, useEffect, useRef, useState, useCallback } from 'react'
+import { useSearchParams } from 'next/navigation'
 import { useNoteStore } from '@/lib/stores/noteStore'
 import { getNoteById, upsertNote } from '@/lib/db/noteRepository'
 import { extractTags, extractMentions, extractBacklinks } from '@/lib/parser/noteParser'
@@ -8,13 +9,17 @@ import dynamic from 'next/dynamic'
 
 const NoteEditor = dynamic(() => import('@/components/editor/NoteEditor'), { ssr: false })
 
-interface Props {
-  params: Promise<{ slug: string[] }>
+export default function NotePage() {
+  return (
+    <Suspense fallback={<div className="flex h-full items-center justify-center text-[var(--text-muted)]">Loading...</div>}>
+      <NoteInner />
+    </Suspense>
+  )
 }
 
-export default function NotePage({ params }: Props) {
-  const { slug } = use(params)
-  const noteId = slug[0]
+function NoteInner() {
+  const searchParams = useSearchParams()
+  const noteId = searchParams.get('id') ?? 'new'
   const { setActiveNote, updateNote } = useNoteStore()
   const [note, setNote] = useState<Note | null>(null)
   const noteRef = useRef<Note | null>(null)
@@ -84,7 +89,7 @@ export default function NotePage({ params }: Props) {
 
   return (
     <div className="flex flex-col h-full">
-      <div className="px-12 py-3 border-b border-[var(--border)] flex-shrink-0">
+      <div data-tauri-drag-region className="electron-drag px-12 py-3 border-b border-[var(--border)] flex-shrink-0">
         <h1 className="text-lg font-semibold text-[var(--text-primary)]">{note.title}</h1>
       </div>
       <div className="flex-1 overflow-hidden">

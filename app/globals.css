@@ -39,6 +39,10 @@ html, body {
   -webkit-font-smoothing: antialiased;
 }
 
+/* macOS window drag region */
+.titlebar-drag   { -webkit-app-region: drag; }
+.titlebar-no-drag { -webkit-app-region: no-drag; }
+
 /* Glassy Sidebar */
 .sidebar-glass {
   background: var(--sidebar-bg);

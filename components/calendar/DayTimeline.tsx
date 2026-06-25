@@ -227,6 +227,47 @@ export default function DayTimeline({ date, days = 1 }: DayTimelineProps) {
   // gridRef is on the flex container (gutter + columns) — used for Y calculation
   const gridRef = useRef<HTMLDivElement>(null)
 
+  // ── 드래그 중 엣지 자동 스크롤 ────────────────────────────────────────────
+  const autoScrollRef = useRef<number | null>(null)
+
+  function startEdgeScroll(clientY: number) {
+    // 가장 가까운 scroll 가능한 조상 찾기
+    const scrollEl = gridRef.current?.closest<HTMLElement>('[class*="overflow-y-auto"]')
+    if (!scrollEl) return
+
+    const rect = scrollEl.getBoundingClientRect()
+    const ZONE = 80      // 엣지에서 80px 이내일 때 스크롤 시작
+    const MAX_SPEED = 12  // px/frame
+
+    if (autoScrollRef.current) cancelAnimationFrame(autoScrollRef.current)
+
+    const step = () => {
+      const distFromTop = clientY - rect.top
+      const distFromBot = rect.bottom - clientY
+      let speed = 0
+      if (distFromTop < ZONE) speed = -Math.round(MAX_SPEED * (1 - distFromTop / ZONE))
+      else if (distFromBot < ZONE) speed = Math.round(MAX_SPEED * (1 - distFromBot / ZONE))
+
+      if (speed !== 0) {
+        scrollEl.scrollTop += speed
+        autoScrollRef.current = requestAnimationFrame(step)
+      } else {
+        autoScrollRef.current = null
+      }
+    }
+    autoScrollRef.current = requestAnimationFrame(step)
+  }
+
+  function stopEdgeScroll() {
+    if (autoScrollRef.current) {
+      cancelAnimationFrame(autoScrollRef.current)
+      autoScrollRef.current = null
+    }
+  }
+
+  // 컴포넌트 언마운트 시 정리
+  useEffect(() => () => stopEdgeScroll(), [])
+
   // ── Helpers ───────────────────────────────────────────────────────────────
 
   function getLineDragPayload(e: React.DragEvent): LineDragData | null {
@@ -277,6 +318,7 @@ export default function DayTimeline({ date, days = 1 }: DayTimelineProps) {
     if (!hasLine && !hasBlock) return
     e.preventDefault()
     e.dataTransfer.dropEffect = 'move'
+    startEdgeScroll(e.clientY)   // ← 엣지 자동 스크롤
     const slot = hasBlock
       ? slotFromClientY(e.clientY)
       : { hour, minute: minuteFromRowEvent(e) }
@@ -291,11 +333,13 @@ export default function DayTimeline({ date, days = 1 }: DayTimelineProps) {
   function handleDragLeave(e: React.DragEvent) {
     if (!(e.currentTarget as HTMLElement).contains(e.relatedTarget as Node)) {
       setDragOverSlot(null)
+      stopEdgeScroll()   // ← 타임라인 영역 벗어나면 정지
     }
   }
 
   function handleDrop(e: React.DragEvent, targetDate: string, hour: number) {
     setDragOverSlot(null)
+    stopEdgeScroll()   // ← drop 시 정지
 
     // ── Block-move ──────────────────────────────────────────────────────────
     const movingId = getW()['__npBlockDrag'] as string | null

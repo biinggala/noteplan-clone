@@ -1,6 +1,6 @@
 'use client'
 import { useState, useEffect, useCallback, useRef } from 'react'
-import { useRouter, usePathname } from 'next/navigation'
+import { useRouter, useSearchParams } from 'next/navigation'
 import { useUIStore } from '@/lib/stores/uiStore'
 import {
   getFolders,
@@ -8,6 +8,7 @@ import {
   deleteFolder as dbDeleteFolder,
   renameFolder as dbRenameFolder,
   getNotesByFolder,
+  getUnfiledNotes,
   upsertNote,
   deleteNote as dbDeleteNote,
 } from '@/lib/db/noteRepository'
@@ -190,13 +191,13 @@ function NoteItem({ note, depth, isActive, onClick, onContextMenu }: {
 
 // ── FolderNode ────────────────────────────────────────────────────────────
 
-function FolderNode({ folder, depth, expandedFolders, toggleFolder, onContextMenu, pathname, onNoteClick }: {
+function FolderNode({ folder, depth, expandedFolders, toggleFolder, onContextMenu, activeId, onNoteClick }: {
   folder: FolderWithData
   depth: number
   expandedFolders: string[]
   toggleFolder: (id: string) => void
   onContextMenu: (e: React.MouseEvent, type: 'folder' | 'note', id: string, extra?: string) => void
-  pathname: string
+  activeId: string | null
   onNoteClick: (id: string) => void
 }) {
   const isOpen = expandedFolders.includes(folder.id)
@@ -233,7 +234,7 @@ function FolderNode({ folder, depth, expandedFolders, toggleFolder, onContextMen
               expandedFolders={expandedFolders}
               toggleFolder={toggleFolder}
               onContextMenu={onContextMenu}
-              pathname={pathname}
+              activeId={activeId}
               onNoteClick={onNoteClick}
             />
           ))}
@@ -242,7 +243,7 @@ function FolderNode({ folder, depth, expandedFolders, toggleFolder, onContextMen
               key={note.id}
               note={note}
               depth={depth + 1}
-              isActive={pathname.includes(note.id)}
+              isActive={activeId === note.id}
               onClick={() => onNoteClick(note.id)}
               onContextMenu={(e) => onContextMenu(e, 'note', note.id)}
             />
@@ -283,11 +284,14 @@ function MenuItem({ children, onClick, danger }: {
 
 export default function FolderTree() {
   const router = useRouter()
-  const pathname = usePathname()
+  const searchParams = useSearchParams()
+  const activeId = searchParams.get('id')
   const { expandedFolders, toggleFolder, expandFolder } = useUIStore()
   const [tree, setTree] = useState<FolderWithData[]>([])
   const [contextMenu, setContextMenu] = useState<ContextMenu>(null)
   const [dialog, setDialog] = useState<Dialog>(null)
+  const [unfiledNotes, setUnfiledNotes] = useState<Note[]>([])
+  const [unfiledOpen, setUnfiledOpen] = useState(false)
 
   const loadData = useCallback(async () => {
     let folders = await getFolders()
@@ -308,6 +312,8 @@ export default function FolderTree() {
       notesByFolder[f.path] = await getNotesByFolder(f.path)
     }
     setTree(buildTree(folders, notesByFolder))
+    // 미분류 노트 로드
+    setUnfiledNotes(await getUnfiledNotes())
   }, [])
 
   useEffect(() => { loadData() }, [loadData])
@@ -366,7 +372,7 @@ export default function FolderTree() {
     await upsertNote(note)
     expandFolder(folderId)
     await loadData()
-    router.push(`/notes/${note.id}`)
+    router.push(`/notes?id=${note.id}`)
   }
 
   const handleNewSubfolder = async (parentPath?: string) => {
@@ -420,10 +426,52 @@ export default function FolderTree() {
           expandedFolders={expandedFolders}
           toggleFolder={toggleFolder}
           onContextMenu={handleContextMenu}
-          pathname={pathname}
-          onNoteClick={(id) => router.push(`/notes/${id}`)}
+          activeId={activeId}
+          onNoteClick={(id) => router.push(`/notes?id=${id}`)}
         />
       ))}
+
+      {/* Unfiled Notes — 폴더 없이 저장된 노트 */}
+      {unfiledNotes.length > 0 && (
+        <div>
+          <button
+            onClick={() => setUnfiledOpen(o => !o)}
+            className="flex items-center gap-1.5 w-full px-2 py-1 text-xs
+              text-[var(--text-muted)] hover:text-[var(--text-secondary)]
+              hover:bg-white/5 transition-colors rounded"
+          >
+            <svg
+              className={`w-2.5 h-2.5 flex-shrink-0 transition-transform ${unfiledOpen ? 'rotate-90' : ''}`}
+              fill="none" stroke="currentColor" viewBox="0 0 24 24"
+            >
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M9 5l7 7-7 7" />
+            </svg>
+            <span className="font-medium uppercase tracking-wider">Unfiled</span>
+            <span className="ml-1 opacity-50">({unfiledNotes.length})</span>
+          </button>
+          {unfiledOpen && (
+            <div>
+              {unfiledNotes.map(note => (
+                <button
+                  key={note.id}
+                  onClick={() => router.push(`/notes?id=${note.id}`)}
+                  className={`flex items-center gap-1.5 w-full pl-7 pr-2 py-1 rounded text-xs transition-colors
+                    ${activeId === note.id
+                      ? 'bg-blue-500/20 text-blue-300'
+                      : 'text-[var(--text-muted)] hover:bg-white/5 hover:text-[var(--text-secondary)]'
+                    }`}
+                >
+                  <svg className="w-3.5 h-3.5 flex-shrink-0 text-[var(--text-muted)]" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5}
+                      d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+                  </svg>
+                  <span className="truncate">{note.title}</span>
+                </button>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
 
       {/* Context Menu */}
       {contextMenu && (
@@ -451,7 +499,7 @@ export default function FolderTree() {
             </>
           ) : (
             <>
-              <MenuItem onClick={() => { setContextMenu(null); router.push(`/notes/${contextMenu.id}`) }}>
+              <MenuItem onClick={() => { setContextMenu(null); router.push(`/notes?id=${contextMenu.id}`) }}>
                 열기
               </MenuItem>
               <div className="border-t border-[var(--border)] my-1" />

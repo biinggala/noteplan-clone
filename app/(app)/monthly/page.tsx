@@ -1,56 +1,50 @@
 'use client'
-import { use, useEffect, useRef, useState, useCallback } from 'react'
-import { format, addDays, startOfISOWeek, endOfISOWeek } from 'date-fns'
+import { Suspense, useEffect, useRef, useState, useCallback } from 'react'
+import { useSearchParams } from 'next/navigation'
+import { format, getDaysInMonth } from 'date-fns'
 import { useNoteStore } from '@/lib/stores/noteStore'
 import { useCalendarStore } from '@/lib/stores/calendarStore'
-import { getOrCreateWeeklyNote, upsertNote } from '@/lib/db/noteRepository'
+import { getOrCreateMonthlyNote, upsertNote } from '@/lib/db/noteRepository'
 import { extractTags, extractMentions, extractBacklinks } from '@/lib/parser/noteParser'
 import type { Note } from '@/types/note'
 import dynamic from 'next/dynamic'
 
 const NoteEditor = dynamic(() => import('@/components/editor/NoteEditor'), { ssr: false })
 
-interface Props {
-  params: Promise<{ week: string }> // e.g. "2026-W09"
+export default function MonthlyNotePage() {
+  return (
+    <Suspense fallback={<div className="flex h-full items-center justify-center text-[var(--text-muted)]">Loading...</div>}>
+      <MonthlyNoteInner />
+    </Suspense>
+  )
 }
 
-/** Parse "YYYY-WNN" → Monday of that ISO week */
-function weekKeyToMonday(weekKey: string): Date {
-  const [yearStr, weekPart] = weekKey.split('-W')
-  const year = parseInt(yearStr)
-  const week = parseInt(weekPart)
-  const jan4 = new Date(year, 0, 4)
-  const startW1 = startOfISOWeek(jan4)
-  return addDays(startW1, (week - 1) * 7)
-}
-
-export default function WeeklyNotePage({ params }: Props) {
-  const { week } = use(params)
+function MonthlyNoteInner() {
+  const searchParams = useSearchParams()
+  const month = searchParams.get('month') ?? format(new Date(), 'yyyy-MM')
   const { setActiveNote, updateNote } = useNoteStore()
   const { setSelectedDate } = useCalendarStore()
-  const [note, setNote] = useState<Note | null>(null)
+  const [note, setNote]       = useState<Note | null>(null)
   const [isSaving, setIsSaving] = useState(false)
   const noteRef = useRef<Note | null>(null)
   noteRef.current = note
 
-  // Compute week range
-  const monday = weekKeyToMonday(week)
-  const sunday = endOfISOWeek(monday)
-  const weekNum = parseInt(week.split('-W')[1])
-  const year = week.split('-W')[0]
-
-  const rangeLabel = monday.getFullYear() === sunday.getFullYear()
-    ? `${format(monday, 'MMM d')} – ${format(sunday, 'MMM d, yyyy')}`
-    : `${format(monday, 'MMM d, yyyy')} – ${format(sunday, 'MMM d, yyyy')}`
+  // 월 파싱
+  const [yearStr, monthStr] = month.split('-')
+  const year  = parseInt(yearStr)
+  const monthNum = parseInt(monthStr)  // 1-based
+  const firstDay = new Date(year, monthNum - 1, 1)
+  const monthLabel = format(firstDay, 'MMMM yyyy')
+  const daysLabel  = `${getDaysInMonth(firstDay)} days`
 
   useEffect(() => {
-    // Highlight Monday in the mini-calendar when viewing a weekly note
-    setSelectedDate(format(monday, 'yyyy-MM-dd'))
-    getOrCreateWeeklyNote(week).then(n => {
+    // 미니 캘린더를 해당 월 1일로 이동
+    setSelectedDate(`${yearStr}-${monthStr}-01`)
+    getOrCreateMonthlyNote(month).then(n => {
       setNote(n)
       setActiveNote(n)
     })
-  }, [week, setSelectedDate, setActiveNote])
+  }, [month, setSelectedDate, setActiveNote])
 
   const handleChange = useCallback((content: string) => {
     if (!note) return
@@ -73,13 +67,11 @@ export default function WeeklyNotePage({ params }: Props) {
   // 언마운트 시 즉시 저장
   useEffect(() => {
     return () => {
-      if (noteRef.current) {
-        upsertNote(noteRef.current).catch(console.error)
-      }
+      if (noteRef.current) upsertNote(noteRef.current).catch(console.error)
     }
   }, []) // eslint-disable-line react-hooks/exhaustive-deps
 
-  // Auto-save every 2s
+  // Auto-save 2초
   useEffect(() => {
     if (!note) return
     const timer = setTimeout(() => {
@@ -102,17 +94,17 @@ export default function WeeklyNotePage({ params }: Props) {
   return (
     <div className="flex flex-col h-full">
       {/* Header */}
-      <div className="flex items-center justify-between px-12 py-3 border-b border-[var(--border)] flex-shrink-0">
+      <div data-tauri-drag-region className="electron-drag flex items-center justify-between px-12 py-3 border-b border-[var(--border)] flex-shrink-0">
         <div>
           <div className="flex items-center gap-2">
-            <span className="text-xs font-semibold text-amber-500/80 tracking-wider uppercase">
-              CW {weekNum.toString().padStart(2, '0')}
+            <span className="text-xs font-semibold text-emerald-500/80 tracking-wider uppercase">
+              Monthly
             </span>
             <h1 className="text-lg font-semibold text-[var(--text-primary)]">
-              Week {weekNum}, {year}
+              {monthLabel}
             </h1>
           </div>
-          <div className="text-sm text-[var(--text-muted)]">{rangeLabel}</div>
+          <div className="text-sm text-[var(--text-muted)]">{daysLabel}</div>
         </div>
         <div className="flex items-center gap-2">
           {isSaving && (

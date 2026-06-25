@@ -127,6 +127,46 @@ export async function deleteNote(id: string): Promise<void> {
   await supabase.from('notes').delete().eq('id', id)
 }
 
+/** 특정 태그를 포함하는 노트 목록 (tags 배열 contains 쿼리) */
+export async function getNotesByTag(tag: string): Promise<Note[]> {
+  const supabase = createClient()
+  const userId = await getUserId()
+  const { data } = await supabase
+    .from('notes')
+    .select('*')
+    .eq('user_id', userId)
+    .contains('tags', [tag])
+    .order('updated_at', { ascending: false })
+  return (data ?? []).map(rowToNote)
+}
+
+/** 특정 멘션을 포함하는 노트 목록 */
+export async function getNotesByMention(mention: string): Promise<Note[]> {
+  const supabase = createClient()
+  const userId = await getUserId()
+  const { data } = await supabase
+    .from('notes')
+    .select('*')
+    .eq('user_id', userId)
+    .contains('mentions', [mention])
+    .order('updated_at', { ascending: false })
+  return (data ?? []).map(rowToNote)
+}
+
+/** folder가 null인 노트 (미분류) */
+export async function getUnfiledNotes(): Promise<Note[]> {
+  const supabase = createClient()
+  const userId = await getUserId()
+  const { data } = await supabase
+    .from('notes')
+    .select('*')
+    .eq('user_id', userId)
+    .is('folder', null)
+    .in('type', ['project'])   // project 타입만 (daily/weekly/monthly는 제외)
+    .order('updated_at', { ascending: false })
+  return (data ?? []).map(rowToNote)
+}
+
 export async function searchNotes(query: string): Promise<Note[]> {
   const supabase = createClient()
   const userId = await getUserId()
@@ -138,6 +178,102 @@ export async function searchNotes(query: string): Promise<Note[]> {
     .order('updated_at', { ascending: false })
     .limit(20)
   return (data ?? []).map(rowToNote)
+}
+
+// ── Bulk Import ───────────────────────────────────────────────────────────────
+
+export interface BulkImportResult {
+  imported: number
+  skipped: number   // 이미 존재해서 건너뜀
+  errors: number
+  firstError?: string  // 디버깅용 첫 번째 에러 메시지
+}
+
+/**
+ * 노트를 일괄 삽입합니다.
+ * - onConflict='skip': 같은 file_path가 이미 있으면 건너뜀 (기본값)
+ * - onConflict='overwrite': 기존 노트를 덮어씀
+ * - onProgress: 처리된 누적 개수를 콜백으로 전달
+ */
+export async function bulkImportNotes(
+  notes: Note[],
+  opts: {
+    onConflict?: 'skip' | 'overwrite'
+    onProgress?: (done: number, total: number) => void
+  } = {}
+): Promise<BulkImportResult> {
+  const { onConflict = 'skip', onProgress } = opts
+  const supabase = createClient()
+  const userId = await getUserId()
+
+  // 1) 기존 filePath 목록을 한 번에 조회
+  const { data: existing } = await supabase
+    .from('notes')
+    .select('id, file_path')
+    .eq('user_id', userId)
+
+  const existingMap = new Map<string, string>()  // filePath → id
+  for (const row of existing ?? []) {
+    existingMap.set(row.file_path as string, row.id as string)
+  }
+
+  // 2) skip / overwrite 분류
+  const toInsert: Note[] = []
+  const toUpdate: Note[] = []
+  let skipped = 0
+
+  for (const note of notes) {
+    const existingId = existingMap.get(note.filePath)
+    if (existingId) {
+      if (onConflict === 'overwrite') {
+        toUpdate.push({ ...note, id: existingId })
+      } else {
+        skipped++
+      }
+    } else {
+      toInsert.push(note)
+    }
+  }
+
+  let imported = 0
+  let errors = 0
+  const total = toInsert.length + toUpdate.length
+  let done = 0
+
+  // 3) 신규 노트 일괄 insert (50개씩)
+  const CHUNK = 50
+  for (let i = 0; i < toInsert.length; i += CHUNK) {
+    const chunk = toInsert.slice(i, i + CHUNK)
+    const rows = chunk.map(n => noteToRow(n, userId))
+    const { error } = await supabase.from('notes').insert(rows)
+    if (error) {
+      console.error('[bulkImport insert]', error)
+      errors += chunk.length
+    } else {
+      imported += chunk.length
+    }
+    done += chunk.length
+    onProgress?.(done + skipped, notes.length)
+  }
+
+  // 4) 기존 노트 overwrite (50개씩)
+  for (let i = 0; i < toUpdate.length; i += CHUNK) {
+    const chunk = toUpdate.slice(i, i + CHUNK)
+    const rows = chunk.map(n => noteToRow({ ...n, updatedAt: Date.now() }, userId))
+    const { error } = await supabase
+      .from('notes')
+      .upsert(rows, { onConflict: 'id' })
+    if (error) {
+      console.error('[bulkImport upsert]', error)
+      errors += chunk.length
+    } else {
+      imported += chunk.length
+    }
+    done += chunk.length
+    onProgress?.(done + skipped, notes.length)
+  }
+
+  return { imported, skipped, errors }
 }
 
 // ── Daily / Weekly Note 자동 생성 ────────────────────────────────────────────
@@ -228,6 +364,47 @@ export async function getOrCreateWeeklyNote(weekKey: string): Promise<Note> {
 
   const note = await getNoteByDate(weekKey)
   if (!note) throw new Error(`주간 노트 생성 실패: ${weekKey}`)
+  return note
+}
+
+export async function getOrCreateMonthlyNote(monthKey: string): Promise<Note> {
+  // monthKey = "YYYY-MM"
+  const supabase = createClient()
+  const userId = await getUserId()
+
+  const [yearStr, monthStr] = monthKey.split('-')
+  const year  = parseInt(yearStr)
+  const month = parseInt(monthStr)   // 1-based
+  const firstDay = new Date(year, month - 1, 1)
+  const title = format(firstDay, 'MMMM yyyy')
+  const dateStr = `${yearStr}-${monthStr}-01`
+
+  const row = {
+    id:         uuidv4(),
+    user_id:    userId,
+    type:       'monthly' as const,
+    title,
+    content:    `# ${title}\n\n## Goals\n\n## Review\n\n## Notes\n`,
+    date:       monthKey,          // "YYYY-MM" — date 컬럼에 monthKey 저장
+    file_path:  `Calendar/${monthKey}.md`,
+    folder:     null,
+    tags:       [] as string[],
+    mentions:   [] as string[],
+    backlinks:  [] as string[],
+    created_at: Date.now(),
+    updated_at: Date.now(),
+  }
+
+  const existing = await getNoteByDate(monthKey)
+  if (existing) return existing
+
+  const { error } = await supabase.from('notes').insert(row)
+  if (error && error.code !== '23505') {
+    console.error('[getOrCreateMonthlyNote] insert error', error)
+  }
+
+  const note = await getNoteByDate(monthKey)
+  if (!note) throw new Error(`월간 노트 생성 실패: ${monthKey}`)
   return note
 }
 

@@ -1,15 +1,111 @@
 'use client'
+import { useEffect, useState } from 'react'
+import { useRouter } from 'next/navigation'
 import { createClient } from '@/lib/supabase/client'
+
+const SCOPES = 'https://www.googleapis.com/auth/calendar.readonly https://www.googleapis.com/auth/calendar.events'
+
+const isTauri = () =>
+  typeof window !== 'undefined' && '__TAURI_INTERNALS__' in window
 
 export default function LoginPage() {
   const supabase = createClient()
+  const router = useRouter()
+  const [error, setError] = useState<string | null>(null)
+  const [waiting, setWaiting] = useState(false)
+
+  // 딥링크 URL에서 code 추출 → 세션 교환 → 앱으로 (Electron/Tauri 공통)
+  const exchangeAndGo = async (url: string) => {
+    try {
+      const code = new URL(url).searchParams.get('code')
+      if (!code) {
+        setError('인증 코드를 받지 못했습니다')
+        setWaiting(false)
+        return
+      }
+      const { error: exchangeErr } = await supabase.auth.exchangeCodeForSession(code)
+      if (exchangeErr) {
+        setError(`세션 교환 실패: ${exchangeErr.message}`)
+        setWaiting(false)
+        return
+      }
+      router.replace('/')
+    } catch (e) {
+      setError(e instanceof Error ? e.message : '알 수 없는 오류')
+      setWaiting(false)
+    }
+  }
+
+  // 이미 로그인된 세션이 있으면 자동으로 앱으로 이동
+  useEffect(() => {
+    supabase.auth.getSession().then(({ data: { session } }) => {
+      if (session) router.replace('/')
+    })
+  }, []) // eslint-disable-line react-hooks/exhaustive-deps
+
+  // ── Electron 딥링크 콜백 ────────────────────────────────────────────────────
+  useEffect(() => {
+    const api = window.electronAPI
+    if (!api?.onOAuthCallback) return
+    return api.onOAuthCallback(exchangeAndGo)
+  }, []) // eslint-disable-line react-hooks/exhaustive-deps
+
+  // ── Tauri 딥링크 콜백 ───────────────────────────────────────────────────────
+  useEffect(() => {
+    if (!isTauri()) return
+    let unlisten: (() => void) | undefined
+    import('@tauri-apps/plugin-deep-link').then(({ onOpenUrl }) => {
+      onOpenUrl((urls) => { if (urls[0]) exchangeAndGo(urls[0]) }).then(fn => { unlisten = fn })
+    })
+    return () => unlisten?.()
+  }, []) // eslint-disable-line react-hooks/exhaustive-deps
+
+  // 데스크톱 공통: skipBrowserRedirect로 OAuth URL만 받아 외부 브라우저에서 열기
+  const desktopOAuthUrl = async (): Promise<string | null> => {
+    const { data, error: oauthErr } = await supabase.auth.signInWithOAuth({
+      provider: 'google',
+      options: {
+        redirectTo: 'noteplan://auth-callback',
+        skipBrowserRedirect: true,
+        scopes: SCOPES,
+        queryParams: { access_type: 'offline', prompt: 'consent' },
+      },
+    })
+    if (oauthErr || !data?.url) {
+      setError(oauthErr?.message ?? 'OAuth URL 생성 실패')
+      return null
+    }
+    return data.url
+  }
 
   const handleGoogleLogin = async () => {
+    setError(null)
+
+    // ── Tauri: 시스템 브라우저 + noteplan:// 딥링크 ───────────────────────────
+    if (isTauri()) {
+      setWaiting(true)
+      const url = await desktopOAuthUrl()
+      if (!url) { setWaiting(false); return }
+      const { openUrl } = await import('@tauri-apps/plugin-opener')
+      await openUrl(url)
+      return
+    }
+
+    // ── Electron: 시스템 브라우저 + noteplan:// 딥링크 ────────────────────────
+    if (window.electronAPI?.isElectron) {
+      setWaiting(true)
+      const url = await desktopOAuthUrl()
+      if (!url) { setWaiting(false); return }
+      await window.electronAPI.openExternal(url)
+      return
+    }
+
+    // ── 웹앱: 같은 창 redirect ────────────────────────────────────────────────
     await supabase.auth.signInWithOAuth({
       provider: 'google',
       options: {
         redirectTo: `${window.location.origin}/auth/callback`,
-        scopes: 'https://www.googleapis.com/auth/calendar.readonly https://www.googleapis.com/auth/calendar.events',
+        scopes: SCOPES,
         queryParams: { access_type: 'offline', prompt: 'consent' },
       },
     })
@@ -37,7 +133,8 @@ export default function LoginPage() {
 
           <button
             onClick={handleGoogleLogin}
-            className="flex items-center justify-center gap-3 w-full py-2.5 px-4 rounded-lg border border-[var(--border)] bg-white/5 hover:bg-white/10 transition-colors text-sm text-[var(--text-primary)]"
+            disabled={waiting}
+            className="flex items-center justify-center gap-3 w-full py-2.5 px-4 rounded-lg border border-[var(--border)] bg-white/5 hover:bg-white/10 transition-colors text-sm text-[var(--text-primary)] disabled:opacity-60 disabled:cursor-not-allowed"
           >
             {/* Google 아이콘 */}
             <svg width="18" height="18" viewBox="0 0 24 24">
@@ -46,8 +143,18 @@ export default function LoginPage() {
               <path fill="#FBBC05" d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.07H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.93l2.85-2.22.81-.62z"/>
               <path fill="#EA4335" d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z"/>
             </svg>
-            Google로 계속하기
+            {waiting ? '브라우저에서 로그인 진행 중…' : 'Google로 계속하기'}
           </button>
+
+          {waiting && (
+            <p className="text-xs text-blue-400/80 text-center">
+              브라우저에서 Google 로그인을 완료하면 자동으로 돌아옵니다
+            </p>
+          )}
+
+          {error && (
+            <p className="text-xs text-red-400 text-center break-words">⚠ {error}</p>
+          )}
 
           <p className="text-xs text-[var(--text-muted)] text-center">
             로그인 시 서비스 이용약관에 동의하는 것으로 간주합니다

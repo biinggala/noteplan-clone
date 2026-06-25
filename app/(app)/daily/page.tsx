@@ -1,5 +1,6 @@
 'use client'
-import { use, useEffect, useRef, useState, useCallback } from 'react'
+import { Suspense, useEffect, useRef, useState, useCallback } from 'react'
+import { useSearchParams } from 'next/navigation'
 import { format, parseISO, isValid } from 'date-fns'
 import { useNoteStore } from '@/lib/stores/noteStore'
 import { useCalendarStore } from '@/lib/stores/calendarStore'
@@ -14,10 +15,6 @@ import dynamic from 'next/dynamic'
 
 const NoteEditor = dynamic(() => import('@/components/editor/NoteEditor'), { ssr: false })
 
-interface Props {
-  params: Promise<{ date: string }>
-}
-
 async function saveNote(note: Note): Promise<void> {
   try {
     await upsertNote(note)
@@ -28,8 +25,17 @@ async function saveNote(note: Note): Promise<void> {
   }
 }
 
-export default function DailyNotePage({ params }: Props) {
-  const { date } = use(params)
+export default function DailyNotePage() {
+  return (
+    <Suspense fallback={<div className="flex h-full items-center justify-center text-[var(--text-muted)]">Loading...</div>}>
+      <DailyNoteInner />
+    </Suspense>
+  )
+}
+
+function DailyNoteInner() {
+  const searchParams = useSearchParams()
+  const date = searchParams.get('date') ?? format(new Date(), 'yyyy-MM-dd')
   const { setActiveNote, updateNote } = useNoteStore()
   const { setSelectedDate } = useCalendarStore()
   const { syncTimeBlocks } = useTimeBlockStore()
@@ -144,7 +150,7 @@ export default function DailyNotePage({ params }: Props) {
   return (
     <div className="flex flex-col h-full">
       {/* Header */}
-      <div className="flex items-center justify-between px-12 py-3 border-b border-[var(--border)] flex-shrink-0">
+      <div data-tauri-drag-region className="electron-drag flex items-center justify-between px-12 py-3 border-b border-[var(--border)] flex-shrink-0">
         <div>
           <h1 className="text-lg font-semibold text-[var(--text-primary)]">
             {format(validDate, 'EEEE')}

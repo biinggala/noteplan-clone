@@ -1,6 +1,6 @@
 {
   "name": "noteplan-clone",
-  "version": "0.1.0",
+  "version": "0.6.0",
   "private": true,
   "description": "NotePlan clone — markdown daily notes app",
   "author": "biinggala",
@@ -8,16 +8,27 @@
   "scripts": {
     "dev": "next dev",
     "build": "next build",
+    "build:static": "STATIC_EXPORT=true next build",
+    "tauri": "tauri",
     "start": "next start",
     "lint": "eslint",
     "electron:dev": "NODE_ENV=development electron .",
-    "electron:build": "ELECTRON_BUILD=true next build && electron-builder",
-    "electron:mac": "ELECTRON_BUILD=true next build && electron-builder --mac"
+    "electron:static": "STATIC_EXPORT=true next build && STATIC_LOCAL=true electron .",
+    "electron:build": "STATIC_EXPORT=true next build && electron-builder",
+    "electron:mac": "STATIC_EXPORT=true next build && electron-builder --mac"
   },
   "build": {
     "appId": "com.biinggala.noteplan-clone",
     "productName": "NotePlan Clone",
     "asar": true,
+    "protocols": [
+      {
+        "name": "NotePlan Clone Protocol",
+        "schemes": [
+          "noteplan"
+        ]
+      }
+    ],
     "directories": {
       "output": "dist"
     },
@@ -27,26 +38,24 @@
     ],
     "extraResources": [
       {
-        "from": ".next/standalone",
-        "to": "nextjs-server",
-        "filter": ["**/*", "!**/*.map", "!**/node_modules/.cache/**"]
-      },
-      {
-        "from": ".next/static",
-        "to": "nextjs-server/.next/static"
-      },
-      {
-        "from": "public",
-        "to": "nextjs-server/public"
+        "from": "out",
+        "to": "static-app",
+        "filter": [
+          "**/*"
+        ]
       }
     ],
-    "electronLanguages": ["en"],
+    "electronLanguages": [
+      "en"
+    ],
     "mac": {
       "category": "public.app-category.productivity",
       "target": [
         {
           "target": "dmg",
-          "arch": ["arm64"]
+          "arch": [
+            "arm64"
+          ]
         }
       ],
       "icon": "build/icon.icns"
@@ -62,7 +71,11 @@
   },
   "dependencies": {
     "@supabase/ssr": "^0.10.2",
-    "@supabase/supabase-js": "^2.104.1"
+    "@supabase/supabase-js": "^2.104.1",
+    "@tauri-apps/api": "^2.11.1",
+    "@tauri-apps/plugin-deep-link": "^2.4.9",
+    "@tauri-apps/plugin-notification": "^2.3.3",
+    "@tauri-apps/plugin-opener": "^2.5.4"
   },
   "devDependencies": {
     "@codemirror/commands": "^6.10.2",
@@ -72,6 +85,7 @@
     "@codemirror/state": "^6.5.4",
     "@codemirror/view": "^6.39.16",
     "@tailwindcss/postcss": "^4",
+    "@tauri-apps/cli": "^2.11.3",
     "@types/node": "^20",
     "@types/react": "^19",
     "@types/react-dom": "^19",
