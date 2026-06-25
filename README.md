@@ -15,18 +15,36 @@ below, a slide-in folder drawer, and a Timeline bottom sheet).
   automatically below 768px via `lib/hooks/useIsMobile.ts`.
 - **Icons:** generated procedurally — regenerate with `node scripts/gen-icons.mjs`.
 
-### Deploying the PWA (to get a public link)
+### Deploying to get a mobile login link
 
-A PWA must be served over HTTPS. The fastest path is Vercel:
+The app needs an **HTTPS** URL and your Supabase backend, so it can't run from
+a plain local IP — Google OAuth refuses to redirect to non-HTTPS/private hosts,
+which is why phone login fails over `http://192.168.x.x`. Two ways to get a
+working link:
 
-1. Push this branch and import the repo at [vercel.com/new](https://vercel.com/new).
-2. Set the env vars `NEXT_PUBLIC_SUPABASE_URL` and
-   `NEXT_PUBLIC_SUPABASE_ANON_KEY` (same values the desktop app uses).
-3. Deploy — the resulting `https://…vercel.app` URL is your installable mobile link.
+**A. Vercel (permanent link — recommended, ~2 min)**
 
-> Keep Next.js in its default server-rendered mode for this web/PWA target.
-> The desktop bundle (Electron/Tauri) is a separate build and does not affect
-> the PWA deployment.
+1. Import the repo at [vercel.com/new](https://vercel.com/new) (pick this branch).
+2. Add env vars `NEXT_PUBLIC_SUPABASE_URL` and `NEXT_PUBLIC_SUPABASE_ANON_KEY`
+   (the same values the desktop app uses).
+3. Deploy → you get `https://<project>.vercel.app`.
+4. **Required for login:** in the Supabase dashboard → *Authentication → URL
+   Configuration → Redirect URLs*, add `https://<project>.vercel.app/**`.
+   Without this the Google callback is rejected after sign-in.
+5. Open the URL on your phone, sign in with Google, and *Add to Home Screen*
+   to run it as an installed PWA.
+
+**B. Quick temporary link (no deploy)**
+
+1. Run `npm run dev` on your computer.
+2. Expose it: `npx cloudflared tunnel --url http://localhost:3000`
+   (or `ngrok http 3000`) → you get a temporary `https://…` URL.
+3. Add that URL's `/auth/callback` (or `…/**`) to the Supabase Redirect URLs
+   as in step A.4, then open it on your phone. The link disappears when the
+   tunnel stops.
+
+> Keep Next.js in its default server-rendered mode for this web target. The
+> desktop bundle (Electron/Tauri) is a separate build and doesn't affect it.
 
 ## Getting Started
 
