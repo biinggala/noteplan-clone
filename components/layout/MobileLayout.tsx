@@ -95,6 +95,11 @@ export default function MobileLayout({ left, center, right }: MobileLayoutProps)
               className={`fixed top-0 bottom-0 z-50 w-[84%] max-w-[340px] overflow-y-auto
                 bg-[var(--bg-primary)] sidebar-glass
                 ${drawer === 'left' ? 'left-0 border-r' : 'right-0 border-l'} border-[var(--border)]`}
+              style={{
+                // Dynamic Island/상태바에 내용이 가리지 않도록 safe-area 패딩
+                paddingTop: 'env(safe-area-inset-top)',
+                paddingBottom: 'env(safe-area-inset-bottom)',
+              }}
             >
               {drawer === 'left' ? left : right}
             </motion.aside>
