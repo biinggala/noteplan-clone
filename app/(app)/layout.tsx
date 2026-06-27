@@ -2,6 +2,7 @@
 import { Suspense, useEffect } from 'react'
 import { useRouter } from 'next/navigation'
 import ThreePanelLayout from '@/components/layout/ThreePanelLayout'
+import MobileLayout from '@/components/layout/MobileLayout'
 import LeftSidebar from '@/components/sidebar/LeftSidebar'
 import RightSidebar from '@/components/sidebar/RightSidebar'
 import CommandBar from '@/components/sidebar/CommandBar'
@@ -10,11 +11,13 @@ import { createClient } from '@/lib/supabase/client'
 import { useAuthStore } from '@/lib/stores/authStore'
 import { useEventNotifications } from '@/lib/notifications/useEventNotifications'
 import { refreshGoogleAccessToken } from '@/lib/google/auth'
+import { useIsMobile } from '@/lib/hooks/useIsMobile'
 
 export default function AppLayout({ children }: { children: React.ReactNode }) {
   const router = useRouter()
   const { session, loading, setSession, setLoading, googleRefreshToken, setGoogleToken, setGoogleAuthError } = useAuthStore()
   const supabase = createClient()
+  const isMobile = useIsMobile()
   useEventNotifications()  // 캘린더 이벤트 10분 전 알림
 
   useEffect(() => {
@@ -71,11 +74,19 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
     <>
       <ThemeProvider />
       <Suspense fallback={<div className="h-screen w-screen bg-[var(--bg-primary)]" />}>
-        <ThreePanelLayout
-          left={<LeftSidebar />}
-          center={children}
-          right={<RightSidebar />}
-        />
+        {isMobile ? (
+          <MobileLayout
+            left={<LeftSidebar />}
+            center={children}
+            right={<RightSidebar />}
+          />
+        ) : (
+          <ThreePanelLayout
+            left={<LeftSidebar />}
+            center={children}
+            right={<RightSidebar />}
+          />
+        )}
         <CommandBar />
       </Suspense>
     </>
