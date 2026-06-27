@@ -200,10 +200,16 @@ export default function DayTimeline({ date, days = 1 }: DayTimelineProps) {
   }, [googleAccessToken])
 
   // ── Google Calendar: 날짜 범위 이벤트 fetch (한 번에) ───────────────────
+  const fetchedTokenRef = useRef<string | null>(null)
   useEffect(() => {
     if (!googleAccessToken || calendars.length === 0 || dates.length === 0) return
-    const unfetched = dates.filter(d => eventsByDate[d] === undefined && !fetchingDates.has(d))
+    // 토큰이 바뀌었으면(재연결/자동갱신) 캐시 무시하고 전체 재fetch
+    const tokenChanged = fetchedTokenRef.current !== googleAccessToken
+    const unfetched = tokenChanged
+      ? [...dates]
+      : dates.filter(d => eventsByDate[d] === undefined && !fetchingDates.has(d))
     if (unfetched.length === 0) return
+    fetchedTokenRef.current = googleAccessToken
 
     const startDate = unfetched[0]
     const endDate   = unfetched[unfetched.length - 1]

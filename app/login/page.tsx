@@ -2,11 +2,7 @@
 import { useEffect, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { createClient } from '@/lib/supabase/client'
-
-const SCOPES = 'https://www.googleapis.com/auth/calendar.readonly https://www.googleapis.com/auth/calendar.events'
-
-const isTauri = () =>
-  typeof window !== 'undefined' && '__TAURI_INTERNALS__' in window
+import { startGoogleOAuth, isTauri } from '@/lib/auth/googleOAuth'
 
 export default function LoginPage() {
   const supabase = createClient()
@@ -14,85 +10,25 @@ export default function LoginPage() {
   const [error, setError] = useState<string | null>(null)
   const [waiting, setWaiting] = useState(false)
 
-  // 딥링크 URL에서 code 추출 → 세션 교환 → 앱으로 (Electron/Tauri 공통)
-  const exchangeAndGo = async (url: string) => {
-    try {
-      const code = new URL(url).searchParams.get('code')
-      if (!code) {
-        setError('인증 코드를 받지 못했습니다')
-        setWaiting(false)
-        return
-      }
-      const { error: exchangeErr } = await supabase.auth.exchangeCodeForSession(code)
-      if (exchangeErr) {
-        setError(`세션 교환 실패: ${exchangeErr.message}`)
-        setWaiting(false)
-        return
-      }
-      router.replace('/')
-    } catch (e) {
-      setError(e instanceof Error ? e.message : '알 수 없는 오류')
-      setWaiting(false)
-    }
-  }
-
-  // 이미 로그인된 세션이 있으면 자동으로 앱으로 이동
+  // 이미 로그인됐거나, (전역 딥링크 핸들러가) 로그인 완료 시 앱으로 이동
   useEffect(() => {
     supabase.auth.getSession().then(({ data: { session } }) => {
       if (session) router.replace('/')
     })
-  }, []) // eslint-disable-line react-hooks/exhaustive-deps
-
-  // ── Tauri 딥링크 콜백 ───────────────────────────────────────────────────────
-  useEffect(() => {
-    if (!isTauri()) return
-    let unlisten: (() => void) | undefined
-    import('@tauri-apps/plugin-deep-link').then(({ onOpenUrl }) => {
-      onOpenUrl((urls) => { if (urls[0]) exchangeAndGo(urls[0]) }).then(fn => { unlisten = fn })
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((_e, session) => {
+      if (session) router.replace('/')
     })
-    return () => unlisten?.()
+    return () => subscription.unsubscribe()
   }, []) // eslint-disable-line react-hooks/exhaustive-deps
-
-  // 데스크톱 공통: skipBrowserRedirect로 OAuth URL만 받아 외부 브라우저에서 열기
-  const desktopOAuthUrl = async (): Promise<string | null> => {
-    const { data, error: oauthErr } = await supabase.auth.signInWithOAuth({
-      provider: 'google',
-      options: {
-        redirectTo: 'noteplan://auth-callback',
-        skipBrowserRedirect: true,
-        scopes: SCOPES,
-        queryParams: { access_type: 'offline', prompt: 'consent' },
-      },
-    })
-    if (oauthErr || !data?.url) {
-      setError(oauthErr?.message ?? 'OAuth URL 생성 실패')
-      return null
-    }
-    return data.url
-  }
 
   const handleGoogleLogin = async () => {
     setError(null)
-
-    // ── Tauri: 시스템 브라우저 + noteplan:// 딥링크 ───────────────────────────
-    if (isTauri()) {
-      setWaiting(true)
-      const url = await desktopOAuthUrl()
-      if (!url) { setWaiting(false); return }
-      const { openUrl } = await import('@tauri-apps/plugin-opener')
-      await openUrl(url)
-      return
+    if (isTauri()) setWaiting(true)
+    const { error: oauthErr } = await startGoogleOAuth(supabase)
+    if (oauthErr) {
+      setError(oauthErr)
+      setWaiting(false)
     }
-
-    // ── 웹앱: 같은 창 redirect ────────────────────────────────────────────────
-    await supabase.auth.signInWithOAuth({
-      provider: 'google',
-      options: {
-        redirectTo: `${window.location.origin}/auth/callback`,
-        scopes: SCOPES,
-        queryParams: { access_type: 'offline', prompt: 'consent' },
-      },
-    })
   }
 
   return (

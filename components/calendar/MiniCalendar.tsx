@@ -5,7 +5,7 @@ import {
   addMonths, subMonths, parseISO,
   getISOWeek, getISOWeekYear,
 } from 'date-fns'
-import { useEffect } from 'react'
+import { useEffect, useRef } from 'react'
 import { useCalendarStore } from '@/lib/stores/calendarStore'
 import { useCalendarEventStore } from '@/lib/stores/calendarEventStore'
 import { useAuthStore } from '@/lib/stores/authStore'
@@ -13,6 +13,8 @@ import { useTaskDotStore, hasOpenTask } from '@/lib/stores/taskDotStore'
 import { fetchAllCalendarEventsForRange } from '@/lib/google/calendar'
 import { getNoteSummariesByDateRange } from '@/lib/db/noteRepository'
 import { useRouter } from 'next/navigation'
+import { startGoogleOAuth } from '@/lib/auth/googleOAuth'
+import { createClient } from '@/lib/supabase/client'
 
 const WEEKDAYS = ['Su', 'Mo', 'Tu', 'We', 'Th', 'Fr', 'Sa']
 
@@ -20,13 +22,16 @@ export default function MiniCalendar() {
   const router = useRouter()
   const { selectedDate, setSelectedDate, today, viewMonthDate: viewDate, setViewMonthDate: setViewDate } = useCalendarStore()
 
-  const { googleAccessToken } = useAuthStore()
+  const { googleAccessToken, googleAuthError, googleRefreshToken, setGoogleAuthError } = useAuthStore()
   const {
     calendars, enabledCalendarIds,
     eventsByDate, mergeEvents,
     fetchingMonths, setFetchingMonth,
   } = useCalendarEventStore()
   const { taskDates, setTaskDates } = useTaskDotStore()
+
+  // 토큰이 바뀌면(재연결/자동갱신) 캐시를 무시하고 강제 재fetch
+  const fetchedTokenRef = useRef<string | null>(null)
 
   const monthStart = startOfMonth(viewDate)
   const monthEnd   = endOfMonth(viewDate)
@@ -42,13 +47,17 @@ export default function MiniCalendar() {
   useEffect(() => {
     if (!googleAccessToken || calendars.length === 0) return
     const monthKey = format(viewDate, 'yyyy-MM')
-    if (fetchingMonths.has(monthKey)) return
 
-    // 이미 이 월의 날짜 중 하나라도 fetch된 게 있으면 skip (toggleCalendar 후 재fetch는 캐시 삭제로 처리)
+    // 토큰이 바뀌었으면 캐시 무시하고 재fetch (재연결/자동갱신 즉시 반영)
+    const tokenChanged = fetchedTokenRef.current !== googleAccessToken
+    // 토큰 변경 시 진행 중인 fetch가 있어도 무시 (race condition 방지)
+    if (fetchingMonths.has(monthKey) && !tokenChanged) return
     const startStr = format(calStart, 'yyyy-MM-dd')
     const endStr   = format(calEnd,   'yyyy-MM-dd')
-    const allFetched = allDays.every(d => eventsByDate[format(d, 'yyyy-MM-dd')] !== undefined)
+    const allFetched = !tokenChanged &&
+      allDays.every(d => eventsByDate[format(d, 'yyyy-MM-dd')] !== undefined)
     if (allFetched) return
+    fetchedTokenRef.current = googleAccessToken
 
     setFetchingMonth(monthKey, true)
     fetchAllCalendarEventsForRange(googleAccessToken, calendars, enabledCalendarIds, startStr, endStr)
@@ -61,7 +70,13 @@ export default function MiniCalendar() {
         })
         mergeEvents(full)
       })
-      .catch(err => console.error('[MiniCalendar fetch]', err))
+      .catch(err => {
+        console.error('[MiniCalendar fetch]', err)
+        // 토큰 만료인데 refresh token이 없으면(구버전 로그인) 갱신으로 못 살림 → 재연결 배너
+        if (err instanceof Error && err.message === 'GOOGLE_TOKEN_EXPIRED' && !googleRefreshToken) {
+          setGoogleAuthError('구글 토큰이 만료됐습니다. 재연결이 필요합니다.')
+        }
+      })
       .finally(() => setFetchingMonth(monthKey, false))
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [googleAccessToken, calendars, enabledCalendarIds, viewDate])
@@ -102,6 +117,20 @@ export default function MiniCalendar() {
 
   return (
     <div className="p-3">
+      {/* 토큰 갱신 실패 배너 — 재연결 유도 */}
+      {googleAuthError && (
+        <div className="mb-2 rounded-md bg-red-500/15 border border-red-500/30 px-2.5 py-2 text-[11px] text-red-300">
+          <div className="font-semibold mb-1">캘린더 연결 만료</div>
+          <div className="text-red-300/70 mb-1.5 break-words leading-snug">{googleAuthError}</div>
+          <button
+            onClick={() => startGoogleOAuth(createClient())}
+            className="px-2 py-0.5 rounded bg-red-500/30 hover:bg-red-500/50 text-red-100 transition-colors"
+          >
+            재연결
+          </button>
+        </div>
+      )}
+
       {/* Month navigation */}
       <div className="flex items-center justify-between mb-3">
         <button

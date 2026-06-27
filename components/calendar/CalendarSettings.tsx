@@ -2,6 +2,7 @@
 import { useState, useRef, useEffect } from 'react'
 import { createPortal } from 'react-dom'
 import { createClient } from '@/lib/supabase/client'
+import { startGoogleOAuth } from '@/lib/auth/googleOAuth'
 import { useCalendarEventStore } from '@/lib/stores/calendarEventStore'
 
 export default function CalendarSettings() {
@@ -21,15 +22,11 @@ export default function CalendarSettings() {
   }, [open])
 
   async function handleReconnect() {
+    setOpen(false)
     const supabase = createClient()
-    await supabase.auth.signInWithOAuth({
-      provider: 'google',
-      options: {
-        redirectTo: `${window.location.origin}/auth/callback`,
-        scopes: 'https://www.googleapis.com/auth/calendar.readonly https://www.googleapis.com/auth/calendar.events',
-        queryParams: { access_type: 'offline', prompt: 'consent' },
-      },
-    })
+    // Tauri는 시스템 브라우저 + noteplan:// 딥링크, 웹은 같은 창 redirect
+    // (콜백은 전역 TauriAuthDeepLink 핸들러가 처리)
+    await startGoogleOAuth(supabase)
   }
 
   const panel = open && (

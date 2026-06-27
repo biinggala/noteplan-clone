@@ -2,6 +2,7 @@
 import { Suspense, useEffect, useState } from 'react'
 import { useRouter, useSearchParams } from 'next/navigation'
 import { createClient } from '@/lib/supabase/client'
+import { exchangeGoogleCode } from '@/lib/auth/googleOAuth'
 
 // 웹앱 OAuth 콜백 — Supabase가 ?code=... 로 리다이렉트
 // (정적 export 호환: 서버 route handler 대신 클라이언트에서 code 교환)
@@ -11,17 +12,14 @@ function CallbackInner() {
   const [error, setError] = useState<string | null>(null)
 
   useEffect(() => {
-    const code = params.get('code')
-    if (!code) {
+    if (!params.get('code')) {
       router.replace('/login?error=no_code')
       return
     }
     const supabase = createClient()
-    supabase.auth.exchangeCodeForSession(code).then(({ error }) => {
-      if (error) {
-        setError(error.message)
-        return
-      }
+    // exchangeGoogleCode가 code 교환 + provider refresh token 캡처까지 처리
+    exchangeGoogleCode(supabase, window.location.href).then(({ error }) => {
+      if (error) { setError(error); return }
       router.replace('/')
     })
   }, []) // eslint-disable-line react-hooks/exhaustive-deps

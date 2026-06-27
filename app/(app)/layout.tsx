@@ -9,10 +9,11 @@ import ThemeProvider from '@/components/ThemeProvider'
 import { createClient } from '@/lib/supabase/client'
 import { useAuthStore } from '@/lib/stores/authStore'
 import { useEventNotifications } from '@/lib/notifications/useEventNotifications'
+import { refreshGoogleAccessToken } from '@/lib/google/auth'
 
 export default function AppLayout({ children }: { children: React.ReactNode }) {
   const router = useRouter()
-  const { session, loading, setSession, setLoading } = useAuthStore()
+  const { session, loading, setSession, setLoading, googleRefreshToken, setGoogleToken, setGoogleAuthError } = useAuthStore()
   const supabase = createClient()
   useEventNotifications()  // 캘린더 이벤트 10분 전 알림
 
@@ -31,6 +32,26 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
 
     return () => subscription.unsubscribe()
   }, [])
+
+  // ── Google access token 자동 갱신 (시작 시 + 50분마다) ───────────────────
+  // access token은 ~1시간 만료 → refresh token으로 갱신해 재인증 없이 유지
+  useEffect(() => {
+    if (!googleRefreshToken) return
+    let cancelled = false
+    const doRefresh = async () => {
+      const { token, error } = await refreshGoogleAccessToken(googleRefreshToken)
+      if (cancelled) return
+      if (token) {
+        setGoogleToken(token)
+        setGoogleAuthError(null)   // 복구됨 → 에러 배너 제거
+      } else {
+        setGoogleAuthError(error ?? '구글 토큰 갱신 실패')
+      }
+    }
+    doRefresh()  // 시작 시 즉시 (만료된 토큰 교체)
+    const id = setInterval(doRefresh, 50 * 60 * 1000)
+    return () => { cancelled = true; clearInterval(id) }
+  }, [googleRefreshToken, setGoogleToken, setGoogleAuthError])
 
   // ── 클라이언트 인증 가드 (정적 export는 middleware 없음) ──────────────────
   useEffect(() => {

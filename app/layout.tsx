@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import "./globals.css";
 import TauriTitlebarDrag from "@/components/TauriTitlebarDrag";
+import TauriAuthDeepLink from "@/components/TauriAuthDeepLink";
 
 export const metadata: Metadata = {
   title: "NotePlan Clone",
@@ -16,6 +17,7 @@ export default function RootLayout({
     <html lang="en" suppressHydrationWarning>
       <body suppressHydrationWarning>
         <TauriTitlebarDrag />
+        <TauriAuthDeepLink />
         {children}
       </body>
     </html>
