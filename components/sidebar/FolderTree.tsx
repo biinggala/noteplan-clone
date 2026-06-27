@@ -416,6 +416,34 @@ export default function FolderTree() {
     await loadData()
   }
 
+  // tree(폴더 내) + unfiledNotes 양쪽에서 노트 검색
+  const findNote = (noteId: string): Note | undefined => {
+    const inUnfiled = unfiledNotes.find(n => n.id === noteId)
+    if (inUnfiled) return inUnfiled
+    const search = (items: FolderWithData[]): Note | undefined => {
+      for (const item of items) {
+        const f = item.notes.find(n => n.id === noteId)
+        if (f) return f
+        const c = search(item.children)
+        if (c) return c
+      }
+    }
+    return search(tree)
+  }
+
+  const handleRenameNote = async (noteId: string) => {
+    setContextMenu(null)
+    const note = findNote(noteId)
+    if (!note) return
+    const raw = await showInputDialog('노트 이름 변경', '새 이름 입력...', note.title)
+    const name = raw?.replace(/[/\\]/g, '').trim()
+    if (!name || name === note.title) return
+    // filePath의 파일명(베이스네임)도 함께 변경
+    const newPath = note.filePath.replace(/[^/]+\.md$/, `${name}.md`)
+    await upsertNote({ ...note, title: name, filePath: newPath })
+    await loadData()
+  }
+
   return (
     <div className="flex-1 overflow-y-auto relative">
       {tree.map(folder => (
@@ -455,6 +483,7 @@ export default function FolderTree() {
                 <button
                   key={note.id}
                   onClick={() => router.push(`/notes?id=${note.id}`)}
+                  onContextMenu={(e) => handleContextMenu(e, 'note', note.id)}
                   className={`flex items-center gap-1.5 w-full pl-7 pr-2 py-1 rounded text-xs transition-colors
                     ${activeId === note.id
                       ? 'bg-blue-500/20 text-blue-300'
@@ -501,6 +530,9 @@ export default function FolderTree() {
             <>
               <MenuItem onClick={() => { setContextMenu(null); router.push(`/notes?id=${contextMenu.id}`) }}>
                 열기
+              </MenuItem>
+              <MenuItem onClick={() => handleRenameNote(contextMenu.id)}>
+                이름 변경
               </MenuItem>
               <div className="border-t border-[var(--border)] my-1" />
               <MenuItem danger onClick={() => handleDeleteNote(contextMenu.id)}>

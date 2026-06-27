@@ -12,7 +12,8 @@ import type { Note } from '@/types/note'
 import FolderTree from './FolderTree'
 import ThemePicker from '@/components/ThemePicker'
 import ImportModal from '@/components/import/ImportModal'
-import { getNotesByTag, getNotesByMention, getFolders, upsertNote } from '@/lib/db/noteRepository'
+import { getFolders, upsertNote } from '@/lib/db/noteRepository'
+import { extractTags, extractMentions } from '@/lib/parser/noteParser'
 import { v4 as uuidv4 } from 'uuid'
 import type { Folder } from '@/types/note'
 
@@ -64,19 +65,20 @@ export default function LeftSidebar() {
   const [importOpen, setImportOpen] = useState(false)
   const [newNoteOpen, setNewNoteOpen] = useState(false)
 
-  // Merge tags/mentions from all saved notes + the currently-editing activeNote
-  // so the Tags tab updates in real-time as the user types.
+  // 태그/멘션은 노트 content에서 직접 재파싱한다.
+  // (저장된 n.tags/n.mentions는 과거 정규식으로 파싱돼 #a/b 같은 계층 경로가
+  //  잘려 있을 수 있으므로, 항상 현재 파서로 content를 다시 읽어 단일 진실원천으로 삼음)
   const allTags = useMemo(() => {
-    const fromNotes = notes.flatMap(n => n.tags)
-    const fromActive = activeNote?.tags ?? []
+    const fromNotes = notes.flatMap(n => extractTags(n.content ?? ''))
+    const fromActive = activeNote?.content ? extractTags(activeNote.content) : []
     return [...new Set([...fromNotes, ...fromActive])].sort()
-  }, [notes, activeNote?.tags])
+  }, [notes, activeNote?.content])
 
   const allMentions = useMemo(() => {
-    const fromNotes = notes.flatMap(n => n.mentions)
-    const fromActive = activeNote?.mentions ?? []
+    const fromNotes = notes.flatMap(n => extractMentions(n.content ?? ''))
+    const fromActive = activeNote?.content ? extractMentions(activeNote.content) : []
     return [...new Set([...fromNotes, ...fromActive])].sort()
-  }, [notes, activeNote?.mentions])
+  }, [notes, activeNote?.content])
 
   const todayDate = new Date()
   const yesterdayStr = format(subDays(todayDate, 1), 'yyyy-MM-dd')
@@ -188,7 +190,7 @@ export default function LeftSidebar() {
         <TagsPanel
           allTags={allTags}
           allMentions={allMentions}
-          tagIcon={NAV_ICON.tag}
+          notes={notes}
         />
       )}
 
@@ -243,51 +245,159 @@ export default function LeftSidebar() {
   )
 }
 
-// ── TagsPanel ─────────────────────────────────────────────────────────────────
+// ── TagsPanel (계층 태그/멘션 트리) ──────────────────────────────────────────
 
 interface TagNote { id: string; title: string; type: string; date?: string }
+
+interface TagTreeNode {
+  name: string       // 마지막 세그먼트 (예: "reflection")
+  fullPath: string   // 전체 경로 (예: "journal/reflection")
+  isReal: boolean    // 실제 노트에 쓰인 태그인지 (네임스페이스만이 아니라)
+  children: TagTreeNode[]
+}
+
+// "/"로 구분된 태그 경로 목록 → 계층 트리
+function buildTagTree(paths: string[]): TagTreeNode[] {
+  const realSet = new Set(paths)
+  const roots: TagTreeNode[] = []
+  const map = new Map<string, TagTreeNode>()
+
+  for (const path of paths) {
+    const segs = path.split('/').filter(Boolean)
+    let prefix = ''
+    let siblings = roots
+    for (let i = 0; i < segs.length; i++) {
+      prefix = i === 0 ? segs[i] : `${prefix}/${segs[i]}`
+      let node = map.get(prefix)
+      if (!node) {
+        node = { name: segs[i], fullPath: prefix, isReal: realSet.has(prefix), children: [] }
+        map.set(prefix, node)
+        siblings.push(node)
+      }
+      siblings = node.children
+    }
+  }
+
+  const sortNodes = (nodes: TagTreeNode[]) => {
+    nodes.sort((a, b) => a.name.localeCompare(b.name))
+    nodes.forEach(n => sortNodes(n.children))
+  }
+  sortNodes(roots)
+  return roots
+}
 
 function TagsPanel({
   allTags,
   allMentions,
-  tagIcon,
+  notes,
 }: {
   allTags: string[]
   allMentions: string[]
-  tagIcon: React.ReactNode
+  notes: Note[]
 }) {
   const router = useRouter()
   const [selected, setSelected] = useState<{ kind: 'tag' | 'mention'; value: string } | null>(null)
   const [tagNotes, setTagNotes] = useState<TagNote[]>([])
-  const [loading, setLoading] = useState(false)
+  const [expanded, setExpanded] = useState<Set<string>>(new Set())
 
-  const handleSelect = async (kind: 'tag' | 'mention', value: string) => {
+  const tagTree = useMemo(() => buildTagTree(allTags), [allTags])
+  const mentionTree = useMemo(() => buildTagTree(allMentions), [allMentions])
+
+  const toggleExpand = (key: string) =>
+    setExpanded(prev => {
+      const next = new Set(prev)
+      next.has(key) ? next.delete(key) : next.add(key)
+      return next
+    })
+
+  // content를 직접 재파싱해 필터 (저장된 tags/mentions에 의존하지 않음 → 계층 경로 정확)
+  const handleSelect = (kind: 'tag' | 'mention', value: string) => {
     if (selected?.kind === kind && selected.value === value) {
-      setSelected(null)
-      setTagNotes([])
-      return
+      setSelected(null); setTagNotes([]); return
     }
     setSelected({ kind, value })
-    setLoading(true)
-    try {
-      const notes = kind === 'tag'
-        ? await getNotesByTag(value)
-        : await getNotesByMention(value)
-      setTagNotes(notes.map(n => ({ id: n.id, title: n.title, type: n.type, date: n.date })))
-    } finally {
-      setLoading(false)
-    }
+    const matched = notes.filter(n => {
+      const found = kind === 'tag'
+        ? extractTags(n.content ?? '')
+        : extractMentions(n.content ?? '')
+      return found.includes(value)
+    })
+    setTagNotes(matched.map(n => ({ id: n.id, title: n.title, type: n.type, date: n.date })))
   }
 
   const noteLabel = (n: TagNote) =>
     n.type === 'daily' && n.date ? n.date :
     n.type === 'weekly' && n.date ? `Week of ${n.date}` :
     n.title
+  const noteIcon = (n: TagNote) =>
+    (n.type === 'daily' || n.type === 'weekly' || n.type === 'monthly') ? '📅' : '📄'
 
-  const noteIcon = (n: TagNote) => {
-    if (n.type === 'daily' || n.type === 'weekly' || n.type === 'monthly')
-      return '📅'
-    return '📄'
+  // 한 노드(+하위) 재귀 렌더
+  const renderNode = (node: TagTreeNode, kind: 'tag' | 'mention', depth: number): React.ReactNode => {
+    const key = `${kind}:${node.fullPath}`
+    const isOpen = selected?.kind === kind && selected.value === node.fullPath
+    const isExpanded = expanded.has(key)
+    const hasChildren = node.children.length > 0
+    const accent = kind === 'tag' ? 'text-blue-400' : 'text-purple-400'
+    const sel = kind === 'tag' ? 'bg-blue-500/20 text-blue-300' : 'bg-purple-500/20 text-purple-300'
+
+    // 자식 있는 노드 → 클릭 시 expand/collapse
+    // 리프 노드 → 클릭 시 노트 목록 표시
+    const handleRowClick = () => {
+      if (hasChildren) {
+        toggleExpand(key)
+      } else {
+        handleSelect(kind, node.fullPath)
+      }
+    }
+
+    return (
+      <div key={key}>
+        <div
+          onClick={handleRowClick}
+          className={`flex items-center gap-1 rounded text-sm cursor-pointer transition-colors pr-2 py-1
+            ${isOpen ? sel : 'text-[var(--text-secondary)] hover:bg-white/5'}`}
+          style={{ paddingLeft: 6 + depth * 14 }}
+        >
+          {/* chevron (자식 있을 때만) */}
+          <span className="w-3.5 flex-shrink-0 flex items-center justify-center">
+            {hasChildren && (
+              <svg className={`w-2.5 h-2.5 text-[var(--text-muted)] transition-transform ${isExpanded ? 'rotate-90' : ''}`}
+                fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M9 5l7 7-7 7" />
+              </svg>
+            )}
+          </span>
+          <span className={`flex-shrink-0 font-semibold ${accent}`}>{kind === 'tag' ? '#' : '@'}</span>
+          <span className={`truncate ${accent}`}>{node.name}</span>
+        </div>
+
+        {/* 리프 노드 선택 시 노트 목록 (인라인) */}
+        {isOpen && !hasChildren && (
+          <div className="mb-1 flex flex-col gap-0.5" style={{ paddingLeft: 6 + (depth + 1) * 14 }}>
+            {tagNotes.length === 0 && (
+              <div className="px-2 py-1 text-xs text-[var(--text-muted)]">노트 없음</div>
+            )}
+            {tagNotes.map(n => (
+              <button
+                key={n.id}
+                onClick={() => n.type === 'daily' && n.date
+                  ? router.push(`/daily?date=${n.date}`)
+                  : router.push(`/notes?id=${n.id}`)}
+                className="flex items-center gap-1.5 px-2 py-1 rounded text-xs text-[var(--text-muted)]
+                  hover:bg-white/5 hover:text-[var(--text-secondary)] text-left w-full transition-colors"
+              >
+                <span className="text-[10px]">{noteIcon(n)}</span>
+                <span className="truncate">{noteLabel(n)}</span>
+              </button>
+            ))}
+          </div>
+        )}
+
+        {/* 하위 태그 */}
+        {hasChildren && isExpanded && node.children.map(c => renderNode(c, kind, depth + 1))}
+      </div>
+    )
   }
 
   return (
@@ -295,109 +405,11 @@ function TagsPanel({
       {allTags.length === 0 && allMentions.length === 0 && (
         <div className="px-2 py-1 text-xs text-[var(--text-muted)]">태그가 없습니다</div>
       )}
-
-      {/* Tags */}
-      {allTags.map(tag => {
-        const isOpen = selected?.kind === 'tag' && selected.value === tag
-        return (
-          <div key={`tag-${tag}`}>
-            <button
-              onClick={() => handleSelect('tag', tag)}
-              className={`flex items-center gap-2 w-full px-2 py-1 rounded text-sm transition-colors
-                ${isOpen
-                  ? 'bg-blue-500/20 text-blue-300'
-                  : 'text-[var(--text-secondary)] hover:bg-white/5'
-                }`}
-            >
-              {tagIcon}
-              <span className="text-blue-400">#{tag}</span>
-              {isOpen && (
-                <svg className="w-3 h-3 ml-auto text-blue-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
-                </svg>
-              )}
-            </button>
-
-            {isOpen && (
-              <div className="ml-4 mb-1 flex flex-col gap-0.5">
-                {loading && (
-                  <div className="px-2 py-1 text-xs text-[var(--text-muted)]">로딩 중...</div>
-                )}
-                {!loading && tagNotes.length === 0 && (
-                  <div className="px-2 py-1 text-xs text-[var(--text-muted)]">노트 없음</div>
-                )}
-                {!loading && tagNotes.map(n => (
-                  <button
-                    key={n.id}
-                    onClick={() => n.type === 'daily' && n.date
-                      ? router.push(`/daily?date=${n.date}`)
-                      : router.push(`/notes?id=${n.id}`)
-                    }
-                    className="flex items-center gap-1.5 px-2 py-1 rounded text-xs text-[var(--text-muted)]
-                      hover:bg-white/5 hover:text-[var(--text-secondary)] text-left w-full transition-colors"
-                  >
-                    <span className="text-[10px]">{noteIcon(n)}</span>
-                    <span className="truncate">{noteLabel(n)}</span>
-                  </button>
-                ))}
-              </div>
-            )}
-          </div>
-        )
-      })}
-
-      {/* Mentions */}
-      {allMentions.map(mention => {
-        const isOpen = selected?.kind === 'mention' && selected.value === mention
-        return (
-          <div key={`mention-${mention}`}>
-            <button
-              onClick={() => handleSelect('mention', mention)}
-              className={`flex items-center gap-2 w-full px-2 py-1 rounded text-sm transition-colors
-                ${isOpen
-                  ? 'bg-purple-500/20 text-purple-300'
-                  : 'text-[var(--text-secondary)] hover:bg-white/5'
-                }`}
-            >
-              <svg className="w-4 h-4 text-purple-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5}
-                  d="M16 12a4 4 0 10-8 0 4 4 0 008 0zm0 0v1.5a2.5 2.5 0 005 0V12a9 9 0 10-9 9m4.5-1.206a8.959 8.959 0 01-4.5 1.207" />
-              </svg>
-              <span className="text-purple-400">@{mention}</span>
-              {isOpen && (
-                <svg className="w-3 h-3 ml-auto text-purple-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
-                </svg>
-              )}
-            </button>
-
-            {isOpen && (
-              <div className="ml-4 mb-1 flex flex-col gap-0.5">
-                {loading && (
-                  <div className="px-2 py-1 text-xs text-[var(--text-muted)]">로딩 중...</div>
-                )}
-                {!loading && tagNotes.length === 0 && (
-                  <div className="px-2 py-1 text-xs text-[var(--text-muted)]">노트 없음</div>
-                )}
-                {!loading && tagNotes.map(n => (
-                  <button
-                    key={n.id}
-                    onClick={() => n.type === 'daily' && n.date
-                      ? router.push(`/daily?date=${n.date}`)
-                      : router.push(`/notes?id=${n.id}`)
-                    }
-                    className="flex items-center gap-1.5 px-2 py-1 rounded text-xs text-[var(--text-muted)]
-                      hover:bg-white/5 hover:text-[var(--text-secondary)] text-left w-full transition-colors"
-                  >
-                    <span className="text-[10px]">{noteIcon(n)}</span>
-                    <span className="truncate">{noteLabel(n)}</span>
-                  </button>
-                ))}
-              </div>
-            )}
-          </div>
-        )
-      })}
+      {tagTree.map(n => renderNode(n, 'tag', 0))}
+      {mentionTree.length > 0 && tagTree.length > 0 && (
+        <div className="border-t border-[var(--border)] my-1" />
+      )}
+      {mentionTree.map(n => renderNode(n, 'mention', 0))}
     </div>
   )
 }

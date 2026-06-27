@@ -75,6 +75,10 @@ export const noteplanTheme = [
       fontSize: '1em !important',
       fontWeight: 'normal !important',
     },
+    // setext 헤딩(아래 ---)이라도 태그/멘션/위키링크 색은 유지
+    '.cm-line.cm-setext-header span.cm-tag':      { color: '#60a5fa !important' },
+    '.cm-line.cm-setext-header span.cm-mention':  { color: '#a78bfa !important' },
+    '.cm-line.cm-setext-header span.cm-wikilink': { color: '#34d399 !important' },
     '.cm-scroller': { overflow: 'auto' },
     '&.cm-focused': { outline: 'none' },
   }),
