@@ -122,7 +122,7 @@ export default function LeftSidebar() {
           titlebar-drag CSS class → -webkit-app-region: drag 적용     */}
       {/* .electron-drag 는 레거시 클래스명 — 현재 Tauri 타이틀바 드래그(TauriTitlebarDrag)가 사용 */}
       <div
-        data-tauri-drag-region className="electron-drag flex-shrink-0 flex items-center border-b border-[var(--border)]"
+        data-tauri-drag-region className="electron-drag flex-shrink-0 flex items-center"
         style={{ height: 52 }}
       >
         <span

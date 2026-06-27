@@ -116,7 +116,8 @@ export default function MiniCalendar() {
   const selectedDateObj = parseISO(selectedDate)
 
   return (
-    <div className="p-3">
+    // 상단 영역을 창 드래그 영역으로 (별도 빈 spacer 제거) — 날짜/월 버튼은 TauriTitlebarDrag가 드래그에서 제외
+    <div data-tauri-drag-region className="electron-drag px-3 pb-3 pt-4">
       {/* 토큰 갱신 실패 배너 — 재연결 유도 */}
       {googleAuthError && (
         <div className="mb-2 rounded-md bg-red-500/15 border border-red-500/30 px-2.5 py-2 text-[11px] text-red-300">

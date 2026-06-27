@@ -13,13 +13,7 @@ export default function RightSidebar() {
 
   return (
     <div className="flex flex-col h-full">
-      {/* Left sidebar 헤더(52px)와 높이 맞추는 spacer */}
-      <div
-        data-tauri-drag-region className="electron-drag flex-shrink-0 border-b border-[var(--border)]"
-        style={{ height: 52 }}
-      />
-
-      {/* Mini Calendar */}
+      {/* Mini Calendar — 자체 상단 드래그 영역 보유 (빈 spacer 제거) */}
       <MiniCalendar />
 
       {/* Divider */}
