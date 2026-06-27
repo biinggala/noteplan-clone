@@ -120,7 +120,7 @@ export default function LeftSidebar() {
           traffic light 3버튼이 x≈8–72, y≈8–20 에 macOS가 직접 그림.
           80px 왼쪽 여백을 비워두고 앱 이름을 표시.
           titlebar-drag CSS class → -webkit-app-region: drag 적용     */}
-      {/* -webkit-app-region은 Electron insertCSS로만 주입 (CSS class 방식은 Electron에서 불안정) */}
+      {/* .electron-drag 는 레거시 클래스명 — 현재 Tauri 타이틀바 드래그(TauriTitlebarDrag)가 사용 */}
       <div
         data-tauri-drag-region className="electron-drag flex-shrink-0 flex items-center border-b border-[var(--border)]"
         style={{ height: 52 }}
