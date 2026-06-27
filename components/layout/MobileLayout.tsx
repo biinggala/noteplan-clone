@@ -96,9 +96,8 @@ export default function MobileLayout({ left, center, right }: MobileLayoutProps)
                 bg-[var(--bg-primary)] sidebar-glass
                 ${drawer === 'left' ? 'left-0 border-r' : 'right-0 border-l'} border-[var(--border)]`}
               style={{
-                // Dynamic Island/상태바에 내용이 가리지 않도록 safe-area 패딩
+                // 상태바/Dynamic Island 가림 방지 (하단은 풋터가 채우므로 패딩 X)
                 paddingTop: 'env(safe-area-inset-top)',
-                paddingBottom: 'env(safe-area-inset-bottom)',
               }}
             >
               {drawer === 'left' ? left : right}
