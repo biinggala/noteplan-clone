@@ -8,6 +8,7 @@ import { DRAG_TYPE, type LineDragData } from '@/components/editor/extensions/dra
 import { formatTimeRange } from '@/lib/parser/timeBlockParser'
 import { useAuthStore } from '@/lib/stores/authStore'
 import { useCalendarEventStore } from '@/lib/stores/calendarEventStore'
+import { useTimelineDragStore } from '@/lib/dnd/timelineDragStore'
 import {
   fetchCalendarList,
   fetchAllCalendarEventsForRange,
@@ -67,6 +68,9 @@ export default function DayTimeline({ date, days = 1 }: DayTimelineProps) {
     setCalendars, eventsByDate, setFetching, fetchingDates,
     mergeEvents, addEvent, removeEvent, patchEvent,
   } = useCalendarEventStore()
+
+  // pointer 드래그 미리보기 (pointerLineDrag → 슬롯 위 점선 블록)
+  const dragPreview = useTimelineDragStore(s => s.preview)
 
   // ── Local state ───────────────────────────────────────────────────────────
   const [dragOverSlot, setDragOverSlot] = useState<{
@@ -1070,6 +1074,9 @@ export default function DayTimeline({ date, days = 1 }: DayTimelineProps) {
               {HOURS.map(hour => (
                 <div
                   key={hour}
+                  data-tl-slot=""
+                  data-tl-date={d}
+                  data-tl-hour={hour}
                   className="absolute left-0 right-0 border-t border-[var(--border)]"
                   style={{ top: hour * SLOT_H, height: SLOT_H, zIndex: 1 }}
                   onDragOver={e => handleDragOver(e, d, hour)}
@@ -1099,22 +1106,29 @@ export default function DayTimeline({ date, days = 1 }: DayTimelineProps) {
                 />
               )}
 
-              {/* Drag-over indicator */}
-              {dragOverSlot?.date === d && (
-                <div
-                  className="absolute left-1 right-1 rounded border border-dashed
-                             border-blue-400/70 text-[10px] text-blue-400/80 px-2 pt-0.5 pointer-events-none"
-                  style={{
-                    top:        dragOverSlot.hour * SLOT_H + dragOverSlot.minute * PX_PER_MIN,
-                    height:     dragOverSlot.duration * PX_PER_MIN,
-                    background: 'rgba(59,130,246,0.08)',
-                    transition: 'top 60ms ease, height 60ms ease',
-                    zIndex:     30,
-                  }}
-                >
-                  {formatTime(dragOverSlot.hour, dragOverSlot.minute)}
-                </div>
-              )}
+              {/* Drag-over indicator (HTML5 dragOverSlot 또는 pointer dragPreview) */}
+              {(() => {
+                const over = dragOverSlot?.date === d ? dragOverSlot
+                           : dragPreview?.date === d ? dragPreview : null
+                if (!over) return null
+                return (
+                  <div
+                    className="absolute left-1 right-1 rounded-md border border-dashed
+                               border-blue-400/80 text-[10px] font-medium text-blue-300 px-2 pt-0.5 pointer-events-none
+                               flex items-start"
+                    style={{
+                      top:        over.hour * SLOT_H + over.minute * PX_PER_MIN,
+                      height:     over.duration * PX_PER_MIN,
+                      background: 'rgba(59,130,246,0.14)',
+                      boxShadow:  '0 0 0 1px rgba(59,130,246,0.25)',
+                      transition: 'top 60ms ease, height 60ms ease',
+                      zIndex:     30,
+                    }}
+                  >
+                    {formatTimeRange(over.hour, over.minute, over.duration)}
+                  </div>
+                )
+              })()}
 
               {/* Google Calendar 이벤트 */}
               {(eventsByDate[d] ?? []).map(ev => renderCalendarEvent(ev, d))}

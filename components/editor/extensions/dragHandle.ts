@@ -8,6 +8,7 @@ import {
   GutterMarker,
 } from '@codemirror/view'
 import { StateField, StateEffect, RangeSetBuilder } from '@codemirror/state'
+import { startLineDrag, wireReorderIndicator } from '@/lib/dnd/pointerLineDrag'
 
 // ─── Drag payload ─────────────────────────────────────────────────────────────
 
@@ -60,7 +61,6 @@ class DragHandleMarker extends GutterMarker {
   toDOM(view: EditorView): Node {
     const el = document.createElement('div')
     el.className = this.active ? 'cm-drag-handle cm-drag-handle--on' : 'cm-drag-handle'
-    el.setAttribute('draggable', 'true')
     el.setAttribute('title', '드래그: 줄 이동 / 타임라인에 드롭: 시간 블록 추가')
 
     el.innerHTML = `<svg width="10" height="14" viewBox="0 0 10 14" fill="currentColor">
@@ -83,25 +83,12 @@ class DragHandleMarker extends GutterMarker {
       } catch { /* lineFrom may be stale after doc change */ }
     })
 
-    el.addEventListener('dragstart', (e) => {
+    // pointer 기반 드래그 (HTML5 DnD는 WKWebView에서 동작 안 함)
+    el.addEventListener('pointerdown', (e) => {
       try {
         const line = view.state.doc.lineAt(this.lineFrom)
-        const payload: LineDragData = { type: 'line', lineNumber: line.number, content: line.text }
-        // Store in global for reliable same-page cross-component access
-        ;(window as unknown as Record<string, unknown>)['__npLineDrag'] = payload
-        document.body.setAttribute('data-np-dragging', 'line')
-        if (e.dataTransfer) {
-          e.dataTransfer.effectAllowed = 'move'
-          e.dataTransfer.setData('text/plain', line.text)
-          e.dataTransfer.setData(DRAG_TYPE, JSON.stringify(payload))
-        }
+        startLineDrag(e, view, line.number, line.text)
       } catch { /* lineFrom may be stale after doc change */ }
-    })
-
-    el.addEventListener('dragend', () => {
-      ;(window as unknown as Record<string, unknown>)['__npLineDrag'] = null
-      document.body.removeAttribute('data-np-dragging')
-      view.dispatch({ effects: setDragOverLine.of(-1) })
     })
 
     return el
@@ -167,68 +154,17 @@ function mouseTrackingHandlers() {
   })
 }
 
-// ─── Drop/dragover handlers (line reorder) ────────────────────────────────────
-
-function lineReorderHandler() {
-  return EditorView.domEventHandlers({
-    dragover(e, view) {
-      if (document.body.getAttribute('data-np-dragging') !== 'line') return false
-      e.preventDefault()
-      if (e.dataTransfer) e.dataTransfer.dropEffect = 'move'
-
-      const contentLeft = view.contentDOM.getBoundingClientRect().left + 4
-      const x = Math.max(e.clientX, contentLeft)
-      const pos = view.posAtCoords({ x, y: e.clientY })
-      if (pos != null) {
-        const lineNum = view.state.doc.lineAt(pos).number
-        if (lineNum !== view.state.field(dragOverLineField)) {
-          view.dispatch({ effects: setDragOverLine.of(lineNum) })
-        }
-      }
-      return false
-    },
-
-    dragleave(_e, view) {
-      if (view.state.field(dragOverLineField) !== -1) {
-        view.dispatch({ effects: setDragOverLine.of(-1) })
-      }
-      return false
-    },
-
-    drop(e, view) {
-      view.dispatch({ effects: setDragOverLine.of(-1) })
-
-      if (!e.dataTransfer) return false
-      const raw = e.dataTransfer.getData(DRAG_TYPE)
-      if (!raw) return false
-
-      e.preventDefault()
-      let payload: LineDragData
-      try { payload = JSON.parse(raw) } catch { return false }
-
-      const dropPos = view.posAtCoords({ x: e.clientX, y: e.clientY })
-      if (dropPos == null) return false
-
-      const dragIdx = payload.lineNumber - 1
-      const dropIdx = view.state.doc.lineAt(dropPos).number - 1
-      if (dragIdx === dropIdx) return false
-
-      const lines = view.state.doc.toString().split('\n')
-      const [removed] = lines.splice(dragIdx, 1)
-      const adjusted = dragIdx < dropIdx ? dropIdx - 1 : dropIdx
-      lines.splice(adjusted, 0, removed)
-
-      view.dispatch({
-        changes: { from: 0, to: view.state.doc.length, insert: lines.join('\n') },
-      })
-      return false
-    },
-  })
-}
+// 줄 재정렬/타임라인 드롭은 이제 pointerLineDrag.ts(pointer 이벤트)가 처리.
+// (HTML5 DnD 핸들러는 WKWebView에서 동작 안 해 제거)
 
 // ─── Public extension ──────────────────────────────────────────────────────────
 
 export function dragHandleExtension() {
+  // 재정렬 인디케이터를 pointer 드래그 모듈에 연결
+  wireReorderIndicator(
+    (n) => setDragOverLine.of(n),
+    (view) => view.dispatch({ effects: setDragOverLine.of(-1) }),
+  )
   return [
     hoverLineField,
     dragOverLineField,
@@ -246,6 +182,5 @@ export function dragHandleExtension() {
     }),
     dropIndicatorPlugin,
     mouseTrackingHandlers(),
-    lineReorderHandler(),
   ]
 }

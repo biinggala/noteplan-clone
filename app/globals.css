@@ -92,6 +92,40 @@ html, body {
   transition: color 0.1s;
   user-select: none;
   -webkit-user-select: none;
+  touch-action: none; /* pointer 드래그 중 스크롤 방지 (터치 포함) */
+}
+/* pointer 드래그 고스트 (커서 따라다니는 카드) */
+.np-drag-ghost {
+  position: fixed;
+  left: 0;
+  top: 0;
+  z-index: 9999;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  max-width: 320px;
+  padding: 4px 10px 4px 6px;
+  border-radius: 8px;
+  font-size: 12px;
+  line-height: 1.3;
+  color: var(--text-primary);
+  background: var(--bg-secondary);
+  border: 1px solid var(--border);
+  box-shadow: 0 6px 20px rgb(0 0 0 / 0.35);
+  pointer-events: none;
+  opacity: 0;
+  transform: scale(0.96);
+  transition: opacity 0.1s ease, transform 0.1s ease;
+}
+.np-drag-ghost--on {
+  opacity: 1;
+  transform: scale(1) rotate(-1.5deg);
+}
+.np-drag-ghost__grip { color: var(--text-muted); flex-shrink: 0; display: flex; }
+.np-drag-ghost__text {
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
 }
 .cm-drag-handle--on {
   color: var(--text-muted);
