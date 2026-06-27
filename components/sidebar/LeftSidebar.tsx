@@ -430,9 +430,18 @@ function TagsPanel({
                   <span>{noteIcon(m)}</span>
                   <span className="truncate">{noteRef(m)}</span>
                 </span>
-                <span className="text-xs text-[var(--text-secondary)] line-clamp-2 leading-snug">
-                  {highlightLine(m.lineText, kind, node.fullPath)}
-                </span>
+                {(() => {
+                  // 헤딩(#, ##, ...)은 마커를 숨기고 bold로 표시
+                  const h = m.lineText.match(/^(#{1,6})\s+(.*)$/)
+                  const text = h ? h[2] : m.lineText
+                  return (
+                    <span className={`text-xs line-clamp-2 leading-snug ${
+                      h ? 'font-semibold text-[var(--text-primary)]' : 'text-[var(--text-secondary)]'
+                    }`}>
+                      {highlightLine(text, kind, node.fullPath)}
+                    </span>
+                  )
+                })()}
               </button>
             ))}
           </div>

@@ -189,11 +189,18 @@ export default function CommandBar() {
                     </span>
                     <span className="flex-1 min-w-0 flex flex-col gap-0.5">
                       <span className="truncate">{note.title}</span>
-                      {snippet && (
-                        <span className="text-xs text-[var(--text-muted)] line-clamp-2 leading-snug">
-                          {highlightQuery(snippet, query)}
-                        </span>
-                      )}
+                      {snippet && (() => {
+                        // 헤딩(#, ##, ...)은 마커 숨기고 bold
+                        const h = snippet.match(/^(#{1,6})\s+(.*)$/)
+                        const text = h ? h[2] : snippet
+                        return (
+                          <span className={`text-xs line-clamp-2 leading-snug ${
+                            h ? 'font-medium text-[var(--text-secondary)]' : 'text-[var(--text-muted)]'
+                          }`}>
+                            {highlightQuery(text, query)}
+                          </span>
+                        )
+                      })()}
                     </span>
                     {note.date && (
                       <span className="flex-shrink-0 text-xs text-[var(--text-muted)] mt-0.5">{note.date}</span>
