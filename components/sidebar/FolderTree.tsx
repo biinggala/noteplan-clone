@@ -1,14 +1,14 @@
 'use client'
-import { useState, useEffect, useCallback, useRef } from 'react'
+import { useState, useEffect, useCallback, useRef, useMemo } from 'react'
 import { useRouter, useSearchParams } from 'next/navigation'
 import { useUIStore } from '@/lib/stores/uiStore'
+import { useNoteStore } from '@/lib/stores/noteStore'
 import {
   getFolders,
   createFolder as dbCreateFolder,
   deleteFolder as dbDeleteFolder,
   renameFolder as dbRenameFolder,
-  getNotesByFolder,
-  getUnfiledNotes,
+  getAllNotes,
   upsertNote,
   deleteNote as dbDeleteNote,
 } from '@/lib/db/noteRepository'
@@ -287,17 +287,17 @@ export default function FolderTree() {
   const searchParams = useSearchParams()
   const activeId = searchParams.get('id')
   const { expandedFolders, toggleFolder, expandFolder } = useUIStore()
-  const [tree, setTree] = useState<FolderWithData[]>([])
+  // 노트는 noteStore에서 공유 (LeftSidebar가 getAllNotes로 이미 로드) → 폴더별 N+1 쿼리 제거
+  const { notes, setNotes } = useNoteStore()
+  const [folders, setFolders] = useState<Folder[]>([])
   const [contextMenu, setContextMenu] = useState<ContextMenu>(null)
   const [dialog, setDialog] = useState<Dialog>(null)
-  const [unfiledNotes, setUnfiledNotes] = useState<Note[]>([])
   const [unfiledOpen, setUnfiledOpen] = useState(false)
 
-  const loadData = useCallback(async () => {
-    let folders = await getFolders()
-
-    // Initialize PARA folders (idempotent — check by path)
-    const existingPaths = new Set(folders.map(f => f.path))
+  // 폴더 목록만 네트워크로 (PARA 기본 폴더 idempotent 초기화). 노트 내용은 store에서 파생.
+  const loadFolders = useCallback(async () => {
+    let list = await getFolders()
+    const existingPaths = new Set(list.map(f => f.path))
     let created = false
     for (const name of ['Projects', 'Areas', 'Resources', 'Archive']) {
       if (!existingPaths.has(name)) {
@@ -305,18 +305,31 @@ export default function FolderTree() {
         created = true
       }
     }
-    if (created) folders = await getFolders()
-
-    const notesByFolder: Record<string, Note[]> = {}
-    for (const f of folders) {
-      notesByFolder[f.path] = await getNotesByFolder(f.path)
-    }
-    setTree(buildTree(folders, notesByFolder))
-    // 미분류 노트 로드
-    setUnfiledNotes(await getUnfiledNotes())
+    if (created) list = await getFolders()
+    setFolders(list)
   }, [])
 
-  useEffect(() => { loadData() }, [loadData])
+  // 노트 변경(생성/삭제/이름변경) 후 store 갱신 → tree/unfiled 자동 재파생
+  const reloadNotes = useCallback(async () => {
+    setNotes(await getAllNotes())
+  }, [setNotes])
+
+  useEffect(() => { loadFolders() }, [loadFolders])
+
+  // 폴더 + (store)노트 → 트리. 폴더별 그룹핑을 메모리에서 수행 (네트워크 0)
+  const tree = useMemo(() => {
+    const notesByFolder: Record<string, Note[]> = {}
+    for (const n of notes) {
+      if (n.folder) (notesByFolder[n.folder] ??= []).push(n)
+    }
+    return buildTree(folders, notesByFolder)
+  }, [folders, notes])
+
+  // 미분류 = folder 없는 project 노트 (getUnfiledNotes 동등)
+  const unfiledNotes = useMemo(
+    () => notes.filter(n => !n.folder && n.type === 'project'),
+    [notes]
+  )
 
   // Close context menu on outside click
   useEffect(() => {
@@ -371,7 +384,7 @@ export default function FolderTree() {
     }
     await upsertNote(note)
     expandFolder(folderId)
-    await loadData()
+    await reloadNotes()
     router.push(`/notes?id=${note.id}`)
   }
 
@@ -380,7 +393,7 @@ export default function FolderTree() {
     const name = await showInputDialog('새 폴더 이름', '폴더 이름 입력...')
     if (!name) return
     await dbCreateFolder(name, parentPath)
-    await loadData()
+    await loadFolders()
   }
 
   const handleRenameFolder = async (folderId: string) => {
@@ -397,7 +410,8 @@ export default function FolderTree() {
     const name = await showInputDialog('폴더 이름 변경', '새 이름 입력...', folder.name)
     if (!name || name === folder.name) return
     await dbRenameFolder(folderId, name)
-    await loadData()
+    // 폴더 경로 변경 → 내부 노트의 folder 필드도 갱신될 수 있어 둘 다 새로고침
+    await Promise.all([loadFolders(), reloadNotes()])
   }
 
   const handleDeleteFolder = async (folderId: string) => {
@@ -405,7 +419,8 @@ export default function FolderTree() {
     const ok = await showConfirmDialog('이 폴더를 삭제하시겠습니까?\n(폴더 안의 노트는 유지됩니다)')
     if (!ok) return
     await dbDeleteFolder(folderId)
-    await loadData()
+    // 폴더 삭제 시 내부 노트는 미분류로 이동 → 둘 다 새로고침
+    await Promise.all([loadFolders(), reloadNotes()])
   }
 
   const handleDeleteNote = async (noteId: string) => {
@@ -413,7 +428,7 @@ export default function FolderTree() {
     const ok = await showConfirmDialog('이 노트를 삭제하시겠습니까?')
     if (!ok) return
     await dbDeleteNote(noteId)
-    await loadData()
+    await reloadNotes()
   }
 
   // tree(폴더 내) + unfiledNotes 양쪽에서 노트 검색
@@ -441,7 +456,7 @@ export default function FolderTree() {
     // filePath의 파일명(베이스네임)도 함께 변경
     const newPath = note.filePath.replace(/[^/]+\.md$/, `${name}.md`)
     await upsertNote({ ...note, title: name, filePath: newPath })
-    await loadData()
+    await reloadNotes()
   }
 
   return (

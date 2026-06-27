@@ -182,9 +182,10 @@ export default function LeftSidebar() {
       </div>
 
       {/* Tab Content */}
-      {activeTab === 'notes' && (
+      {/* FolderTree는 언마운트하지 않고 숨김만 → 탭 재방문 시 폴더 재요청 없이 즉시 표시 */}
+      <div className={`flex-1 min-h-0 ${activeTab === 'notes' ? 'flex flex-col' : 'hidden'}`}>
         <FolderTree />
-      )}
+      </div>
 
       {activeTab === 'tags' && (
         <TagsPanel
