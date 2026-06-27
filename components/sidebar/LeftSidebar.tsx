@@ -248,7 +248,34 @@ export default function LeftSidebar() {
 
 // ── TagsPanel (계층 태그/멘션 트리) ──────────────────────────────────────────
 
-interface TagNote { id: string; title: string; type: string; date?: string }
+// 결과는 노트 단위가 아니라 키워드가 포함된 "라인" 단위 (실제 NotePlan 방식)
+interface LineMatch {
+  noteId: string
+  noteType: string
+  date?: string
+  title: string
+  lineText: string   // 매칭된 라인 (trim)
+}
+
+const KO_RANGE = '가-힣ㄱ-ㅎㅏ-ㅣ'
+function escapeRegExp(s: string) { return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') }
+
+// 라인에서 #tag/@mention 토큰을 강조해 React 노드로 반환
+function highlightLine(line: string, kind: 'tag' | 'mention', value: string): React.ReactNode[] {
+  const sigil = kind === 'tag' ? '#' : '@'
+  const accent = kind === 'tag' ? 'text-blue-400' : 'text-purple-400'
+  // #value 또는 #value/sub ... 토큰 매칭 (한글 포함)
+  const re = new RegExp(`(${sigil}${escapeRegExp(value)}[\\w/${KO_RANGE}]*)`, 'g')
+  const parts: React.ReactNode[] = []
+  let last = 0, m: RegExpExecArray | null, i = 0
+  while ((m = re.exec(line)) !== null) {
+    if (m.index > last) parts.push(line.slice(last, m.index))
+    parts.push(<span key={i++} className={`${accent} font-medium`}>{m[0]}</span>)
+    last = m.index + m[0].length
+  }
+  if (last < line.length) parts.push(line.slice(last))
+  return parts.length ? parts : [line]
+}
 
 interface TagTreeNode {
   name: string       // 마지막 세그먼트 (예: "reflection")
@@ -298,7 +325,7 @@ function TagsPanel({
 }) {
   const router = useRouter()
   const [selected, setSelected] = useState<{ kind: 'tag' | 'mention'; value: string } | null>(null)
-  const [tagNotes, setTagNotes] = useState<TagNote[]>([])
+  const [matches, setMatches] = useState<LineMatch[]>([])
   const [expanded, setExpanded] = useState<Set<string>>(new Set())
 
   const tagTree = useMemo(() => buildTagTree(allTags), [allTags])
@@ -311,27 +338,40 @@ function TagsPanel({
       return next
     })
 
-  // content를 직접 재파싱해 필터 (저장된 tags/mentions에 의존하지 않음 → 계층 경로 정확)
+  // 키워드가 포함된 "라인"을 수집 (실제 NotePlan처럼 날짜+내용 발췌 표시)
+  // 계층: value의 하위(value/sub)가 포함된 라인도 매칭
   const handleSelect = (kind: 'tag' | 'mention', value: string) => {
     if (selected?.kind === kind && selected.value === value) {
-      setSelected(null); setTagNotes([]); return
+      setSelected(null); setMatches([]); return
     }
     setSelected({ kind, value })
-    const matched = notes.filter(n => {
-      const found = kind === 'tag'
-        ? extractTags(n.content ?? '')
-        : extractMentions(n.content ?? '')
-      return found.includes(value)
-    })
-    setTagNotes(matched.map(n => ({ id: n.id, title: n.title, type: n.type, date: n.date })))
+    const found: LineMatch[] = []
+    for (const n of notes) {
+      const lines = (n.content ?? '').split('\n')
+      for (const raw of lines) {
+        const line = raw.trim()
+        if (!line) continue
+        const tokens = kind === 'tag' ? extractTags(line) : extractMentions(line)
+        const hit = tokens.some(t => t === value || t.startsWith(value + '/'))
+        if (hit) {
+          found.push({ noteId: n.id, noteType: n.type, date: n.date, title: n.title, lineText: line })
+        }
+      }
+    }
+    setMatches(found)
   }
 
-  const noteLabel = (n: TagNote) =>
-    n.type === 'daily' && n.date ? n.date :
-    n.type === 'weekly' && n.date ? `Week of ${n.date}` :
-    n.title
-  const noteIcon = (n: TagNote) =>
-    (n.type === 'daily' || n.type === 'weekly' || n.type === 'monthly') ? '📅' : '📄'
+  const noteRef = (m: LineMatch) =>
+    m.noteType === 'daily' && m.date ? m.date :
+    m.noteType === 'weekly' && m.date ? `Week of ${m.date}` :
+    m.noteType === 'monthly' && m.date ? m.date :
+    m.title
+  const noteIcon = (m: LineMatch) =>
+    (m.noteType === 'daily' || m.noteType === 'weekly' || m.noteType === 'monthly') ? '📅' : '📄'
+  const openMatch = (m: LineMatch) =>
+    m.noteType === 'daily' && m.date
+      ? router.push(`/daily?date=${m.date}`)
+      : router.push(`/notes?id=${m.noteId}`)
 
   // 한 노드(+하위) 재귀 렌더
   const renderNode = (node: TagTreeNode, kind: 'tag' | 'mention', depth: number): React.ReactNode => {
@@ -373,23 +413,26 @@ function TagsPanel({
           <span className={`truncate ${accent}`}>{node.name}</span>
         </div>
 
-        {/* 리프 노드 선택 시 노트 목록 (인라인) */}
+        {/* 리프 노드 선택 시 매칭 라인 목록 (날짜/제목 + 내용 발췌) */}
         {isOpen && !hasChildren && (
           <div className="mb-1 flex flex-col gap-0.5" style={{ paddingLeft: 6 + (depth + 1) * 14 }}>
-            {tagNotes.length === 0 && (
-              <div className="px-2 py-1 text-xs text-[var(--text-muted)]">노트 없음</div>
+            {matches.length === 0 && (
+              <div className="px-2 py-1 text-xs text-[var(--text-muted)]">결과 없음</div>
             )}
-            {tagNotes.map(n => (
+            {matches.map((m, i) => (
               <button
-                key={n.id}
-                onClick={() => n.type === 'daily' && n.date
-                  ? router.push(`/daily?date=${n.date}`)
-                  : router.push(`/notes?id=${n.id}`)}
-                className="flex items-center gap-1.5 px-2 py-1 rounded text-xs text-[var(--text-muted)]
-                  hover:bg-white/5 hover:text-[var(--text-secondary)] text-left w-full transition-colors"
+                key={`${m.noteId}:${i}`}
+                onClick={() => openMatch(m)}
+                className="flex flex-col gap-0.5 px-2 py-1.5 rounded text-left w-full
+                  hover:bg-white/5 transition-colors"
               >
-                <span className="text-[10px]">{noteIcon(n)}</span>
-                <span className="truncate">{noteLabel(n)}</span>
+                <span className="flex items-center gap-1 text-[10px] text-[var(--text-muted)]">
+                  <span>{noteIcon(m)}</span>
+                  <span className="truncate">{noteRef(m)}</span>
+                </span>
+                <span className="text-xs text-[var(--text-secondary)] line-clamp-2 leading-snug">
+                  {highlightLine(m.lineText, kind, node.fullPath)}
+                </span>
               </button>
             ))}
           </div>
