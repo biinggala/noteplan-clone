@@ -29,9 +29,16 @@ interface ActiveDrag {
   view: EditorView
   ghost: HTMLElement
   moved: boolean
+  scrollEl: HTMLElement | null  // 타임라인 스크롤 컨테이너 (엣지 자동 스크롤용)
+  lastX: number
+  lastY: number
+  rafId: number | null
   onMove: (e: PointerEvent) => void
   onUp: (e: PointerEvent) => void
 }
+
+const EDGE_ZONE = 90      // 컨테이너 상/하단 90px 이내면 자동 스크롤
+const EDGE_MAX_SPEED = 14 // px/frame
 
 let active: ActiveDrag | null = null
 
@@ -62,10 +69,12 @@ export function startLineDrag(
   const onMove = (ev: PointerEvent) => {
     if (!active) return
     active.moved = true
+    active.lastX = ev.clientX
+    active.lastY = ev.clientY
     ghost.classList.add('np-drag-ghost--on')
     ghost.style.left = `${ev.clientX + 14}px`
     ghost.style.top = `${ev.clientY + 14}px`
-    highlightUnder(ev, view)
+    highlightUnderXY(ev.clientX, ev.clientY, view)
   }
 
   const onUp = (ev: PointerEvent) => {
@@ -77,7 +86,15 @@ export function startLineDrag(
     drop(ev, drag)
   }
 
-  active = { lineNumber, content, view, ghost, moved: false, onMove, onUp }
+  // 타임라인 스크롤 컨테이너 탐색 (드래그 동안 상/하단 엣지 자동 스크롤)
+  const slotEl = document.querySelector('[data-tl-slot]') as HTMLElement | null
+  const scrollEl = slotEl?.closest<HTMLElement>('[class*="overflow-y-auto"]') ?? null
+
+  active = {
+    lineNumber, content, view, ghost, moved: false,
+    scrollEl, lastX: e.clientX, lastY: e.clientY, rafId: null, onMove, onUp,
+  }
+  active.rafId = requestAnimationFrame(edgeScrollStep)
   window.addEventListener('pointermove', onMove)
   window.addEventListener('pointerup', onUp)
   window.addEventListener('pointercancel', onUp)
@@ -88,9 +105,31 @@ function cleanup() {
   window.removeEventListener('pointermove', active.onMove)
   window.removeEventListener('pointerup', active.onUp)
   window.removeEventListener('pointercancel', active.onUp)
+  if (active.rafId != null) cancelAnimationFrame(active.rafId)
   active.ghost.remove()
   active = null
   useTimelineDragStore.getState().setPreview(null)
+}
+
+// 상/하단 엣지 근처에서 타임라인 자동 스크롤 (보이지 않는 시간대에 드롭 가능)
+function edgeScrollStep() {
+  if (!active) return
+  const { scrollEl, lastX, lastY, view } = active
+  if (scrollEl) {
+    const r = scrollEl.getBoundingClientRect()
+    const dTop = lastY - r.top
+    const dBot = r.bottom - lastY
+    let speed = 0
+    if (dTop < EDGE_ZONE) speed = -Math.round(EDGE_MAX_SPEED * (1 - Math.max(0, dTop) / EDGE_ZONE))
+    else if (dBot < EDGE_ZONE) speed = Math.round(EDGE_MAX_SPEED * (1 - Math.max(0, dBot) / EDGE_ZONE))
+    if (speed !== 0) {
+      const before = scrollEl.scrollTop
+      scrollEl.scrollTop += speed
+      // 스크롤로 포인터 아래 슬롯이 바뀌므로 미리보기 갱신
+      if (scrollEl.scrollTop !== before) highlightUnderXY(lastX, lastY, view)
+    }
+  }
+  active.rafId = requestAnimationFrame(edgeScrollStep)
 }
 
 /** elementFromPoint → 타임라인 슬롯의 date/hour/minute (없으면 null) */
@@ -99,11 +138,13 @@ function slotInfoAt(clientX: number, clientY: number) {
   const slot = el?.closest('[data-tl-slot]') as HTMLElement | null
   if (!slot) return null
   const date = slot.getAttribute('data-tl-date') ?? ''
-  const hour = parseInt(slot.getAttribute('data-tl-hour') ?? '0', 10)
+  const baseHour = parseInt(slot.getAttribute('data-tl-hour') ?? '0', 10)
   const rect = slot.getBoundingClientRect()
-  const offsetY = Math.max(0, Math.min(clientY - rect.top, SLOT_H - 1))
-  const minute = snap15((offsetY / SLOT_H) * 60) % 60
-  return { date, hour, minute }
+  const within = Math.max(0, Math.min(clientY - rect.top, SLOT_H))
+  // 절대 분으로 스냅 → 시간 행 하단에서 다음 시각으로 자연스럽게 넘어감
+  // (행별 %60 스냅은 하단 ~7px에서 같은 시각 :00으로 튀는 버그가 있었음)
+  const total = Math.min(snap15(baseHour * 60 + (within / SLOT_H) * 60), 23 * 60 + 45)
+  return { date, hour: Math.floor(total / 60), minute: total % 60 }
 }
 
 // ── 드롭 처리 ────────────────────────────────────────────────────────────────
@@ -155,9 +196,9 @@ function reorder(e: PointerEvent, drag: ActiveDrag) {
 
 // ── 드롭 대상 하이라이트 ───────────────────────────────────────────────────────
 
-function highlightUnder(e: PointerEvent, view: EditorView) {
+function highlightUnderXY(x: number, y: number, view: EditorView) {
   // 타임라인 슬롯 위 → 미리보기 블록(시작시각 + 길이) 표시
-  const slot = slotInfoAt(e.clientX, e.clientY)
+  const slot = slotInfoAt(x, y)
   if (slot) {
     useTimelineDragStore.getState().setPreview({ ...slot, duration: DEFAULT_DURATION })
     clearReorder(view)
@@ -166,9 +207,9 @@ function highlightUnder(e: PointerEvent, view: EditorView) {
   useTimelineDragStore.getState().setPreview(null)
 
   // 에디터 본문 위 → 줄 재정렬 인디케이터
-  const el = document.elementFromPoint(e.clientX, e.clientY) as HTMLElement | null
+  const el = document.elementFromPoint(x, y) as HTMLElement | null
   if (el?.closest('.cm-content')) {
-    const pos = view.posAtCoords({ x: e.clientX, y: e.clientY })
+    const pos = view.posAtCoords({ x, y })
     if (pos != null) {
       const lineNum = view.state.doc.lineAt(pos).number
       const eff = setReorderLine(lineNum)
