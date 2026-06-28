@@ -167,6 +167,9 @@ export default function DayTimeline({ date, days = 1 }: DayTimelineProps) {
     anchorRect: DOMRect
   } | null>(null)
   const panelRef = useRef<HTMLDivElement>(null)
+  // 이벤트 패널 내 이름 변경
+  const [renaming, setRenaming] = useState(false)
+  const [renameText, setRenameText] = useState('')
 
   // Close panel on outside click
   useEffect(() => {
@@ -179,6 +182,23 @@ export default function DayTimeline({ date, days = 1 }: DayTimelineProps) {
     document.addEventListener('mousedown', onDown)
     return () => document.removeEventListener('mousedown', onDown)
   }, [eventPanel])
+
+  // 다른 이벤트 패널 열면 rename 모드 초기화
+  useEffect(() => { setRenaming(false) }, [eventPanel?.ev.id])
+
+  // 이벤트 이름 변경 (Google 연동)
+  async function confirmRename(ev: GoogleCalendarEvent, evDate: string) {
+    const title = renameText.trim()
+    setRenaming(false)
+    if (!title || title === ev.summary || !googleAccessToken) return
+    patchEvent(evDate, evDate, ev.id, { summary: title })
+    try {
+      await updateCalendarEvent(googleAccessToken, ev.calendarId, ev.id, { summary: title })
+    } catch (err) {
+      console.error('[rename event]', err)
+      patchEvent(evDate, evDate, ev.id, { summary: ev.summary })
+    }
+  }
 
   // ── Derived ───────────────────────────────────────────────────────────────
   const dates = useMemo(() => {
@@ -899,9 +919,24 @@ export default function DayTimeline({ date, days = 1 }: DayTimelineProps) {
         {/* Color header strip */}
         <div className="h-[3px] w-full" style={{ backgroundColor: color }} />
 
-        {/* Title */}
+        {/* Title (rename 모드면 입력) */}
         <div className="px-4 pt-3 pb-2">
-          <div className="text-sm font-semibold text-white leading-snug">{ev.summary}</div>
+          {renaming ? (
+            <input
+              autoFocus
+              value={renameText}
+              onChange={(e) => setRenameText(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') confirmRename(ev, evDate)
+                else if (e.key === 'Escape') setRenaming(false)
+              }}
+              onBlur={() => confirmRename(ev, evDate)}
+              className="w-full text-sm font-semibold px-2 py-1 rounded bg-white/10
+                         border border-blue-400/60 outline-none text-white"
+            />
+          ) : (
+            <div className="text-sm font-semibold text-white leading-snug">{ev.summary}</div>
+          )}
         </div>
 
         {/* Meta info */}
@@ -944,6 +979,18 @@ export default function DayTimeline({ date, days = 1 }: DayTimelineProps) {
 
         {/* Actions */}
         <div className="flex flex-col py-1">
+          {/* 이름 변경 */}
+          <button
+            onClick={() => { setRenameText(ev.summary ?? ''); setRenaming(true) }}
+            className="flex items-center gap-3 px-4 py-2.5 text-sm text-white/80
+                       hover:bg-white/8 transition-colors text-left"
+          >
+            <svg className="w-4 h-4 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5}
+                d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
+            </svg>
+            이름 변경
+          </button>
           {ev.htmlLink && (
             <button
               onClick={() => { window.open(ev.htmlLink, '_blank'); setEventPanel(null) }}
@@ -1051,7 +1098,11 @@ export default function DayTimeline({ date, days = 1 }: DayTimelineProps) {
                       className="text-[11px] font-medium px-1.5 py-0.5 rounded truncate
                                  cursor-pointer select-none"
                       style={{ backgroundColor: color + '30', color }}
-                      onClick={(e) => { e.stopPropagation(); if (ev.htmlLink) window.open(ev.htmlLink, '_blank') }}
+                      onClick={(e) => {
+                        e.stopPropagation()
+                        const rect = (e.currentTarget as HTMLElement).getBoundingClientRect()
+                        setEventPanel({ ev, date: d, anchorRect: rect })
+                      }}
                       title={ev.summary}
                     >
                       {ev.summary}
