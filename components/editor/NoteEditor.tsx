@@ -14,6 +14,7 @@ import { inputRulesExtension } from './extensions/inputRules'
 import { markdownWYSIWYGExtension } from './extensions/markdownWYSIWYG'
 import { dragHandleExtension } from './extensions/dragHandle'
 import { hrRuleExtension } from './extensions/hrRule'
+import { markdownShortcuts, underlineExtension } from './extensions/markdownShortcuts'
 
 interface NoteEditorProps {
   content: string
@@ -43,6 +44,7 @@ export default function NoteEditor({ content, onChange, onSave }: NoteEditorProp
         drawSelection(),
         highlightActiveLine(),
         keymap.of([
+          ...markdownShortcuts,   // Cmd+B/I/U (defaultKeymap보다 먼저 → 우선)
           ...defaultKeymap,
           ...historyKeymap,
           indentWithTab,
@@ -66,6 +68,7 @@ export default function NoteEditor({ content, onChange, onSave }: NoteEditorProp
         scheduleDateExtension(),
         ...inputRulesExtension(),
         ...markdownWYSIWYGExtension(),
+        underlineExtension(),
         hrRuleExtension(),
         ...dragHandleExtension(),
         EditorView.lineWrapping,

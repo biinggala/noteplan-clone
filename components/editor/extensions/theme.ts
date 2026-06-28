@@ -51,6 +51,7 @@ export const noteplanTheme = [
 
     '.cm-tag':           { color: '#60a5fa', fontWeight: '500' },
     '.cm-mention':       { color: '#a78bfa', fontWeight: '500' },
+    '.cm-underline':     { textDecoration: 'underline', textUnderlineOffset: '2px' },
     '.cm-wikilink':      { color: '#34d399', textDecoration: 'underline', cursor: 'pointer' },
     '.cm-schedule-date': { color: '#f59e0b', fontSize: '0.85em', fontStyle: 'italic' },
 
