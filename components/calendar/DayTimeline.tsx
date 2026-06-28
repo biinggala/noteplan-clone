@@ -994,7 +994,7 @@ export default function DayTimeline({ date, days = 1 }: DayTimelineProps) {
         )
         if (!hasAnyAllDay && days === 1) return null
         return (
-          <div className="flex border-b border-[var(--border)]">
+          <div className="flex border-b border-[var(--border)] sticky top-0 z-20 bg-[var(--bg-primary)]">
             {/* "all-day" 라벨 */}
             <div
               className="flex-shrink-0 flex items-start pt-1.5 justify-end pr-2
@@ -1009,7 +1009,7 @@ export default function DayTimeline({ date, days = 1 }: DayTimelineProps) {
               return (
                 <div
                   key={`allday-${d}`}
-                  className="flex-1 border-l border-[var(--border)] px-0.5 py-0.5
+                  className="flex-1 min-w-0 border-l border-[var(--border)] px-0.5 py-0.5
                              flex flex-col gap-0.5 min-h-[28px]"
                 >
                   {allDayEvs.map(ev => {

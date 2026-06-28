@@ -1,5 +1,6 @@
 'use client'
 import { useState, useEffect, useCallback, useRef, useMemo } from 'react'
+import { createPortal } from 'react-dom'
 import { useRouter, useSearchParams } from 'next/navigation'
 import { useUIStore } from '@/lib/stores/uiStore'
 import { useNoteStore } from '@/lib/stores/noteStore'
@@ -11,8 +12,18 @@ import {
   getAllNotes,
   upsertNote,
   deleteNote as dbDeleteNote,
+  moveNote,
+  moveFolder,
 } from '@/lib/db/noteRepository'
+import { startTreeDrag, type TreeDragItem } from '@/lib/dnd/folderTreeDrag'
 import type { Note, Folder } from '@/types/note'
+
+const PARA_ROOTS = ['Projects', 'Areas', 'Resources', 'Archive']
+
+// 드래그앤드롭 핸들러 묶음 (FolderNode/NoteItem로 전달)
+export interface TreeDnd {
+  onPointerDown: (e: React.PointerEvent, item: TreeDragItem) => void
+}
 
 // ── Types ────────────────────────────────────────────────────────────────
 
@@ -165,12 +176,13 @@ function InlineDialog({ dialog }: { dialog: Dialog }) {
 
 // ── NoteItem ──────────────────────────────────────────────────────────────
 
-function NoteItem({ note, depth, isActive, onClick, onContextMenu }: {
+function NoteItem({ note, depth, isActive, onClick, onContextMenu, dnd }: {
   note: Note
   depth: number
   isActive: boolean
   onClick: () => void
   onContextMenu: (e: React.MouseEvent) => void
+  dnd: TreeDnd
 }) {
   return (
     <div
@@ -182,6 +194,7 @@ function NoteItem({ note, depth, isActive, onClick, onContextMenu }: {
       style={{ paddingLeft: `${8 + depth * 14}px`, paddingRight: '8px' }}
       onClick={onClick}
       onContextMenu={onContextMenu}
+      onPointerDown={(e) => dnd.onPointerDown(e, { kind: 'note', id: note.id, label: note.title, path: note.folder })}
     >
       <DocIcon />
       <span className="truncate">{note.title}</span>
@@ -191,7 +204,7 @@ function NoteItem({ note, depth, isActive, onClick, onContextMenu }: {
 
 // ── FolderNode ────────────────────────────────────────────────────────────
 
-function FolderNode({ folder, depth, expandedFolders, toggleFolder, onContextMenu, activeId, onNoteClick }: {
+function FolderNode({ folder, depth, expandedFolders, toggleFolder, onContextMenu, activeId, onNoteClick, dnd }: {
   folder: FolderWithData
   depth: number
   expandedFolders: string[]
@@ -199,6 +212,7 @@ function FolderNode({ folder, depth, expandedFolders, toggleFolder, onContextMen
   onContextMenu: (e: React.MouseEvent, type: 'folder' | 'note', id: string, extra?: string) => void
   activeId: string | null
   onNoteClick: (id: string) => void
+  dnd: TreeDnd
 }) {
   const isOpen = expandedFolders.includes(folder.id)
   const hasChildren = folder.children.length > 0 || folder.notes.length > 0
@@ -206,11 +220,14 @@ function FolderNode({ folder, depth, expandedFolders, toggleFolder, onContextMen
   return (
     <div>
       <div
+        data-folder-drop=""
+        data-folder-path={folder.path}
         className="flex items-center gap-1 py-1 rounded-md cursor-pointer select-none
           text-[var(--text-secondary)] hover:bg-white/5 group"
         style={{ paddingLeft: `${6 + depth * 14}px`, paddingRight: '6px' }}
         onClick={() => toggleFolder(folder.id)}
         onContextMenu={(e) => onContextMenu(e, 'folder', folder.id, folder.path)}
+        onPointerDown={(e) => dnd.onPointerDown(e, { kind: 'folder', id: folder.id, label: folder.name, path: folder.path })}
       >
         <span className="w-3 flex items-center justify-center">
           {hasChildren ? <Chevron open={isOpen} /> : null}
@@ -236,6 +253,7 @@ function FolderNode({ folder, depth, expandedFolders, toggleFolder, onContextMen
               onContextMenu={onContextMenu}
               activeId={activeId}
               onNoteClick={onNoteClick}
+              dnd={dnd}
             />
           ))}
           {folder.notes.map(note => (
@@ -246,6 +264,7 @@ function FolderNode({ folder, depth, expandedFolders, toggleFolder, onContextMen
               isActive={activeId === note.id}
               onClick={() => onNoteClick(note.id)}
               onContextMenu={(e) => onContextMenu(e, 'note', note.id)}
+              dnd={dnd}
             />
           ))}
           {!hasChildren && (
@@ -459,6 +478,38 @@ export default function FolderTree() {
     await reloadNotes()
   }
 
+  // ── 드래그앤드롭 이동 ────────────────────────────────────────────────────
+  const canDrop = useCallback((item: TreeDragItem, targetPath: string): boolean => {
+    if (!targetPath) return false
+    if (item.kind === 'folder') {
+      if (targetPath === item.path) return false                       // 자기 자신
+      if (item.path && targetPath.startsWith(item.path + '/')) return false  // 자손
+      const curParent = item.path?.includes('/') ? item.path.slice(0, item.path.lastIndexOf('/')) : ''
+      if (targetPath === curParent) return false                        // 현재 부모(no-op)
+    } else {
+      if (targetPath === item.path) return false                        // 이미 그 폴더
+    }
+    return true
+  }, [])
+
+  const handleTreeMove = useCallback(async (item: TreeDragItem, targetPath: string) => {
+    if (item.kind === 'note') {
+      await moveNote(item.id, targetPath)
+      await reloadNotes()
+    } else {
+      await moveFolder(item.id, targetPath || null)
+      await Promise.all([loadFolders(), reloadNotes()])
+    }
+  }, [reloadNotes, loadFolders])
+
+  const dnd: TreeDnd = {
+    onPointerDown: (e, item) => {
+      // PARA 최상위 폴더는 고정 (드래그 불가)
+      if (item.kind === 'folder' && PARA_ROOTS.includes(item.path ?? '')) return
+      startTreeDrag(e, item, { onMove: handleTreeMove, canDrop })
+    },
+  }
+
   return (
     <div className="flex-1 overflow-y-auto relative">
       {tree.map(folder => (
@@ -471,6 +522,7 @@ export default function FolderTree() {
           onContextMenu={handleContextMenu}
           activeId={activeId}
           onNoteClick={(id) => router.push(`/notes?id=${id}`)}
+          dnd={dnd}
         />
       ))}
 
@@ -499,6 +551,7 @@ export default function FolderTree() {
                   key={note.id}
                   onClick={() => router.push(`/notes?id=${note.id}`)}
                   onContextMenu={(e) => handleContextMenu(e, 'note', note.id)}
+                  onPointerDown={(e) => dnd.onPointerDown(e, { kind: 'note', id: note.id, label: note.title, path: note.folder })}
                   className={`flex items-center gap-1.5 w-full pl-7 pr-2 py-1 rounded text-xs transition-colors
                     ${activeId === note.id
                       ? 'bg-blue-500/20 text-blue-300'
@@ -517,10 +570,10 @@ export default function FolderTree() {
         </div>
       )}
 
-      {/* Context Menu */}
-      {contextMenu && (
+      {/* Context Menu — portal로 body에 렌더 (사이드바 overflow/transform 클리핑 회피) */}
+      {contextMenu && typeof document !== 'undefined' && createPortal(
         <div
-          className="fixed z-50 bg-[var(--bg-tertiary)] border border-[var(--border)]
+          className="fixed z-[300] bg-[var(--bg-tertiary)] border border-[var(--border)]
             rounded-lg shadow-2xl py-1 min-w-44"
           style={{ left: contextMenu.x, top: contextMenu.y }}
           onClick={(e) => e.stopPropagation()}
@@ -555,7 +608,8 @@ export default function FolderTree() {
               </MenuItem>
             </>
           )}
-        </div>
+        </div>,
+        document.body,
       )}
 
       {/* Inline Dialog (replaces window.prompt / window.confirm) */}
