@@ -1,8 +1,8 @@
 'use client'
-import { useRef, useState, useCallback } from 'react'
+import { useRef, useState, useCallback, useEffect } from 'react'
 import type { Note } from '@/types/note'
 import { readFilesAsNotes, countByType } from '@/lib/import/noteplanImport'
-import { bulkImportNotes } from '@/lib/db/noteRepository'
+import { bulkImportNotes, ensureFolders } from '@/lib/db/noteRepository'
 
 type Phase = 'idle' | 'parsed' | 'importing' | 'done'
 
@@ -12,13 +12,24 @@ interface ImportModalProps {
 
 export default function ImportModal({ onClose }: ImportModalProps) {
   const fileInputRef = useRef<HTMLInputElement>(null)
+  const folderInputRef = useRef<HTMLInputElement>(null)
   const [phase, setPhase] = useState<Phase>('idle')
   const [isDragOver, setIsDragOver] = useState(false)
   const [onConflict, setOnConflict] = useState<'skip' | 'overwrite'>('skip')
 
+  // 폴더 선택 input에 webkitdirectory 속성 부여 (TSX 표준 속성 아님)
+  useEffect(() => {
+    const el = folderInputRef.current
+    if (el) {
+      el.setAttribute('webkitdirectory', '')
+      el.setAttribute('directory', '')
+    }
+  }, [])
+
   // parsed 결과
   const [parsedNotes, setParsedNotes]       = useState<Note[]>([])
   const [skippedFiles, setSkippedFiles]     = useState<string[]>([])
+  const [folderPaths, setFolderPaths]       = useState<string[]>([])
 
   // import 진행
   const [progress, setProgress]   = useState(0)   // 0~100
@@ -28,9 +39,10 @@ export default function ImportModal({ onClose }: ImportModalProps) {
   const handleFiles = useCallback(async (files: File[]) => {
     const txtFiles = files.filter(f => /\.(txt|md)$/i.test(f.name))
     if (txtFiles.length === 0) return
-    const { notes, skippedFilenames } = await readFilesAsNotes(txtFiles)
+    const { notes, skippedFilenames, folderPaths } = await readFilesAsNotes(txtFiles)
     setParsedNotes(notes)
     setSkippedFiles(skippedFilenames)
+    setFolderPaths(folderPaths)
     setPhase('parsed')
   }, [])
 
@@ -49,6 +61,8 @@ export default function ImportModal({ onClose }: ImportModalProps) {
     setPhase('importing')
     setProgress(0)
     try {
+      // PARA 하위 폴더 먼저 생성 (없으면 노트가 트리에 안 보임)
+      await ensureFolders(folderPaths)
       const res = await bulkImportNotes(parsedNotes, {
         onConflict,
         onProgress: (done, total) => {
@@ -127,7 +141,28 @@ export default function ImportModal({ onClose }: ImportModalProps) {
                   className="hidden"
                   onChange={onFileChange}
                 />
+                <input
+                  ref={folderInputRef}
+                  type="file"
+                  multiple
+                  className="hidden"
+                  onChange={onFileChange}
+                />
               </div>
+
+              {/* PARA 폴더(Notes) 통째로 선택 — 하위 폴더 구조 보존 */}
+              <button
+                onClick={(e) => { e.stopPropagation(); folderInputRef.current?.click() }}
+                className="-mt-2 flex items-center justify-center gap-2 w-full py-2 rounded-lg
+                  border border-[var(--border)] text-xs text-[var(--text-secondary)]
+                  hover:bg-white/5 transition-colors"
+              >
+                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5}
+                    d="M3 7a2 2 0 012-2h4l2 2h8a2 2 0 012 2v8a2 2 0 01-2 2H5a2 2 0 01-2-2V7z" />
+                </svg>
+                폴더 선택 (PARA — Projects/Areas/Resources/Archive)
+              </button>
 
               {/* 파싱 결과 요약 */}
               {phase === 'parsed' && parsedNotes.length > 0 && (
@@ -140,7 +175,13 @@ export default function ImportModal({ onClose }: ImportModalProps) {
                     {counts.weekly > 0  && <span>📆 Weekly <strong className="text-[var(--text-secondary)]">{counts.weekly}</strong></span>}
                     {counts.monthly > 0 && <span>🗓 Monthly <strong className="text-[var(--text-secondary)]">{counts.monthly}</strong></span>}
                     {counts.yearly > 0  && <span>📅 Yearly  <strong className="text-[var(--text-secondary)]">{counts.yearly}</strong></span>}
+                    {counts.project > 0 && <span>📁 Project <strong className="text-[var(--text-secondary)]">{counts.project}</strong></span>}
                   </div>
+                  {folderPaths.length > 0 && (
+                    <p className="text-xs text-[var(--text-muted)]">
+                      생성될 폴더 <strong className="text-[var(--text-secondary)]">{folderPaths.length}</strong>개 (PARA 하위 포함)
+                    </p>
+                  )}
                   {skippedFiles.length > 0 && (
                     <p className="text-xs text-amber-400/80">
                       ⚠ 형식 불일치로 제외된 파일 {skippedFiles.length}개

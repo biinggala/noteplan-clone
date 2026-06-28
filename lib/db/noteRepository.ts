@@ -461,6 +461,36 @@ export async function createFolder(name: string, parentPath?: string): Promise<F
   return rowToFolder(data)
 }
 
+/**
+ * 주어진 폴더 경로들을 idempotent하게 생성 (얕은 단계부터, 이미 있으면 skip).
+ * import 시 하위 폴더(Projects/Cringe Friends 등)를 미리 만들어 노트가 트리에 보이게 함.
+ */
+export async function ensureFolders(paths: string[]): Promise<void> {
+  if (paths.length === 0) return
+  const supabase = createClient()
+  const userId = await getUserId()
+  const { data: existing } = await supabase
+    .from('folders')
+    .select('path')
+    .eq('user_id', userId)
+  const have = new Set((existing ?? []).map(r => r.path as string))
+
+  // 얕은 경로부터 생성해야 parentId 조회가 성립
+  const sorted = [...new Set(paths)].sort((a, b) => a.split('/').length - b.split('/').length)
+  for (const path of sorted) {
+    if (have.has(path)) continue
+    const segs = path.split('/')
+    const name = segs[segs.length - 1]
+    const parentPath = segs.length > 1 ? segs.slice(0, -1).join('/') : undefined
+    try {
+      await createFolder(name, parentPath)
+      have.add(path)
+    } catch (e) {
+      console.error('[ensureFolders]', path, e)
+    }
+  }
+}
+
 export async function deleteFolder(id: string): Promise<void> {
   const supabase = createClient()
   const userId = await getUserId()
