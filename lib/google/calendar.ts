@@ -201,6 +201,36 @@ export async function createCalendarEvent(
   return { ...data, calendarId: payload.calendarId, calendarColor: '' }
 }
 
+/** 종일(all-day) 이벤트 생성. Google은 end.date가 배타적(다음날)이어야 함. */
+export async function createAllDayEvent(
+  accessToken: string,
+  payload: { calendarId: string; summary: string; date: string }, // date: 'YYYY-MM-DD'
+): Promise<GoogleCalendarEvent & { calendarId: string; calendarColor: string }> {
+  const next = new Date(`${payload.date}T00:00:00`)
+  next.setDate(next.getDate() + 1)
+  const endDate = next.toISOString().slice(0, 10)
+  const body = {
+    summary: payload.summary,
+    start: { date: payload.date },
+    end: { date: endDate },
+  }
+  const res = await fetch(
+    `https://www.googleapis.com/calendar/v3/calendars/${encodeCalId(payload.calendarId)}/events`,
+    {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${accessToken}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    }
+  )
+  if (!res.ok) {
+    if (res.status === 401) throw new Error('GOOGLE_TOKEN_EXPIRED')
+    const text = await res.text()
+    throw new Error(`Create all-day event error ${res.status}: ${text}`)
+  }
+  const data = await res.json()
+  return { ...data, calendarId: payload.calendarId, calendarColor: '' }
+}
+
 // ── 이벤트 수정 (시간 변경) ───────────────────────────────────────────────────
 
 export async function updateCalendarEvent(

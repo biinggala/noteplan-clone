@@ -13,6 +13,7 @@ import {
   fetchCalendarList,
   fetchAllCalendarEventsForRange,
   createCalendarEvent,
+  createAllDayEvent,
   updateCalendarEvent,
   deleteCalendarEvent,
   eventToTimeRange, type GoogleCalendarEvent,
@@ -90,12 +91,16 @@ export default function DayTimeline({ date, days = 1 }: DayTimelineProps) {
     date: string; startHour: number; startMinute: number
   } | null>(null)
   const [newEventTitle, setNewEventTitle] = useState('')
+  // 종일(all-day) 새 이벤트 입력 (date + 제목)
+  const [newAllDayDate, setNewAllDayDate] = useState<string | null>(null)
+  const [newAllDayTitle, setNewAllDayTitle] = useState('')
   // Default to "primary" literal — always resolves to the user's main calendar.
   // Updated to a real ID once calendars load (prefers writable owner/writer calendars).
   const [newEventCalId, setNewEventCalId] = useState<string>('primary')
   const [savingEvent, setSavingEvent] = useState(false)
   const newEventInputRef = useRef<HTMLInputElement>(null)
   const newEventFormRef  = useRef<HTMLDivElement>(null)
+  const allDayInputRef   = useRef<HTMLInputElement>(null)
 
   // Close new-event form on outside click
   useEffect(() => {
@@ -482,6 +487,31 @@ export default function DayTimeline({ date, days = 1 }: DayTimelineProps) {
       setSavingEvent(false)
       setNewEventSlot(null)
       setNewEventTitle('')
+    }
+  }
+
+  // 종일 이벤트 생성 (Google Calendar 연동)
+  async function handleCreateAllDay() {
+    if (!newAllDayDate || !newAllDayTitle.trim() || !googleAccessToken) {
+      setNewAllDayDate(null); setNewAllDayTitle(''); return
+    }
+    const calId = newEventCalId || 'primary'
+    const cal = calendars.find(c => c.id === calId)
+    setSavingEvent(true)
+    try {
+      const created = await createAllDayEvent(googleAccessToken, {
+        calendarId: calId,
+        summary: newAllDayTitle.trim(),
+        date: newAllDayDate,
+      })
+      created.calendarColor = cal?.backgroundColor ?? '#4285f4'
+      addEvent(newAllDayDate, created as GoogleCalendarEvent)
+    } catch (err) {
+      console.error('[createAllDayEvent]', err)
+    } finally {
+      setSavingEvent(false)
+      setNewAllDayDate(null)
+      setNewAllDayTitle('')
     }
   }
 
@@ -962,80 +992,93 @@ export default function DayTimeline({ date, days = 1 }: DayTimelineProps) {
       {/* Event detail panel (portal) */}
       {renderEventPanel()}
 
-      {/* Multi-day column headers */}
-      {days > 1 && (
-        <div className="flex sticky top-0 z-20 bg-[var(--bg-primary)] border-b border-[var(--border)]">
-          <div className="flex-shrink-0" style={{ width: 40 }} />
-          {dates.map(d => (
-            <div
-              key={d}
-              className={`flex-1 py-1 text-center text-[11px] font-semibold border-l border-[var(--border)] ${
-                d === todayStr
-                  ? 'text-blue-400'
-                  : d === date
-                    ? 'text-[var(--text-primary)]'
-                    : 'text-[var(--text-muted)]'
-              }`}
-            >
-              {format(parseISO(d), 'EEE')}
-              <br />
-              <span className={`text-xs font-normal ${d === todayStr ? '' : 'opacity-70'}`}>
-                {format(parseISO(d), 'd')}
-              </span>
-            </div>
-          ))}
-        </div>
-      )}
-
-      {/* All-day events row ────────────────────────────────────────────────── */}
-      {(() => {
-        const hasAnyAllDay = dates.some(d =>
-          (eventsByDate[d] ?? []).some(ev => eventToTimeRange(ev).allDay)
-        )
-        if (!hasAnyAllDay && days === 1) return null
-        return (
-          <div className="flex border-b border-[var(--border)] sticky top-0 z-20 bg-[var(--bg-primary)]">
-            {/* "all-day" 라벨 */}
-            <div
-              className="flex-shrink-0 flex items-start pt-1.5 justify-end pr-2
-                         text-[10px] text-[var(--text-muted)] leading-none"
-              style={{ width: 40 }}
-            >
-              all-day
-            </div>
-            {/* 각 날짜 컬럼 */}
-            {dates.map(d => {
-              const allDayEvs = (eventsByDate[d] ?? []).filter(ev => eventToTimeRange(ev).allDay)
-              return (
-                <div
-                  key={`allday-${d}`}
-                  className="flex-1 min-w-0 border-l border-[var(--border)] px-0.5 py-0.5
-                             flex flex-col gap-0.5 min-h-[28px]"
-                >
-                  {allDayEvs.map(ev => {
-                    const color = ev.calendarColor ?? '#4285f4'
-                    return (
-                      <div
-                        key={`ad-${ev.id}`}
-                        className="text-[11px] font-medium px-1.5 py-0.5 rounded truncate
-                                   cursor-pointer select-none"
-                        style={{
-                          backgroundColor: color + '30',
-                          color,
-                        }}
-                        onClick={() => ev.htmlLink && window.open(ev.htmlLink, '_blank')}
-                        title={ev.summary}
-                      >
-                        {ev.summary}
-                      </div>
-                    )
-                  })}
-                </div>
-              )
-            })}
+      {/* 상단 고정 헤더: 날짜/요일 + all-day (하나의 sticky 컨테이너 → 겹침 방지) */}
+      <div className="sticky top-0 z-20 bg-[var(--bg-primary)]">
+        {/* Multi-day column headers */}
+        {days > 1 && (
+          <div className="flex border-b border-[var(--border)]">
+            <div className="flex-shrink-0" style={{ width: 40 }} />
+            {dates.map(d => (
+              <div
+                key={d}
+                className={`flex-1 py-1 text-center text-[11px] font-semibold border-l border-[var(--border)] ${
+                  d === todayStr
+                    ? 'text-blue-400'
+                    : d === date
+                      ? 'text-[var(--text-primary)]'
+                      : 'text-[var(--text-muted)]'
+                }`}
+              >
+                {format(parseISO(d), 'EEE')}
+                <br />
+                <span className={`text-xs font-normal ${d === todayStr ? '' : 'opacity-70'}`}>
+                  {format(parseISO(d), 'd')}
+                </span>
+              </div>
+            ))}
           </div>
-        )
-      })()}
+        )}
+
+        {/* All-day 행 — 항상 표시, 빈 칸 클릭 시 종일 일정 추가(Google 연동) */}
+        <div className="flex border-b border-[var(--border)]">
+          <div
+            className="flex-shrink-0 flex items-start pt-1.5 justify-end pr-2
+                       text-[10px] text-[var(--text-muted)] leading-none"
+            style={{ width: 40 }}
+          >
+            all-day
+          </div>
+          {dates.map(d => {
+            const allDayEvs = (eventsByDate[d] ?? []).filter(ev => eventToTimeRange(ev).allDay)
+            const adding = newAllDayDate === d
+            return (
+              <div
+                key={`allday-${d}`}
+                className="flex-1 min-w-0 border-l border-[var(--border)] px-0.5 py-0.5
+                           flex flex-col gap-0.5 min-h-[28px] cursor-pointer hover:bg-white/[0.03]"
+                onClick={() => {
+                  if (!googleAccessToken) return
+                  setNewAllDayDate(d); setNewAllDayTitle('')
+                  setTimeout(() => allDayInputRef.current?.focus(), 50)
+                }}
+                title={googleAccessToken ? '클릭해서 종일 일정 추가' : undefined}
+              >
+                {allDayEvs.map(ev => {
+                  const color = ev.calendarColor ?? '#4285f4'
+                  return (
+                    <div
+                      key={`ad-${ev.id}`}
+                      className="text-[11px] font-medium px-1.5 py-0.5 rounded truncate
+                                 cursor-pointer select-none"
+                      style={{ backgroundColor: color + '30', color }}
+                      onClick={(e) => { e.stopPropagation(); if (ev.htmlLink) window.open(ev.htmlLink, '_blank') }}
+                      title={ev.summary}
+                    >
+                      {ev.summary}
+                    </div>
+                  )
+                })}
+                {adding && (
+                  <input
+                    ref={allDayInputRef}
+                    value={newAllDayTitle}
+                    onChange={(e) => setNewAllDayTitle(e.target.value)}
+                    onClick={(e) => e.stopPropagation()}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter') handleCreateAllDay()
+                      else if (e.key === 'Escape') { setNewAllDayDate(null); setNewAllDayTitle('') }
+                    }}
+                    onBlur={() => handleCreateAllDay()}
+                    placeholder="종일 일정..."
+                    className="w-full text-[11px] px-1.5 py-0.5 rounded bg-[var(--bg-tertiary)]
+                               border border-blue-400/50 outline-none text-[var(--text-primary)]"
+                  />
+                )}
+              </div>
+            )
+          })}
+        </div>
+      </div>
 
       {/* Grid: time gutter + day columns */}
       <div className="flex" ref={gridRef}>
