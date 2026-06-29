@@ -3,7 +3,7 @@ import { RangeSetBuilder } from '@codemirror/state'
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 
-type TaskType = 'open' | 'done' | 'cancelled' | 'scheduled' | 'checklist'
+type TaskType = 'open' | 'done' | 'cancelled' | 'scheduled' | 'checklist' | 'checklist-done'
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
@@ -25,7 +25,8 @@ function getTaskType(lineText: string): TaskType | null {
   if (/^\s*- \[-\]\s/.test(text)) return 'cancelled'
   if (/^\s*- \[>\]\s/.test(text)) return 'scheduled'
   if (/^\s*\* \S/.test(text)) return 'open'   // * task (NotePlan style)
-  if (/^\s*\+ \S/.test(text)) return 'checklist' // + checklist
+  if (/^\s*\+ \[x\]\s/i.test(text)) return 'checklist-done' // + [x] checklist done
+  if (/^\s*\+ \S/.test(text)) return 'checklist' // + checklist (open)
   return null
 }
 
@@ -49,7 +50,13 @@ function getMarkerRange(
     const start = lineFrom + offset + star[1].length
     return { from: start, to: start + 2 }
   }
-  // "+ " (checklist)
+  // "+ [x] " (checklist done) — 마커 전체 교체
+  const plusDone = text.match(/^(\s*)(\+ \[x\] )/i)
+  if (plusDone) {
+    const start = lineFrom + offset + plusDone[1].length
+    return { from: start, to: start + plusDone[2].length }
+  }
+  // "+ " (checklist open)
   const plus = text.match(/^(\s*)(\+ )/)
   if (plus) {
     const start = lineFrom + offset + plus[1].length
@@ -124,6 +131,18 @@ function buildIcon(taskType: TaskType): SVGSVGElement {
       svg.appendChild(el)
       break
     }
+    case 'checklist-done': {
+      // Rounded square + checkmark (green)
+      const el = document.createElementNS(NS, 'rect')
+      el.setAttribute('x', '1.5'); el.setAttribute('y', '1.5')
+      el.setAttribute('width', '12'); el.setAttribute('height', '12')
+      el.setAttribute('rx', '2.5')
+      el.setAttribute('fill', 'none'); el.setAttribute('stroke', '#6aaa6a')
+      el.setAttribute('stroke-width', '1.5')
+      svg.appendChild(el)
+      addPath(svg, 'M4.5 7.8L6.6 9.8L10.5 5.5', '#6aaa6a')
+      break
+    }
   }
   return svg
 }
@@ -144,8 +163,9 @@ class CheckboxWidget extends WidgetType {
 
     const icon = buildIcon(this.taskType)
 
-    // Hover effect for open/done (toggle targets)
-    if (this.taskType === 'open' || this.taskType === 'done') {
+    // Hover effect for toggle targets
+    if (this.taskType === 'open' || this.taskType === 'done'
+        || this.taskType === 'checklist' || this.taskType === 'checklist-done') {
       wrap.style.opacity = '1'
       wrap.addEventListener('mouseenter', () => { wrap.style.opacity = '0.75' })
       wrap.addEventListener('mouseleave', () => { wrap.style.opacity = '1' })
@@ -162,6 +182,12 @@ class CheckboxWidget extends WidgetType {
         newText = newText
           .replace('- [ ]', '- [x]')
           .replace(/^(\s*)\* /, '$1- [x] ')
+      } else if (this.taskType === 'checklist') {
+        // + content → + [x] content (체크)
+        newText = newText.replace(/^(\s*)\+ /, '$1+ [x] ')
+      } else if (this.taskType === 'checklist-done') {
+        // + [x] content → + content (해제)
+        newText = newText.replace(/^(\s*)\+ \[x\] /i, '$1+ ')
       }
       if (newText !== line.text) {
         view.dispatch({ changes: { from: line.from, to: line.to, insert: newText } })
@@ -191,10 +217,11 @@ function buildLineDecorations(view: EditorView): DecorationSet {
 
     if (taskType) {
       const cls =
-        taskType === 'done'       ? 'cm-task-done'
-        : taskType === 'cancelled'  ? 'cm-task-cancelled'
-        : taskType === 'scheduled'  ? 'cm-task-scheduled'
-        : taskType === 'checklist'  ? 'cm-checklist'
+        taskType === 'done'           ? 'cm-task-done'
+        : taskType === 'checklist-done' ? 'cm-task-done'
+        : taskType === 'cancelled'      ? 'cm-task-cancelled'
+        : taskType === 'scheduled'      ? 'cm-task-scheduled'
+        : taskType === 'checklist'      ? 'cm-checklist'
         : 'cm-task-open'
 
       // Decoration.line is a point decoration — from == to == line.from
