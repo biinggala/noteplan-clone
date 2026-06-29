@@ -94,6 +94,32 @@ html, body {
   -webkit-user-select: none;
   touch-action: none; /* pointer 드래그 중 스크롤 방지 (터치 포함) */
 }
+/* 폴더트리 드래그앤드롭 */
+.np-tree-ghost {
+  position: fixed;
+  left: 0;
+  top: 0;
+  z-index: 9999;
+  max-width: 240px;
+  padding: 4px 10px;
+  border-radius: 8px;
+  font-size: 12px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  color: var(--text-primary);
+  background: var(--bg-secondary);
+  border: 1px solid var(--border);
+  box-shadow: 0 6px 20px rgb(0 0 0 / 0.35);
+  pointer-events: none;
+  transform: rotate(-1.5deg);
+}
+.np-folder-drop-over {
+  background: color-mix(in srgb, var(--accent) 22%, transparent) !important;
+  outline: 1px solid var(--accent);
+  outline-offset: -1px;
+}
+
 /* pointer 드래그 고스트 (커서 따라다니는 카드) */
 .np-drag-ghost {
   position: fixed;

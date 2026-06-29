@@ -461,6 +461,73 @@ export async function createFolder(name: string, parentPath?: string): Promise<F
   return rowToFolder(data)
 }
 
+/** 노트를 다른 폴더로 이동 (folder + file_path 갱신). folderPath='' 이면 미분류. */
+export async function moveNote(noteId: string, folderPath: string): Promise<void> {
+  const supabase = createClient()
+  const userId = await getUserId()
+  const { data: n } = await supabase
+    .from('notes').select('file_path').eq('id', noteId).eq('user_id', userId).single()
+  if (!n) return
+  const base = (n.file_path as string).split('/').pop()
+  const newFile = folderPath ? `Notes/${folderPath}/${base}` : `Notes/${base}`
+  await supabase.from('notes')
+    .update({ folder: folderPath || null, file_path: newFile, updated_at: Date.now() })
+    .eq('id', noteId).eq('user_id', userId)
+}
+
+/**
+ * 폴더를 다른 폴더 밑으로 이동. 자손 폴더 path + 내부 노트 folder/file_path를 cascade 갱신.
+ * newParentPath=null 이면 최상위로. 자기 자신/자손으로의 이동은 거부.
+ */
+export async function moveFolder(folderId: string, newParentPath: string | null): Promise<void> {
+  const supabase = createClient()
+  const userId = await getUserId()
+  const { data: folderRow } = await supabase
+    .from('folders').select('id, name, path').eq('id', folderId).eq('user_id', userId).single()
+  if (!folderRow) return
+  const oldPath = folderRow.path as string
+  const name = folderRow.name as string
+  const newPath = newParentPath ? `${newParentPath}/${name}` : name
+  if (newPath === oldPath) return
+  // 순환 방지: 새 부모가 자기 자신 또는 자손이면 거부
+  if (newParentPath && (newParentPath === oldPath || newParentPath.startsWith(oldPath + '/'))) return
+
+  // 새 parentId
+  let parentId: string | null = null
+  if (newParentPath) {
+    const { data: p } = await supabase
+      .from('folders').select('id').eq('user_id', userId).eq('path', newParentPath).maybeSingle()
+    parentId = p?.id ?? null
+  }
+
+  // 자기 자신 + 자손 폴더 path 갱신
+  const { data: allFolders } = await supabase
+    .from('folders').select('id, path').eq('user_id', userId)
+  for (const f of allFolders ?? []) {
+    const p = f.path as string
+    if (p === oldPath) {
+      await supabase.from('folders').update({ path: newPath, parent_id: parentId }).eq('id', f.id).eq('user_id', userId)
+    } else if (p.startsWith(oldPath + '/')) {
+      await supabase.from('folders').update({ path: newPath + p.slice(oldPath.length) }).eq('id', f.id).eq('user_id', userId)
+    }
+  }
+
+  // 영향받는 노트 folder + file_path 갱신
+  const { data: notes } = await supabase
+    .from('notes').select('id, folder, file_path').eq('user_id', userId)
+  for (const n of notes ?? []) {
+    const nf = n.folder as string | null
+    if (!nf) continue
+    if (nf === oldPath || nf.startsWith(oldPath + '/')) {
+      const newFolder = newPath + nf.slice(oldPath.length)
+      const base = (n.file_path as string).split('/').pop()
+      await supabase.from('notes')
+        .update({ folder: newFolder, file_path: `Notes/${newFolder}/${base}`, updated_at: Date.now() })
+        .eq('id', n.id).eq('user_id', userId)
+    }
+  }
+}
+
 /**
  * 주어진 폴더 경로들을 idempotent하게 생성 (얕은 단계부터, 이미 있으면 skip).
  * import 시 하위 폴더(Projects/Cringe Friends 등)를 미리 만들어 노트가 트리에 보이게 함.
