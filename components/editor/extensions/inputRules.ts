@@ -24,8 +24,10 @@ export function inputRulesExtension() {
       const line = view.state.doc.lineAt(from)
       const textBefore = line.text.slice(0, from - line.from)
       if (textBefore === '*') {
+        // 커서를 명시적으로 '- [ ] ' 끝에 둠 (한글 IME 조합 시작 시 위치 동기화 → 앞 공백 끼임 방지)
         view.dispatch({
           changes: { from: line.from, to: from, insert: '- [ ] ' },
+          selection: { anchor: line.from + 6 },
           userEvent: 'input.type',
         })
         return true

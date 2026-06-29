@@ -15,6 +15,7 @@ import { markdownWYSIWYGExtension } from './extensions/markdownWYSIWYG'
 import { dragHandleExtension } from './extensions/dragHandle'
 import { hrRuleExtension } from './extensions/hrRule'
 import { markdownShortcuts, underlineExtension } from './extensions/markdownShortcuts'
+import { hangingIndentExtension } from './extensions/hangingIndent'
 
 interface NoteEditorProps {
   content: string
@@ -69,6 +70,7 @@ export default function NoteEditor({ content, onChange, onSave }: NoteEditorProp
         ...inputRulesExtension(),
         ...markdownWYSIWYGExtension(),
         underlineExtension(),
+        hangingIndentExtension(),
         hrRuleExtension(),
         ...dragHandleExtension(),
         EditorView.lineWrapping,
