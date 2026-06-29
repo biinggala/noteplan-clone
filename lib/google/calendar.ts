@@ -22,6 +22,7 @@ export interface GoogleCalendarEvent {
   start: { dateTime?: string; date?: string }
   end:   { dateTime?: string; date?: string }
   htmlLink: string
+  extendedProperties?: { private?: Record<string, string>; shared?: Record<string, string> }
 }
 
 // ── 캘린더 목록 fetch ─────────────────────────────────────────────────────────
@@ -168,6 +169,7 @@ export interface CreateEventPayload {
   startDateTime: string   // ISO 8601, e.g. "2026-04-26T09:00:00"
   endDateTime:   string
   timeZone?:     string
+  extendedProperties?: { private?: Record<string, string>; shared?: Record<string, string> }
 }
 
 export async function createCalendarEvent(
@@ -175,12 +177,13 @@ export async function createCalendarEvent(
   payload: CreateEventPayload,
 ): Promise<GoogleCalendarEvent & { calendarId: string; calendarColor: string }> {
   const tz = payload.timeZone ?? Intl.DateTimeFormat().resolvedOptions().timeZone
-  const body = {
+  const body: Record<string, unknown> = {
     summary: payload.summary,
     description: payload.description,
     start: { dateTime: payload.startDateTime, timeZone: tz },
     end:   { dateTime: payload.endDateTime,   timeZone: tz },
   }
+  if (payload.extendedProperties) body.extendedProperties = payload.extendedProperties
   const res = await fetch(
     `https://www.googleapis.com/calendar/v3/calendars/${encodeCalId(payload.calendarId)}/events`,
     {

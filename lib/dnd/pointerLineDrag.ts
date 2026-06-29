@@ -14,6 +14,9 @@ import type { StateEffect } from '@codemirror/state'
 import { useTimeBlockStore } from '@/lib/stores/timeBlockStore'
 import { useLineUpdateStore } from '@/lib/stores/lineUpdateStore'
 import { useTimelineDragStore } from '@/lib/dnd/timelineDragStore'
+import { useAuthStore } from '@/lib/stores/authStore'
+import { useTimeblockLinkStore, tbKey } from '@/lib/stores/timeblockLinkStore'
+import { createCalendarEvent } from '@/lib/google/calendar'
 import { formatTimeRange } from '@/lib/parser/timeBlockParser'
 
 const SLOT_H = 60          // 타임라인 1시간 높이(px) — DayTimeline과 동일
@@ -178,6 +181,35 @@ function createTimeBlock(date: string, hour: number, minute: number, content: st
     date, startHour: hour, startMinute: minute, duration: DEFAULT_DURATION, content: cleanContent,
   })
   useLineUpdateStore.getState().requestUpdate(rawLine, newLine)
+  // 실제 Google Calendar에도 이벤트 생성 (마커로 중복 표시 방지)
+  void createGcalEventForTimeblock(date, hour, minute, DEFAULT_DURATION, cleanContent)
+}
+
+const pad2 = (n: number) => String(n).padStart(2, '0')
+
+async function createGcalEventForTimeblock(
+  date: string, hour: number, minute: number, duration: number, content: string,
+) {
+  const token = useAuthStore.getState().googleAccessToken
+  if (!token) return
+  const start = `${date}T${pad2(hour)}:${pad2(minute)}:00`
+  const endTotal = hour * 60 + minute + duration
+  const end = `${date}T${pad2(Math.floor(endTotal / 60) % 24)}:${pad2(endTotal % 60)}:00`
+  try {
+    const ev = await createCalendarEvent(token, {
+      calendarId: 'primary',
+      summary: content,
+      startDateTime: start,
+      endDateTime: end,
+      extendedProperties: { private: { npTimeblock: '1', npContent: content } },
+    })
+    useTimeblockLinkStore.getState().setLink(
+      tbKey(date, hour, minute, content),
+      { eventId: ev.id, calendarId: ev.calendarId },
+    )
+  } catch (err) {
+    console.error('[timeblock → gcal]', err)
+  }
 }
 
 function reorder(e: PointerEvent, drag: ActiveDrag) {

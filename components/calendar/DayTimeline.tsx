@@ -9,6 +9,7 @@ import { formatTimeRange } from '@/lib/parser/timeBlockParser'
 import { useAuthStore } from '@/lib/stores/authStore'
 import { useCalendarEventStore } from '@/lib/stores/calendarEventStore'
 import { useTimelineDragStore } from '@/lib/dnd/timelineDragStore'
+import { useTimeblockLinkStore, tbKey } from '@/lib/stores/timeblockLinkStore'
 import {
   fetchCalendarList,
   fetchAllCalendarEventsForRange,
@@ -258,6 +259,29 @@ export default function DayTimeline({ date, days = 1 }: DayTimelineProps) {
       .finally(() => unfetched.forEach(d => setFetching(d, false)))
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [googleAccessToken, calendars, enabledCalendarIds, dates])
+
+  // 타임블록 완료(체크) 전환 → 링크된 Google 이벤트 제목에 ✓ 추가/제거
+  const syncedDoneRef = useRef<Set<string>>(new Set())
+  useEffect(() => {
+    if (!googleAccessToken) return
+    const getLink = useTimeblockLinkStore.getState().getLink
+    for (const b of timeBlocks) {
+      const status = getTaskStatus(b.linePrefix)
+      const done = status === 'done' || status === 'cancelled'
+      const key = tbKey(b.date, b.startHour, b.startMinute, b.content)
+      const link = getLink(key)
+      if (!link) continue
+      if (done && !syncedDoneRef.current.has(key)) {
+        syncedDoneRef.current.add(key)
+        updateCalendarEvent(googleAccessToken, link.calendarId, link.eventId, { summary: `✓ ${b.content}` })
+          .catch(err => console.error('[done→gcal]', err))
+      } else if (!done && syncedDoneRef.current.has(key)) {
+        syncedDoneRef.current.delete(key)
+        updateCalendarEvent(googleAccessToken, link.calendarId, link.eventId, { summary: b.content })
+          .catch(err => console.error('[undone→gcal]', err))
+      }
+    }
+  }, [timeBlocks, googleAccessToken])
 
   // gridRef is on the flex container (gutter + columns) — used for Y calculation
   const gridRef = useRef<HTMLDivElement>(null)
@@ -780,6 +804,8 @@ export default function DayTimeline({ date, days = 1 }: DayTimelineProps) {
   function renderCalendarEvent(ev: GoogleCalendarEvent, colDate: string) {
     const base = eventToTimeRange(ev)
     if (base.allDay) return null
+    // 타임블록으로 생성한 이벤트는 로컬 타임블록이 대표 → 중복 방지 위해 스킵
+    if (ev.extendedProperties?.private?.npTimeblock) return null
 
     // Apply optimistic override while dragging/resizing
     let startH = base.startHour, startM = base.startMinute
