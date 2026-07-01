@@ -9,7 +9,6 @@ import { formatTimeRange } from '@/lib/parser/timeBlockParser'
 import { useAuthStore } from '@/lib/stores/authStore'
 import { useCalendarEventStore } from '@/lib/stores/calendarEventStore'
 import { useTimelineDragStore } from '@/lib/dnd/timelineDragStore'
-import { useTimeblockLinkStore, tbKey } from '@/lib/stores/timeblockLinkStore'
 import {
   fetchCalendarList,
   fetchAllCalendarEventsForRange,
@@ -260,28 +259,44 @@ export default function DayTimeline({ date, days = 1 }: DayTimelineProps) {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [googleAccessToken, calendars, enabledCalendarIds, dates])
 
+  // 타임블록 ↔ Google 이벤트 재검색 (npTimeblock 마커 + 시각 + npContent).
+  // fetch된 eventsByDate 기반이라 재시작·기기 무관하게 링크됨.
+  function findTimeblockEvent(date: string, startHour: number, startMinute: number, content: string) {
+    return (eventsByDate[date] ?? []).find(ev => {
+      const p = ev.extendedProperties?.private
+      if (!p?.npTimeblock) return false
+      const t = eventToTimeRange(ev)
+      if (t.allDay) return false
+      return t.startHour === startHour && t.startMinute === startMinute
+        && (p.npContent ?? '') === content
+    })
+  }
+
   // 타임블록 완료(체크) 전환 → 링크된 Google 이벤트 제목에 ✓ 추가/제거
   const syncedDoneRef = useRef<Set<string>>(new Set())
   useEffect(() => {
     if (!googleAccessToken) return
-    const getLink = useTimeblockLinkStore.getState().getLink
     for (const b of timeBlocks) {
       const status = getTaskStatus(b.linePrefix)
       const done = status === 'done' || status === 'cancelled'
-      const key = tbKey(b.date, b.startHour, b.startMinute, b.content)
-      const link = getLink(key)
-      if (!link) continue
-      if (done && !syncedDoneRef.current.has(key)) {
+      const key = `${b.date}|${b.startHour}:${b.startMinute}|${b.content}`
+      const alreadyDone = syncedDoneRef.current.has(key)
+      if (done === alreadyDone) continue
+      const ev = findTimeblockEvent(b.date, b.startHour, b.startMinute, b.content)
+      if (!ev) continue
+      if (done) {
         syncedDoneRef.current.add(key)
-        updateCalendarEvent(googleAccessToken, link.calendarId, link.eventId, { summary: `✓ ${b.content}` })
+        patchEvent(b.date, b.date, ev.id, { summary: `✓ ${b.content}` })
+        updateCalendarEvent(googleAccessToken, ev.calendarId, ev.id, { summary: `✓ ${b.content}` })
           .catch(err => console.error('[done→gcal]', err))
-      } else if (!done && syncedDoneRef.current.has(key)) {
+      } else {
         syncedDoneRef.current.delete(key)
-        updateCalendarEvent(googleAccessToken, link.calendarId, link.eventId, { summary: b.content })
+        patchEvent(b.date, b.date, ev.id, { summary: b.content })
+        updateCalendarEvent(googleAccessToken, ev.calendarId, ev.id, { summary: b.content })
           .catch(err => console.error('[undone→gcal]', err))
       }
     }
-  }, [timeBlocks, googleAccessToken])
+  }, [timeBlocks, googleAccessToken, eventsByDate])
 
   // gridRef is on the flex container (gutter + columns) — used for Y calculation
   const gridRef = useRef<HTMLDivElement>(null)
@@ -782,12 +797,11 @@ export default function DayTimeline({ date, days = 1 }: DayTimelineProps) {
                 requestUpdate(block.noteLineText, (block.linePrefix ?? '') + (block.originalContent ?? block.content))
               }
               removeTimeBlock(block.id)
-              // 연결된 Google Calendar 이벤트도 삭제
-              const key = tbKey(block.date, block.startHour, block.startMinute, block.content)
-              const link = useTimeblockLinkStore.getState().getLink(key)
-              if (link && googleAccessToken) {
-                deleteCalendarEvent(googleAccessToken, link.calendarId, link.eventId)
-                  .then(() => useTimeblockLinkStore.getState().removeLink(key))
+              // 연결된 Google Calendar 이벤트도 삭제 (마커 재검색)
+              const linked = findTimeblockEvent(block.date, block.startHour, block.startMinute, block.content)
+              if (linked && googleAccessToken) {
+                removeEvent(block.date, linked.id)
+                deleteCalendarEvent(googleAccessToken, linked.calendarId, linked.id)
                   .catch(err => console.error('[timeblock 삭제 → gcal]', err))
               }
             }}

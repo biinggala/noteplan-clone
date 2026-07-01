@@ -15,7 +15,7 @@ import { useTimeBlockStore } from '@/lib/stores/timeBlockStore'
 import { useLineUpdateStore } from '@/lib/stores/lineUpdateStore'
 import { useTimelineDragStore } from '@/lib/dnd/timelineDragStore'
 import { useAuthStore } from '@/lib/stores/authStore'
-import { useTimeblockLinkStore, tbKey } from '@/lib/stores/timeblockLinkStore'
+import { useCalendarEventStore } from '@/lib/stores/calendarEventStore'
 import { createCalendarEvent } from '@/lib/google/calendar'
 import { formatTimeRange } from '@/lib/parser/timeBlockParser'
 
@@ -203,10 +203,9 @@ async function createGcalEventForTimeblock(
       endDateTime: end,
       extendedProperties: { private: { npTimeblock: '1', npContent: content } },
     })
-    useTimeblockLinkStore.getState().setLink(
-      tbKey(date, hour, minute, content),
-      { eventId: ev.id, calendarId: ev.calendarId },
-    )
+    // eventsByDate에 추가(마커라 렌더는 스킵) → 즉시 재검색으로 삭제/완료 동기화 가능.
+    // 다음 fetch 시 Google에서 마커 이벤트로 다시 받아오므로 재시작·기기 무관.
+    useCalendarEventStore.getState().addEvent(date, ev)
   } catch (err) {
     console.error('[timeblock → gcal]', err)
   }
