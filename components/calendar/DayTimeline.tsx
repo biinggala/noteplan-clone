@@ -782,6 +782,14 @@ export default function DayTimeline({ date, days = 1 }: DayTimelineProps) {
                 requestUpdate(block.noteLineText, (block.linePrefix ?? '') + (block.originalContent ?? block.content))
               }
               removeTimeBlock(block.id)
+              // 연결된 Google Calendar 이벤트도 삭제
+              const key = tbKey(block.date, block.startHour, block.startMinute, block.content)
+              const link = useTimeblockLinkStore.getState().getLink(key)
+              if (link && googleAccessToken) {
+                deleteCalendarEvent(googleAccessToken, link.calendarId, link.eventId)
+                  .then(() => useTimeblockLinkStore.getState().removeLink(key))
+                  .catch(err => console.error('[timeblock 삭제 → gcal]', err))
+              }
             }}
           >×</button>
         </div>
