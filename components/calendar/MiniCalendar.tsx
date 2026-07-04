@@ -3,7 +3,7 @@ import {
   format, startOfMonth, endOfMonth, eachDayOfInterval,
   startOfWeek, endOfWeek, isSameMonth, isSameDay, isToday,
   addMonths, subMonths, parseISO,
-  getISOWeek, getISOWeekYear,
+  getWeek, getWeekYear,
 } from 'date-fns'
 import { useEffect, useRef } from 'react'
 import { useCalendarStore } from '@/lib/stores/calendarStore'
@@ -17,6 +17,9 @@ import { startGoogleOAuth } from '@/lib/auth/googleOAuth'
 import { createClient } from '@/lib/supabase/client'
 
 const WEEKDAYS = ['Su', 'Mo', 'Tu', 'We', 'Th', 'Fr', 'Sa']
+// 일요일 시작 주 + CW 번호가 그 행(일~토)과 일치하도록 하는 옵션
+// (firstWeekContainsDate:4 = ISO식 규칙을 일요일 시작에 적용)
+const WK = { weekStartsOn: 0 as const, firstWeekContainsDate: 4 as const }
 
 export default function MiniCalendar() {
   const router = useRouter()
@@ -35,8 +38,8 @@ export default function MiniCalendar() {
 
   const monthStart = startOfMonth(viewDate)
   const monthEnd   = endOfMonth(viewDate)
-  const calStart   = startOfWeek(monthStart)
-  const calEnd     = endOfWeek(monthEnd)
+  const calStart   = startOfWeek(monthStart, WK)
+  const calEnd     = endOfWeek(monthEnd, WK)
   const allDays    = eachDayOfInterval({ start: calStart, end: calEnd })
 
   // Week rows
@@ -106,9 +109,9 @@ export default function MiniCalendar() {
     router.push(`/daily?date=${dateStr}`)
   }
 
-  const cwKey = (sunday: Date) => {
-    const n = getISOWeek(sunday)
-    const y = getISOWeekYear(sunday)
+  const cwKey = (weekStart: Date) => {
+    const n = getWeek(weekStart, WK)
+    const y = getWeekYear(weekStart, WK)
     return `${y}-W${n.toString().padStart(2, '0')}`
   }
 
@@ -188,9 +191,9 @@ export default function MiniCalendar() {
       {/* Week rows */}
       <div className="flex flex-col gap-0.5">
         {weeks.map(week => {
-          const sunday = week[0]
-          const wk     = cwKey(sunday)
-          const cwNum  = getISOWeek(sunday).toString().padStart(2, '0')
+          const weekStart = week[0]   // 일요일
+          const wk        = cwKey(weekStart)
+          const cwNum     = getWeek(weekStart, WK).toString().padStart(2, '0')
 
           return (
             <div key={wk} className="grid grid-cols-8">

@@ -1,5 +1,8 @@
 import type { Note, NoteType, Folder } from '@/types/note'
-import { format, addDays, startOfISOWeek, endOfISOWeek } from 'date-fns'
+import { format, addDays, startOfWeek, endOfWeek } from 'date-fns'
+
+// 미니 캘린더와 동일: 일요일 시작 주 + CW 번호 규칙 (firstWeekContainsDate:4)
+const WK = { weekStartsOn: 0 as const, firstWeekContainsDate: 4 as const }
 import { v4 as uuidv4 } from 'uuid'
 import { createClient } from '@/lib/supabase/client'
 
@@ -318,12 +321,13 @@ export async function getOrCreateDailyNote(dateStr: string): Promise<Note> {
   return note
 }
 
-function weekKeyToMonday(weekKey: string): Date {
+// 주간 키(YYYY-WNN) → 그 주의 시작(일요일). 미니 캘린더 CW 번호와 일치.
+function weekKeyToWeekStart(weekKey: string): Date {
   const [yearStr, weekPart] = weekKey.split('-W')
   const year = parseInt(yearStr)
   const week = parseInt(weekPart)
-  const jan4 = new Date(year, 0, 4)
-  const startW1 = startOfISOWeek(jan4)
+  // firstWeekContainsDate:4 → 1주차는 1/4이 든 주
+  const startW1 = startOfWeek(new Date(year, 0, 4), WK)
   return addDays(startW1, (week - 1) * 7)
 }
 
@@ -331,11 +335,11 @@ export async function getOrCreateWeeklyNote(weekKey: string): Promise<Note> {
   const supabase = createClient()
   const userId = await getUserId()
 
-  const monday = weekKeyToMonday(weekKey)
-  const sunday = endOfISOWeek(monday)
+  const weekStart = weekKeyToWeekStart(weekKey)      // 일요일
+  const weekEnd   = endOfWeek(weekStart, WK)          // 토요일
   const weekNum = weekKey.split('-W')[1]
   const year = weekKey.split('-W')[0]
-  const rangeLabel = `${format(monday, 'MMM d')} – ${format(sunday, 'MMM d, yyyy')}`
+  const rangeLabel = `${format(weekStart, 'MMM d')} – ${format(weekEnd, 'MMM d, yyyy')}`
   const title = `Week ${parseInt(weekNum)}, ${year}`
 
   const row = {
