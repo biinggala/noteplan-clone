@@ -56,10 +56,19 @@ function WeeklyNoteInner() {
     // Highlight the week's start (Sunday) in the mini-calendar when viewing a weekly note
     setSelectedDate(format(weekStart, 'yyyy-MM-dd'))
     getOrCreateWeeklyNote(week).then(n => {
+      // 예전 규칙(월~일)으로 자동 생성된 본문의 날짜 범위 줄을 교정.
+      // "# Week N, YYYY" 바로 아래의 날짜 범위 형식 줄만 교체 (사용자 텍스트는 보존)
+      const lines = n.content.split('\n')
+      const DATE_RANGE = /^[A-Za-z]{3} \d{1,2}(, \d{4})? [–—-] [A-Za-z]{3} \d{1,2}, \d{4}\s*$/
+      if (lines[0]?.startsWith('# Week ') && DATE_RANGE.test(lines[1] ?? '') && lines[1] !== rangeLabel) {
+        lines[1] = rangeLabel
+        n = { ...n, content: lines.join('\n') }
+        upsertNote(n).catch(err => console.error('[weekly 날짜줄 교정]', err))
+      }
       setNote(n)
       setActiveNote(n)
     })
-  }, [week, setSelectedDate, setActiveNote])
+  }, [week, rangeLabel, weekStart, setSelectedDate, setActiveNote])
 
   const handleChange = useCallback((content: string) => {
     if (!note) return
