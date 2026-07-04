@@ -132,15 +132,37 @@ export async function fetchAllCalendarEventsForRange(
     .filter((r): r is PromiseFulfilledResult<GoogleCalendarEvent[]> => r.status === 'fulfilled')
     .flatMap(r => r.value)
 
-  // 날짜별 그룹화 (start.date 또는 start.dateTime의 날짜 부분 사용)
+  // 날짜별 그룹화 — 며칠에 걸친 일정은 걸친 모든 날짜에 추가 (시작일만 X)
   const grouped: Record<string, GoogleCalendarEvent[]> = {}
   for (const ev of allEvents) {
-    const d = ev.start.date ?? ev.start.dateTime?.split('T')[0]
-    if (!d) continue
-    if (!grouped[d]) grouped[d] = []
-    grouped[d].push(ev)
+    for (const d of eventCoveredDates(ev)) {
+      if (!grouped[d]) grouped[d] = []
+      grouped[d].push(ev)
+    }
   }
   return grouped
+}
+
+/** 이벤트가 걸치는 모든 날짜(YYYY-MM-DD) 목록. all-day는 end.date가 배타적. */
+function eventCoveredDates(ev: GoogleCalendarEvent): string[] {
+  const isAllDay = !!ev.start.date
+  const startStr = ev.start.date ?? ev.start.dateTime?.split('T')[0]
+  if (!startStr) return []
+  const endStr = isAllDay
+    ? (ev.end?.date ?? startStr)        // 배타적 (마지막날 다음)
+    : (ev.end?.dateTime?.split('T')[0] ?? startStr)  // 포함
+  const dates: string[] = []
+  const cur = new Date(`${startStr}T00:00:00`)
+  const end = new Date(`${endStr}T00:00:00`)
+  // all-day: cur < end (배타적) / timed: cur <= end (포함)
+  while (isAllDay ? cur < end : cur <= end) {
+    dates.push(
+      `${cur.getFullYear()}-${String(cur.getMonth() + 1).padStart(2, '0')}-${String(cur.getDate()).padStart(2, '0')}`,
+    )
+    cur.setDate(cur.getDate() + 1)
+    if (dates.length > 400) break // 안전장치
+  }
+  return dates.length ? dates : [startStr]
 }
 
 // ── 활성화된 모든 캘린더에서 이벤트 fetch ────────────────────────────────────
