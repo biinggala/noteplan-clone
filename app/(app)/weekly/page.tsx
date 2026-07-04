@@ -1,7 +1,7 @@
 'use client'
 import { Suspense, useEffect, useRef, useState, useCallback } from 'react'
 import { useSearchParams } from 'next/navigation'
-import { format, addDays, startOfISOWeek, endOfISOWeek } from 'date-fns'
+import { format, addDays, startOfWeek, endOfWeek, getWeek, getWeekYear } from 'date-fns'
 import { useNoteStore } from '@/lib/stores/noteStore'
 import { useCalendarStore } from '@/lib/stores/calendarStore'
 import { getOrCreateWeeklyNote, upsertNote } from '@/lib/db/noteRepository'
@@ -11,13 +11,15 @@ import dynamic from 'next/dynamic'
 
 const NoteEditor = dynamic(() => import('@/components/editor/NoteEditor'), { ssr: false })
 
-/** Parse "YYYY-WNN" → Monday of that ISO week */
-function weekKeyToMonday(weekKey: string): Date {
+// 미니 캘린더와 동일: 일요일 시작 주 + CW 규칙 (firstWeekContainsDate:4)
+const WK = { weekStartsOn: 0 as const, firstWeekContainsDate: 4 as const }
+
+/** Parse "YYYY-WNN" → 그 주의 시작(일요일) */
+function weekKeyToWeekStart(weekKey: string): Date {
   const [yearStr, weekPart] = weekKey.split('-W')
   const year = parseInt(yearStr)
   const week = parseInt(weekPart)
-  const jan4 = new Date(year, 0, 4)
-  const startW1 = startOfISOWeek(jan4)
+  const startW1 = startOfWeek(new Date(year, 0, 4), WK)
   return addDays(startW1, (week - 1) * 7)
 }
 
@@ -31,7 +33,8 @@ export default function WeeklyNotePage() {
 
 function WeeklyNoteInner() {
   const searchParams = useSearchParams()
-  const week = searchParams.get('week') ?? format(new Date(), "RRRR-'W'II")
+  const week = searchParams.get('week')
+    ?? `${getWeekYear(new Date(), WK)}-W${getWeek(new Date(), WK).toString().padStart(2, '0')}`
   const { setActiveNote, updateNote } = useNoteStore()
   const { setSelectedDate } = useCalendarStore()
   const [note, setNote] = useState<Note | null>(null)
@@ -39,19 +42,19 @@ function WeeklyNoteInner() {
   const noteRef = useRef<Note | null>(null)
   noteRef.current = note
 
-  // Compute week range
-  const monday = weekKeyToMonday(week)
-  const sunday = endOfISOWeek(monday)
+  // Compute week range (일요일 시작)
+  const weekStart = weekKeyToWeekStart(week)   // 일요일
+  const weekEnd   = endOfWeek(weekStart, WK)   // 토요일
   const weekNum = parseInt(week.split('-W')[1])
   const year = week.split('-W')[0]
 
-  const rangeLabel = monday.getFullYear() === sunday.getFullYear()
-    ? `${format(monday, 'MMM d')} – ${format(sunday, 'MMM d, yyyy')}`
-    : `${format(monday, 'MMM d, yyyy')} – ${format(sunday, 'MMM d, yyyy')}`
+  const rangeLabel = weekStart.getFullYear() === weekEnd.getFullYear()
+    ? `${format(weekStart, 'MMM d')} – ${format(weekEnd, 'MMM d, yyyy')}`
+    : `${format(weekStart, 'MMM d, yyyy')} – ${format(weekEnd, 'MMM d, yyyy')}`
 
   useEffect(() => {
-    // Highlight Monday in the mini-calendar when viewing a weekly note
-    setSelectedDate(format(monday, 'yyyy-MM-dd'))
+    // Highlight the week's start (Sunday) in the mini-calendar when viewing a weekly note
+    setSelectedDate(format(weekStart, 'yyyy-MM-dd'))
     getOrCreateWeeklyNote(week).then(n => {
       setNote(n)
       setActiveNote(n)
