@@ -68,7 +68,9 @@ function WeeklyNoteInner() {
       setNote(n)
       setActiveNote(n)
     })
-  }, [week, rangeLabel, weekStart, setSelectedDate, setActiveNote])
+  // weekStart/rangeLabel은 week에서 파생되므로 week만 의존 (weekStart는 매 렌더 새 객체라 넣으면 무한 루프)
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [week, setSelectedDate, setActiveNote])
 
   const handleChange = useCallback((content: string) => {
     if (!note) return
