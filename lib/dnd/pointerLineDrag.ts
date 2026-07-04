@@ -120,9 +120,13 @@ function edgeScrollStep() {
   const { scrollEl, lastX, lastY, view } = active
   if (scrollEl) {
     const r = scrollEl.getBoundingClientRect()
+    // 포인터가 타임라인 위(가로 범위 안)에 있을 때만 엣지 스크롤.
+    // (에디터에서 줄을 재정렬할 땐 타임라인이 스크롤되면 안 됨)
+    const overTimeline = lastX >= r.left && lastX <= r.right
     const dTop = lastY - r.top
     const dBot = r.bottom - lastY
     let speed = 0
+    if (!overTimeline) { active.rafId = requestAnimationFrame(edgeScrollStep); return }
     if (dTop < EDGE_ZONE) speed = -Math.round(EDGE_MAX_SPEED * (1 - Math.max(0, dTop) / EDGE_ZONE))
     else if (dBot < EDGE_ZONE) speed = Math.round(EDGE_MAX_SPEED * (1 - Math.max(0, dBot) / EDGE_ZONE))
     if (speed !== 0) {

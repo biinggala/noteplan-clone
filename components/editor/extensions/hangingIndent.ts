@@ -14,8 +14,9 @@ function buildHangingIndent(view: EditorView): DecorationSet {
       const line = view.state.doc.lineAt(pos)
       const m = LIST_RE.exec(line.text)
       if (m) {
-        // 들여쓰기 + 마커 폭(문자 수)을 ch 단위로 hanging indent
-        const w = m[0].length
+        // 들여쓰기(정확) + 마커 폭. 체크박스는 위젯이라 "- [ ] "(6자)보다 좁으므로
+        // 마커는 최대 3ch로 캡해 과도한 들여쓰기 방지.
+        const w = m[1].length + Math.min(m[2].length, 3)
         builder.add(
           line.from,
           line.from,

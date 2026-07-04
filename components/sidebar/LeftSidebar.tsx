@@ -382,26 +382,20 @@ function TagsPanel({
     const accent = kind === 'tag' ? 'text-blue-400' : 'text-purple-400'
     const sel = kind === 'tag' ? 'bg-blue-500/20 text-blue-300' : 'bg-purple-500/20 text-purple-300'
 
-    // 자식 있는 노드 → 클릭 시 expand/collapse
-    // 리프 노드 → 클릭 시 노트 목록 표시
-    const handleRowClick = () => {
-      if (hasChildren) {
-        toggleExpand(key)
-      } else {
-        handleSelect(kind, node.fullPath)
-      }
-    }
-
+    // chevron = 펼침/접힘, 이름 = 그 태그의 노트 목록 (중간 노드도 클릭 시 목록 표시)
     return (
       <div key={key}>
         <div
-          onClick={handleRowClick}
+          onClick={() => handleSelect(kind, node.fullPath)}
           className={`flex items-center gap-1 rounded text-sm cursor-pointer transition-colors pr-2 py-1
             ${isOpen ? sel : 'text-[var(--text-secondary)] hover:bg-white/5'}`}
           style={{ paddingLeft: 6 + depth * 14 }}
         >
-          {/* chevron (자식 있을 때만) */}
-          <span className="w-3.5 flex-shrink-0 flex items-center justify-center">
+          {/* chevron (자식 있을 때만) — 클릭 시 펼침만 */}
+          <span
+            className="w-3.5 flex-shrink-0 flex items-center justify-center"
+            onClick={(e) => { if (hasChildren) { e.stopPropagation(); toggleExpand(key) } }}
+          >
             {hasChildren && (
               <svg className={`w-2.5 h-2.5 text-[var(--text-muted)] transition-transform ${isExpanded ? 'rotate-90' : ''}`}
                 fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -413,8 +407,8 @@ function TagsPanel({
           <span className={`truncate ${accent}`}>{node.name}</span>
         </div>
 
-        {/* 리프 노드 선택 시 매칭 라인 목록 (날짜/제목 + 내용 발췌) */}
-        {isOpen && !hasChildren && (
+        {/* 선택 시 매칭 라인 목록 (날짜/제목 + 내용 발췌) — 중간 노드도 표시 */}
+        {isOpen && (
           <div className="mb-1 flex flex-col gap-0.5" style={{ paddingLeft: 6 + (depth + 1) * 14 }}>
             {matches.length === 0 && (
               <div className="px-2 py-1 text-xs text-[var(--text-muted)]">결과 없음</div>

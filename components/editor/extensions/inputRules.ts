@@ -38,6 +38,8 @@ export function inputRulesExtension() {
     // Tab / Shift+Tab + Enter: list continuation
     EditorView.domEventHandlers({
       keydown(e, view) {
+        // 한글 등 IME 조합 중에는 우리 핸들러가 개입하지 않음 (조합 커밋 + 중복 처리 → 이중 줄바꿈/공백 방지)
+        if (e.isComposing || e.keyCode === 229) return false
         const isEnter = e.key === 'Enter' && !e.shiftKey && !e.metaKey && !e.ctrlKey
         const isTab = e.key === 'Tab' && !e.metaKey && !e.ctrlKey
         if (!isEnter && !isTab) return false
