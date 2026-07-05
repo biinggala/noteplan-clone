@@ -1,6 +1,7 @@
 'use client'
 import { useMemo, useState } from 'react'
 import { parseTaskOutline, type TaskOutlineType } from '@/lib/parser/taskOutline'
+import { useUIStore } from '@/lib/stores/uiStore'
 
 interface TaskOutlinePanelProps {
   content: string
@@ -32,7 +33,10 @@ function TaskIcon({ type }: { type: TaskOutlineType }) {
 
 export default function TaskOutlinePanel({ content, title = '할 일 요약' }: TaskOutlinePanelProps) {
   const sections = useMemo(() => parseTaskOutline(content), [content])
-  const [collapsed, setCollapsed] = useState(false)
+  // 날짜를 이동해도(daily 페이지가 note===null인 순간 이 컴포넌트가 잠깐
+  // 언마운트됐다 다시 마운트됨) 접힘 상태가 유지되도록 전역 store 사용
+  const collapsed = useUIStore(s => s.weeklyOutlineCollapsed)
+  const toggleCollapsed = useUIStore(s => s.toggleWeeklyOutlineCollapsed)
   const [collapsedSections, setCollapsedSections] = useState<Set<number>>(new Set())
 
   if (sections.length === 0) return null
@@ -49,7 +53,7 @@ export default function TaskOutlinePanel({ content, title = '할 일 요약' }: 
   return (
     <div className="mx-12 mt-3 rounded-lg border border-[var(--border)] bg-white/[0.02] overflow-hidden flex-shrink-0">
       <button
-        onClick={() => setCollapsed(v => !v)}
+        onClick={toggleCollapsed}
         className="w-full flex items-center gap-1.5 px-3 py-2 text-xs font-semibold text-[var(--text-muted)] hover:text-[var(--text-primary)] transition-colors"
       >
         <span className={`inline-block transition-transform ${collapsed ? '-rotate-90' : ''}`}>⌄</span>

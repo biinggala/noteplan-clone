@@ -9,6 +9,7 @@ interface UIStore {
   commandBarOpen: boolean
   activeTab: 'notes' | 'tags' | 'review'
   expandedFolders: string[]
+  weeklyOutlineCollapsed: boolean
   setLeftSidebarWidth: (w: number) => void
   setRightSidebarWidth: (w: number) => void
   toggleLeftSidebar: () => void
@@ -17,6 +18,7 @@ interface UIStore {
   setActiveTab: (tab: 'notes' | 'tags' | 'review') => void
   toggleFolder: (id: string) => void
   expandFolder: (id: string) => void
+  toggleWeeklyOutlineCollapsed: () => void
 }
 
 export const useUIStore = create<UIStore>((set) => ({
@@ -27,6 +29,7 @@ export const useUIStore = create<UIStore>((set) => ({
   commandBarOpen: false,
   activeTab: 'notes',
   expandedFolders: [],
+  weeklyOutlineCollapsed: false,
   setLeftSidebarWidth: (w) => set({ leftSidebarWidth: w }),
   setRightSidebarWidth: (w) => set({ rightSidebarWidth: w }),
   toggleLeftSidebar: () => set((s) => ({ leftSidebarVisible: !s.leftSidebarVisible })),
@@ -41,4 +44,5 @@ export const useUIStore = create<UIStore>((set) => ({
   expandFolder: (id) => set((s) => ({
     expandedFolders: s.expandedFolders.includes(id) ? s.expandedFolders : [...s.expandedFolders, id],
   })),
+  toggleWeeklyOutlineCollapsed: () => set((s) => ({ weeklyOutlineCollapsed: !s.weeklyOutlineCollapsed })),
 }))
