@@ -104,6 +104,12 @@ export function useNoteRealtime(
           'postgres_changes',
           { event: 'UPDATE', schema: 'public', table: 'notes', filter: `id=eq.${noteId}` },
           (payload) => {
+            // 이 채널이 아직 완전히 해제되지 않은 채로 남아있을 수 있다(unsubscribe는
+            // 비동기) — 그 사이 사용자가 이미 다른 노트로 넘어갔다면 이 이벤트는 그
+            // "지금은 활성이 아닌" 노트(noteId, 클로저로 고정됨)에 대한 것이므로 무시.
+            // 이 가드가 없으면 이전 노트의 저장 이벤트가 onRemoteContentRef(항상 최신
+            // 콜백을 가리킴)를 통해 새로 열린 노트의 content를 덮어쓰는 사고가 난다.
+            if (activeNoteIdRef.current !== noteId) return
             const row = payload.new as { content: string; updated_at?: number }
             const ts = typeof row.updated_at === 'number' ? row.updated_at : Date.now()
             // (1) 순서 역전된 옛 이벤트
