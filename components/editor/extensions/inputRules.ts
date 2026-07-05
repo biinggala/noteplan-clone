@@ -117,12 +117,15 @@ export function inputRulesExtension() {
       if (!sel.empty) return
       const doc = u.state.doc
       const curLine = doc.lineAt(sel.head)
-      if (sel.head !== curLine.from || curLine.number < 2) return
+      // 커서가 새 줄 맨 앞(들여쓰기만 있을 수도) — 앞부분이 공백뿐이어야 함
+      const beforeCaret = curLine.text.slice(0, sel.head - curLine.from)
+      if (beforeCaret.trim() !== '' || curLine.number < 2) return
+      // 사용자 입력으로 줄바꿈이 삽입됐는지 (노트 로드 등 프로그램적 변경은 제외)
       let inserted = false
       for (const tr of u.transactions) {
-        if (!tr.isUserEvent('input')) continue
-        tr.changes.iterChanges((_fA, _tA, _fB, tB, ins) => {
-          if (tB === sel.head && ins.toString().endsWith('\n')) inserted = true
+        if (!tr.docChanged || !tr.isUserEvent('input')) continue
+        tr.changes.iterChanges((_fA, _tA, _fB, _tB, ins) => {
+          if (ins.toString().includes('\n')) inserted = true
         })
       }
       if (!inserted) return
