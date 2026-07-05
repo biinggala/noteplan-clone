@@ -66,6 +66,14 @@ function DailyNoteInner() {
   const saveNote = useCallback(async (n: Note) => {
     try {
       const saved = await save(n)
+      // 저장/충돌해결 결과의 updatedAt을 로컬에도 반영 — 안 그러면 다음 저장이
+      // 매번 옛 baseline과 비교돼 매번 "충돌"로 오판한다. 그 사이 다른 날짜로
+      // 넘어갔다면(noteRef가 이미 다른 노트) 여기 적용하지 않음.
+      if (noteRef.current?.id === n.id) {
+        setNote(prev => (prev && prev.id === n.id
+          ? { ...prev, content: saved.content, tags: saved.tags, mentions: saved.mentions, backlinks: saved.backlinks, updatedAt: saved.updatedAt }
+          : prev))
+      }
       console.log('[Save] ✅', n.date, 'len=', saved.content.length)
     } catch (err) {
       console.error('[Save] ❌', err)

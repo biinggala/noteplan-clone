@@ -81,23 +81,35 @@ function NoteInner() {
     updateNote(note.id, { content, tags, mentions, backlinks })
   }, [note, setActiveNote, updateNote])
 
+  const saveNote = useCallback(async (n: Note) => {
+    const saved = await save(n)
+    // 저장/충돌해결 결과의 updatedAt을 로컬에도 반영 — 안 그러면 다음 저장이
+    // 매번 옛 baseline과 비교돼 매번 "충돌"로 오판한다. 그 사이 다른 노트로
+    // 넘어갔다면(noteRef가 이미 다른 노트) 여기 적용하지 않음.
+    if (noteRef.current?.id === n.id) {
+      setNote(prev => (prev && prev.id === n.id
+        ? { ...prev, content: saved.content, tags: saved.tags, mentions: saved.mentions, backlinks: saved.backlinks, updatedAt: saved.updatedAt }
+        : prev))
+    }
+  }, [save])
+
   // 언마운트 시 즉시 저장
   useEffect(() => {
     return () => {
       if (noteRef.current) {
-        save(noteRef.current).catch(console.error)
+        saveNote(noteRef.current).catch(console.error)
       }
     }
-  }, [save]) // eslint-disable-line react-hooks/exhaustive-deps
+  }, [saveNote]) // eslint-disable-line react-hooks/exhaustive-deps
 
   // Auto-save every 2s
   useEffect(() => {
     if (!note) return
     const timer = setTimeout(() => {
-      save(note).catch(console.error)
+      saveNote(note).catch(console.error)
     }, 2000)
     return () => clearTimeout(timer)
-  }, [note?.content, save])
+  }, [note?.content, saveNote])
 
   if (!note) {
     return (
