@@ -1,0 +1,53 @@
+# NotePlan MCP server
+
+내 노트(Supabase)를 Claude(데스크톱/Code)에 **검색·조회·연결·작성** 도구로 노출하는 로컬 MCP 서버.
+"두 번째 뇌"의 읽기+쓰기 루프를 여는 첫 단계 — 임베딩 없이 태그/백링크/키워드/최근성만으로도 즉시 유용.
+
+## 도구
+| 도구 | 설명 |
+|---|---|
+| `search_notes` | 제목·본문 키워드 검색 (요약 + id) |
+| `get_note` | 노트 전체 조회 (id / title / date) |
+| `list_recent` | 최근 수정 노트 (type 필터 가능) |
+| `list_by_tag` | 태그 포함 노트 (계층 태그 포함) |
+| `get_backlinks` | 이 노트를 `[[링크]]`한 노트들 (지식 그래프) |
+| `create_note` | 새 노트 생성 (PARA folder 지정 가능) |
+| `append_to_note` | 기존 노트 본문에 추가 |
+| `append_to_daily` | 데일리 노트에 추가 (없으면 생성) |
+
+## 설정 (1회)
+
+```bash
+cd mcp-server
+npm install
+npm run build
+
+cp .env.example .env
+# .env 를 열어 채우기:
+#   SUPABASE_SERVICE_ROLE_KEY  (Supabase 대시보드 → Project Settings → API → service_role)
+#   NOTEPLAN_USER_ID           (내 Supabase user id)
+```
+
+**내 user_id 찾는 법**: 앱 로그인 후 브라우저 콘솔에서
+`JSON.parse(localStorage.getItem('auth-google-token'))` … 가 아니라,
+가장 쉬운 건 Supabase 대시보드 → **Authentication → Users** 에서 내 이메일 행의 `id`.
+
+## Claude Code에 등록
+
+```bash
+claude mcp add noteplan -- node /Users/biinggala/Documents/Noteplan-clone/mcp-server/dist/index.js
+```
+
+등록 후 Claude에게 "내 최근 노트 보여줘", "#journal 태그 노트 찾아줘",
+"오늘 데일리 노트에 이거 추가해줘" 처럼 요청하면 도구를 사용합니다.
+
+## 보안
+- **service_role 키는 RLS를 우회**합니다. 이 서버는 **로컬에서만** 실행되고 `.env`는 커밋/공유 금지 (`.gitignore`에 포함).
+- 앱 번들(데스크톱/웹)과 **완전히 분리** — 지인에게 배포되는 것에 이 키는 절대 안 들어갑니다.
+- 모든 쿼리는 `NOTEPLAN_USER_ID`로 스코프됩니다 (내 노트만).
+
+## 다음 단계 (로드맵)
+1. ✅ 읽기+쓰기 도구 (지금)
+2. pgvector 의미검색 — 저장 시 임베딩 생성, 유사도 검색 도구 추가
+3. 활성도(salience) 모델 — 최근성·링크수·열람 기반 중요도 가중 → 검색 랭킹에 블렌딩
+4. 정체성 프로필 자동 증류 — ambient personalization

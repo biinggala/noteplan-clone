@@ -1,0 +1,22 @@
+{
+  "name": "noteplan-mcp",
+  "version": "0.1.0",
+  "private": true,
+  "description": "MCP server exposing NotePlan-clone notes (Supabase) to Claude — read/search/write your second brain",
+  "type": "module",
+  "bin": { "noteplan-mcp": "dist/index.js" },
+  "scripts": {
+    "build": "tsc",
+    "dev": "tsx src/index.ts",
+    "start": "node dist/index.js"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.0.0",
+    "@supabase/supabase-js": "^2.45.0",
+    "zod": "^3.23.0"
+  },
+  "devDependencies": {
+    "tsx": "^4.19.0",
+    "typescript": "^5.5.0"
+  }
+}
