@@ -13,6 +13,7 @@ import { useTaskDotStore, hasOpenTask } from '@/lib/stores/taskDotStore'
 import { useNoteRealtime } from '@/lib/hooks/useNoteRealtime'
 import type { NoteRevision } from '@/lib/db/noteRepository'
 import type { Note } from '@/types/note'
+import HistoryIcon from '@/components/icons/HistoryIcon'
 import dynamic from 'next/dynamic'
 
 const NoteEditor = dynamic(() => import('@/components/editor/NoteEditor'), { ssr: false })
@@ -217,9 +218,9 @@ function DailyNoteInner() {
           <button
             onClick={() => setShowHistory(true)}
             title="이전 버전 보기"
-            className="text-xs text-[var(--text-muted)] hover:text-[var(--text-primary)] px-1.5 py-1 rounded hover:bg-white/5 transition-colors"
+            className="p-1.5 rounded text-[var(--accent)] hover:bg-white/5 transition-colors"
           >
-            ⟲ 히스토리
+            <HistoryIcon className="w-[18px] h-[18px]" />
           </button>
         </div>
       </div>
