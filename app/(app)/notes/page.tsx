@@ -40,7 +40,7 @@ function NoteInner() {
     })
   }, [setActiveNote, updateNote])
 
-  const { typingAuthor, markSelfWrite } = useNoteRealtime(note?.id, handleRemoteContent)
+  const { typingAuthor, markSelfWrite, save } = useNoteRealtime(note?.id, handleRemoteContent)
 
   useEffect(() => {
     if (!noteId || noteId === 'new') {
@@ -85,19 +85,19 @@ function NoteInner() {
   useEffect(() => {
     return () => {
       if (noteRef.current) {
-        upsertNote(noteRef.current).then(s => markSelfWrite(s.content, s.updatedAt)).catch(console.error)
+        save(noteRef.current).catch(console.error)
       }
     }
-  }, [markSelfWrite]) // eslint-disable-line react-hooks/exhaustive-deps
+  }, [save]) // eslint-disable-line react-hooks/exhaustive-deps
 
   // Auto-save every 2s
   useEffect(() => {
     if (!note) return
     const timer = setTimeout(() => {
-      upsertNote(note).then(s => markSelfWrite(s.content, s.updatedAt)).catch(console.error)
+      save(note).catch(console.error)
     }, 2000)
     return () => clearTimeout(timer)
-  }, [note?.content, markSelfWrite])
+  }, [note?.content, save])
 
   if (!note) {
     return (

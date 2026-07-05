@@ -4,7 +4,7 @@ import { useSearchParams } from 'next/navigation'
 import { format, parseISO, isValid } from 'date-fns'
 import { useNoteStore } from '@/lib/stores/noteStore'
 import { useCalendarStore } from '@/lib/stores/calendarStore'
-import { getOrCreateDailyNote, upsertNote } from '@/lib/db/noteRepository'
+import { getOrCreateDailyNote } from '@/lib/db/noteRepository'
 import { extractTags, extractMentions, extractBacklinks } from '@/lib/parser/noteParser'
 import { parseTimeBlockLines } from '@/lib/parser/timeBlockParser'
 import { useTimeBlockStore } from '@/lib/stores/timeBlockStore'
@@ -15,17 +15,6 @@ import type { Note } from '@/types/note'
 import dynamic from 'next/dynamic'
 
 const NoteEditor = dynamic(() => import('@/components/editor/NoteEditor'), { ssr: false })
-
-async function saveNote(note: Note, markSelf?: (content: string, updatedAt?: number) => void): Promise<void> {
-  try {
-    const saved = await upsertNote(note)
-    markSelf?.(saved.content, saved.updatedAt)
-    console.log('[Save] ✅', note.date, 'len=', note.content.length)
-  } catch (err) {
-    console.error('[Save] ❌', err)
-    throw err
-  }
-}
 
 export default function DailyNotePage() {
   return (
@@ -72,7 +61,20 @@ function DailyNoteInner() {
     })
   }, [setActiveNote, updateNote, syncTimeBlocks, dateStr, setTaskDate])
 
-  const { typingAuthor, markSelfWrite } = useNoteRealtime(note?.id, handleRemoteContent)
+  const { typingAuthor, markSelfWrite, save } = useNoteRealtime(note?.id, handleRemoteContent)
+
+  const saveNote = useCallback(async (n: Note) => {
+    try {
+      const saved = await save(n)
+      console.log('[Save] ✅', n.date, 'len=', saved.content.length)
+    } catch (err) {
+      console.error('[Save] ❌', err)
+      throw err
+    }
+  }, [save])
+
+  const saveNoteRef = useRef(saveNote)
+  saveNoteRef.current = saveNote
 
   // ── 날짜 변경 시: 이전 노트 저장 후 새 노트 로드 ──────────────────────────
   useEffect(() => {
@@ -80,10 +82,10 @@ function DailyNoteInner() {
     // (component unmount 시에도 동일하게 동작)
     return () => {
       if (noteRef.current) {
-        saveNote(noteRef.current, markSelfWrite).catch(() => {})
+        saveNoteRef.current(noteRef.current).catch(() => {})
       }
     }
-  }, [date, markSelfWrite])  // date가 바뀔 때마다 cleanup 실행
+  }, [date])  // date가 바뀔 때마다 cleanup 실행
 
   useEffect(() => {
     setNote(null)  // 로딩 중 표시
@@ -127,14 +129,14 @@ function DailyNoteInner() {
     setIsSaving(true)
     setSaveError(null)
     try {
-      await saveNote(note, markSelfWrite)
+      await saveNote(note)
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err)
       setSaveError(msg)
     } finally {
       setTimeout(() => setIsSaving(false), 600)
     }
-  }, [note, markSelfWrite])
+  }, [note, saveNote])
 
   // ── Auto-save: 마지막 타이핑 후 2초 ───────────────────────────────────────
   useEffect(() => {
@@ -142,12 +144,12 @@ function DailyNoteInner() {
     const timer = setTimeout(() => {
       setIsSaving(true)
       setSaveError(null)
-      saveNote(note, markSelfWrite)
+      saveNote(note)
         .catch(err => setSaveError(err instanceof Error ? err.message : String(err)))
         .finally(() => setTimeout(() => setIsSaving(false), 600))
     }, 2000)
     return () => clearTimeout(timer)
-  }, [note?.content, markSelfWrite])
+  }, [note?.content, saveNote])
 
   // ── Timeline → Note 라인 업데이트 ─────────────────────────────────────────
   useEffect(() => {

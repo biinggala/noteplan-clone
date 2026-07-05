@@ -125,6 +125,18 @@ export async function upsertNote(note: Note): Promise<Note> {
   return rowToNote(data)
 }
 
+/** row 전체를 안 받아오는 가벼운 조회 — 저장 전 충돌(다른 기기가 그새 더 최신으로 고쳤는지) 검사용 */
+export async function getNoteUpdatedAt(id: string): Promise<number | null> {
+  const supabase = createClient()
+  const { data, error } = await supabase
+    .from('notes')
+    .select('updated_at')
+    .eq('id', id)
+    .maybeSingle()
+  if (error || !data) return null
+  return data.updated_at as number
+}
+
 export async function deleteNote(id: string): Promise<void> {
   const supabase = createClient()
   await supabase.from('notes').delete().eq('id', id)
