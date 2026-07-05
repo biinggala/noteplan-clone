@@ -102,20 +102,56 @@ export function inputRulesExtension() {
           return false
         }
 
-        // ── Enter ──────────────────────────────────────────────────────
-        // 한글 등 조합 중에는 keydown이 무력화되므로 beforeinput(insertParagraph)에서 처리.
+        // ── Enter (영문) ────────────────────────────────────────────────
+        // 한글 등 조합 중엔 keydown이 무력화됨 → 아래 updateListener가 결과 줄바꿈을 보고 처리.
         if (e.isComposing || e.keyCode === 229) return false
         return continueList(view)
       },
+    }),
 
-      // 조합 커밋 후의 Enter(한글 포함)는 여기서 처리 → 이어가기가 한글에서도 동작하고 이중 X
-      beforeinput(e, view) {
-        if (e.inputType !== 'insertParagraph') return false
-        if (continueList(view)) { e.preventDefault(); return true }
-        return false
-      },
+    // 이벤트 소스 무관하게, "줄바꿈이 삽입돼 새 빈 줄로 커서가 이동" + 윗줄이 리스트면 마커 이어붙임.
+    // (한글 조합-Enter처럼 keydown이 안 잡히는 경우를 결과 기반으로 처리 → 이중 없이 한 번만)
+    EditorView.updateListener.of((u) => {
+      if (contApplying || !u.docChanged) return
+      const sel = u.state.selection.main
+      if (!sel.empty) return
+      const doc = u.state.doc
+      const curLine = doc.lineAt(sel.head)
+      if (sel.head !== curLine.from || curLine.number < 2) return
+      let inserted = false
+      for (const tr of u.transactions) {
+        if (!tr.isUserEvent('input')) continue
+        tr.changes.iterChanges((_fA, _tA, _fB, tB, ins) => {
+          if (tB === sel.head && ins.toString().endsWith('\n')) inserted = true
+        })
+      }
+      if (!inserted) return
+      const marker = continuationMarker(doc.line(curLine.number - 1).text)
+      if (!marker) return
+      const at = sel.head
+      contApplying = true
+      Promise.resolve().then(() => {
+        contApplying = false
+        u.view.dispatch({
+          changes: { from: at, insert: marker },
+          selection: { anchor: at + marker.length },
+          userEvent: 'input.listcont',
+        })
+      })
     }),
   ]
+}
+
+let contApplying = false
+
+/** 리스트 줄 텍스트 → 다음 줄에 이어붙일 마커 (내용 있는 항목만). 없으면 null. */
+function continuationMarker(text: string): string | null {
+  let m: RegExpMatchArray | null
+  if ((m = text.match(/^(\s*)(\d+)\.\s(.+)$/))) return `${m[1]}${parseInt(m[2]) + 1}. `
+  if ((m = text.match(/^(\s*)- \[[ x\->]\]\s(.+)$/i))) return `${m[1]}- [ ] `
+  if ((m = text.match(/^(\s*)\+\s(.+)$/))) return `${m[1]}+ `
+  if (!/^\s*- \[/.test(text) && (m = text.match(/^(\s*)-\s(.+)$/))) return `${m[1]}- `
+  return null
 }
 
 /** 리스트/태스크 줄에서 Enter → 같은 타입 줄 이어가기. 처리했으면 true. */
