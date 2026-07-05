@@ -1,10 +1,10 @@
 'use client'
 import { Suspense, useEffect, useRef, useState, useCallback } from 'react'
 import { useSearchParams } from 'next/navigation'
-import { format, parseISO, isValid } from 'date-fns'
+import { format, parseISO, isValid, getWeek, getWeekYear } from 'date-fns'
 import { useNoteStore } from '@/lib/stores/noteStore'
 import { useCalendarStore } from '@/lib/stores/calendarStore'
-import { getOrCreateDailyNote } from '@/lib/db/noteRepository'
+import { getOrCreateDailyNote, getOrCreateWeeklyNote } from '@/lib/db/noteRepository'
 import { extractTags, extractMentions, extractBacklinks } from '@/lib/parser/noteParser'
 import { parseTimeBlockLines } from '@/lib/parser/timeBlockParser'
 import { useTimeBlockStore } from '@/lib/stores/timeBlockStore'
@@ -14,10 +14,14 @@ import { useNoteRealtime } from '@/lib/hooks/useNoteRealtime'
 import type { NoteRevision } from '@/lib/db/noteRepository'
 import type { Note } from '@/types/note'
 import HistoryIcon from '@/components/icons/HistoryIcon'
+import TaskOutlinePanel from '@/components/editor/TaskOutlinePanel'
 import dynamic from 'next/dynamic'
 
 const NoteEditor = dynamic(() => import('@/components/editor/NoteEditor'), { ssr: false })
 const NoteHistoryPanel = dynamic(() => import('@/components/editor/NoteHistoryPanel'), { ssr: false })
+
+// 미니 캘린더/주간 노트와 동일한 CW 규칙 (일요일 시작 + firstWeekContainsDate:4)
+const WK = { weekStartsOn: 0 as const, firstWeekContainsDate: 4 as const }
 
 export default function DailyNotePage() {
   return (
@@ -48,6 +52,15 @@ function DailyNoteInner() {
   const dateObj   = parseISO(date)
   const validDate = isValid(dateObj) ? dateObj : new Date()
   const dateStr   = format(validDate, 'yyyy-MM-dd')
+
+  const weekNum = getWeek(validDate, WK)
+  const weekKey = `${getWeekYear(validDate, WK)}-W${weekNum.toString().padStart(2, '0')}`
+
+  // ── 이 주의 주간 노트에 있는 task를 상단 요약박스에 표시 ──────────────────
+  const [weeklyContent, setWeeklyContent] = useState('')
+  useEffect(() => {
+    getOrCreateWeeklyNote(weekKey).then(w => setWeeklyContent(w.content)).catch(console.error)
+  }, [weekKey])
 
   // ── 실시간 동기화: 외부(MCP 등)가 이 노트를 고치면 즉시 반영 + 작성자 표시 ──
   const handleRemoteContent = useCallback((content: string) => {
@@ -224,6 +237,8 @@ function DailyNoteInner() {
           </button>
         </div>
       </div>
+
+      <TaskOutlinePanel content={weeklyContent} title={`CW ${weekNum.toString().padStart(2, '0')} 할 일`} />
 
       {/* Editor */}
       <div className="flex-1 overflow-hidden">

@@ -4,6 +4,7 @@ import { parseTaskOutline, type TaskOutlineType } from '@/lib/parser/taskOutline
 
 interface TaskOutlinePanelProps {
   content: string
+  title?: string
 }
 
 const ICON: Record<TaskOutlineType, string> = {
@@ -29,7 +30,7 @@ function TaskIcon({ type }: { type: TaskOutlineType }) {
   )
 }
 
-export default function TaskOutlinePanel({ content }: TaskOutlinePanelProps) {
+export default function TaskOutlinePanel({ content, title = '할 일 요약' }: TaskOutlinePanelProps) {
   const sections = useMemo(() => parseTaskOutline(content), [content])
   const [collapsed, setCollapsed] = useState(false)
   const [collapsedSections, setCollapsedSections] = useState<Set<number>>(new Set())
@@ -52,7 +53,7 @@ export default function TaskOutlinePanel({ content }: TaskOutlinePanelProps) {
         className="w-full flex items-center gap-1.5 px-3 py-2 text-xs font-semibold text-[var(--text-muted)] hover:text-[var(--text-primary)] transition-colors"
       >
         <span className={`inline-block transition-transform ${collapsed ? '-rotate-90' : ''}`}>⌄</span>
-        할 일 요약
+        {title}
         <span className="text-[var(--text-muted)] font-normal">
           ({sections.reduce((n, s) => n + s.tasks.length, 0)})
         </span>
