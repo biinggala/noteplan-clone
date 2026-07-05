@@ -7,6 +7,7 @@ import { useCalendarStore } from '@/lib/stores/calendarStore'
 import { getOrCreateWeeklyNote, upsertNote } from '@/lib/db/noteRepository'
 import { extractTags, extractMentions, extractBacklinks } from '@/lib/parser/noteParser'
 import type { Note } from '@/types/note'
+import TaskOutlinePanel from '@/components/editor/TaskOutlinePanel'
 import dynamic from 'next/dynamic'
 
 const NoteEditor = dynamic(() => import('@/components/editor/NoteEditor'), { ssr: false })
@@ -140,6 +141,8 @@ function WeeklyNoteInner() {
           )}
         </div>
       </div>
+
+      <TaskOutlinePanel content={note.content} />
 
       {/* Editor */}
       <div className="flex-1 overflow-hidden">
