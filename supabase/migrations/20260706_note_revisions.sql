@@ -2,10 +2,12 @@
 -- 앱/MCP/서버 어느 경로로 덮어써지든 DB 레벨에서 무조건 붙잡아두기 위한 안전망.
 -- Supabase 대시보드 → SQL Editor에서 이 파일 전체를 1회 실행하세요.
 
+-- notes.id/user_id가 uuid 컬럼이 아니라 text라서(앱이 uuidv4()를 문자열로
+-- 생성해 저장) note_revisions도 text로 맞춘다 (uuid FK는 타입 불일치로 실패함).
 create table if not exists note_revisions (
   id uuid primary key default gen_random_uuid(),
-  note_id uuid not null references notes(id) on delete cascade,
-  user_id uuid not null,
+  note_id text not null references notes(id) on delete cascade,
+  user_id text not null,
   content text not null,
   tags text[] not null default '{}',
   mentions text[] not null default '{}',
@@ -21,7 +23,7 @@ alter table note_revisions enable row level security;
 
 drop policy if exists "own revisions" on note_revisions;
 create policy "own revisions" on note_revisions
-  for select using (auth.uid() = user_id);
+  for select using (auth.uid()::text = user_id);
 
 create or replace function capture_note_revision() returns trigger as $$
 begin
