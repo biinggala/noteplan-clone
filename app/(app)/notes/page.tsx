@@ -26,6 +26,22 @@ function NoteInner() {
   const noteRef = useRef<Note | null>(null)
   noteRef.current = note
 
+  // ── 실시간 동기화: 외부(MCP 등)가 이 노트를 고치면 즉시 반영 + 작성자 표시 ──
+  const handleRemoteContent = useCallback((content: string) => {
+    setNote(prev => {
+      if (!prev) return prev
+      const tags      = extractTags(content)
+      const mentions  = extractMentions(content)
+      const backlinks = extractBacklinks(content)
+      const updated   = { ...prev, content, tags, mentions, backlinks }
+      setActiveNote(updated)
+      updateNote(prev.id, { content, tags, mentions, backlinks })
+      return updated
+    })
+  }, [setActiveNote, updateNote])
+
+  const { typingAuthor, markSelfWrite } = useNoteRealtime(note?.id, handleRemoteContent)
+
   useEffect(() => {
     if (!noteId || noteId === 'new') {
       const newNote: Note = {
@@ -42,13 +58,14 @@ function NoteInner() {
       }
       setNote(newNote)
       setActiveNote(newNote)
-      upsertNote(newNote)
+      upsertNote(newNote).then(s => markSelfWrite(s.content, s.updatedAt)).catch(console.error)
       return
     }
     getNoteById(noteId).then(n => {
       if (n) {
         setNote(n)
         setActiveNote(n)
+        markSelfWrite(n.content, n.updatedAt)  // baseline
       }
     })
   }, [noteId])
@@ -64,39 +81,23 @@ function NoteInner() {
     updateNote(note.id, { content, tags, mentions, backlinks })
   }, [note, setActiveNote, updateNote])
 
-  // ── 실시간 동기화: 외부(MCP 등)가 이 노트를 고치면 즉시 반영 + 작성자 표시 ──
-  const handleRemoteContent = useCallback((content: string) => {
-    setNote(prev => {
-      if (!prev) return prev
-      const tags      = extractTags(content)
-      const mentions  = extractMentions(content)
-      const backlinks = extractBacklinks(content)
-      const updated   = { ...prev, content, tags, mentions, backlinks }
-      setActiveNote(updated)
-      updateNote(prev.id, { content, tags, mentions, backlinks })
-      return updated
-    })
-  }, [setActiveNote, updateNote])
-
-  const { typingAuthor, selfWriteRef } = useNoteRealtime(note?.id, handleRemoteContent)
-
   // 언마운트 시 즉시 저장
   useEffect(() => {
     return () => {
       if (noteRef.current) {
-        upsertNote(noteRef.current).then(() => { selfWriteRef.current = noteRef.current!.content }).catch(console.error)
+        upsertNote(noteRef.current).then(s => markSelfWrite(s.content, s.updatedAt)).catch(console.error)
       }
     }
-  }, [selfWriteRef]) // eslint-disable-line react-hooks/exhaustive-deps
+  }, [markSelfWrite]) // eslint-disable-line react-hooks/exhaustive-deps
 
   // Auto-save every 2s
   useEffect(() => {
     if (!note) return
     const timer = setTimeout(() => {
-      upsertNote(note).then(() => { selfWriteRef.current = note.content }).catch(console.error)
+      upsertNote(note).then(s => markSelfWrite(s.content, s.updatedAt)).catch(console.error)
     }, 2000)
     return () => clearTimeout(timer)
-  }, [note?.content, selfWriteRef])
+  }, [note?.content, markSelfWrite])
 
   if (!note) {
     return (

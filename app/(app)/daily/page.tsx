@@ -16,10 +16,10 @@ import dynamic from 'next/dynamic'
 
 const NoteEditor = dynamic(() => import('@/components/editor/NoteEditor'), { ssr: false })
 
-async function saveNote(note: Note, markSelf?: (content: string) => void): Promise<void> {
+async function saveNote(note: Note, markSelf?: (content: string, updatedAt?: number) => void): Promise<void> {
   try {
-    await upsertNote(note)
-    markSelf?.(note.content)
+    const saved = await upsertNote(note)
+    markSelf?.(saved.content, saved.updatedAt)
     console.log('[Save] ✅', note.date, 'len=', note.content.length)
   } catch (err) {
     console.error('[Save] ❌', err)
@@ -56,16 +56,34 @@ function DailyNoteInner() {
   const validDate = isValid(dateObj) ? dateObj : new Date()
   const dateStr   = format(validDate, 'yyyy-MM-dd')
 
+  // ── 실시간 동기화: 외부(MCP 등)가 이 노트를 고치면 즉시 반영 + 작성자 표시 ──
+  const handleRemoteContent = useCallback((content: string) => {
+    setNote(prev => {
+      if (!prev) return prev
+      const tags      = extractTags(content)
+      const mentions  = extractMentions(content)
+      const backlinks = extractBacklinks(content)
+      const updated   = { ...prev, content, tags, mentions, backlinks }
+      setActiveNote(updated)
+      updateNote(prev.id, { content, tags, mentions, backlinks })
+      syncTimeBlocks(dateStr, parseTimeBlockLines(content))
+      setTaskDate(dateStr, hasOpenTask(content))
+      return updated
+    })
+  }, [setActiveNote, updateNote, syncTimeBlocks, dateStr, setTaskDate])
+
+  const { typingAuthor, markSelfWrite } = useNoteRealtime(note?.id, handleRemoteContent)
+
   // ── 날짜 변경 시: 이전 노트 저장 후 새 노트 로드 ──────────────────────────
   useEffect(() => {
     // cleanup: date 변경 직전에 현재 노트 저장
     // (component unmount 시에도 동일하게 동작)
     return () => {
       if (noteRef.current) {
-        saveNote(noteRef.current, c => { selfWriteRef.current = c }).catch(() => {})
+        saveNote(noteRef.current, markSelfWrite).catch(() => {})
       }
     }
-  }, [date])  // date가 바뀔 때마다 cleanup 실행
+  }, [date, markSelfWrite])  // date가 바뀔 때마다 cleanup 실행
 
   useEffect(() => {
     setNote(null)  // 로딩 중 표시
@@ -74,6 +92,8 @@ function DailyNoteInner() {
       .then(n => {
         setNote(n)
         setActiveNote(n)
+        // 로드된 내용을 realtime baseline으로 등록 → 리로드 직후 echo 방어
+        markSelfWrite(n.content, n.updatedAt)
         syncTimeBlocks(dateStr, parseTimeBlockLines(n.content))
         setTaskDate(dateStr, hasOpenTask(n.content))
       })
@@ -101,38 +121,20 @@ function DailyNoteInner() {
 
   handleChangeRef.current = handleChange
 
-  // ── 실시간 동기화: 외부(MCP 등)가 이 노트를 고치면 즉시 반영 + 작성자 표시 ──
-  const handleRemoteContent = useCallback((content: string) => {
-    setNote(prev => {
-      if (!prev) return prev
-      const tags      = extractTags(content)
-      const mentions  = extractMentions(content)
-      const backlinks = extractBacklinks(content)
-      const updated   = { ...prev, content, tags, mentions, backlinks }
-      setActiveNote(updated)
-      updateNote(prev.id, { content, tags, mentions, backlinks })
-      syncTimeBlocks(dateStr, parseTimeBlockLines(content))
-      setTaskDate(dateStr, hasOpenTask(content))
-      return updated
-    })
-  }, [setActiveNote, updateNote, syncTimeBlocks, dateStr, setTaskDate])
-
-  const { typingAuthor, selfWriteRef } = useNoteRealtime(note?.id, handleRemoteContent)
-
   // ── 수동 저장 (⌘S / 버튼) ─────────────────────────────────────────────────
   const handleSave = useCallback(async () => {
     if (!note) return
     setIsSaving(true)
     setSaveError(null)
     try {
-      await saveNote(note, c => { selfWriteRef.current = c })
+      await saveNote(note, markSelfWrite)
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err)
       setSaveError(msg)
     } finally {
       setTimeout(() => setIsSaving(false), 600)
     }
-  }, [note, selfWriteRef])
+  }, [note, markSelfWrite])
 
   // ── Auto-save: 마지막 타이핑 후 2초 ───────────────────────────────────────
   useEffect(() => {
@@ -140,12 +142,12 @@ function DailyNoteInner() {
     const timer = setTimeout(() => {
       setIsSaving(true)
       setSaveError(null)
-      saveNote(note, c => { selfWriteRef.current = c })
+      saveNote(note, markSelfWrite)
         .catch(err => setSaveError(err instanceof Error ? err.message : String(err)))
         .finally(() => setTimeout(() => setIsSaving(false), 600))
     }, 2000)
     return () => clearTimeout(timer)
-  }, [note?.content, selfWriteRef])
+  }, [note?.content, markSelfWrite])
 
   // ── Timeline → Note 라인 업데이트 ─────────────────────────────────────────
   useEffect(() => {
