@@ -103,92 +103,80 @@ export function inputRulesExtension() {
         }
 
         // ── Enter ──────────────────────────────────────────────────────
+        // 한글 등 조합 중에는 keydown이 무력화되므로 beforeinput(insertParagraph)에서 처리.
+        if (e.isComposing || e.keyCode === 229) return false
+        return continueList(view)
+      },
 
-        // Numbered list continuation
-        const numberedList = text.match(/^(\s*)(\d+)\.\s(.*)$/)
-        if (numberedList) {
-          const indent = numberedList[1] ?? ''
-          const num    = parseInt(numberedList[2] ?? '1', 10)
-          const content = numberedList[3] ?? ''
-          if (!content.trim()) {
-            // Empty numbered item → exit list
-            view.dispatch({
-              changes: { from: line.from, to: from, insert: '' },
-              userEvent: 'input.type',
-            })
-            return true
-          }
-          const next = `\n${indent}${num + 1}. `
-          view.dispatch({
-            changes: { from, to: from, insert: next },
-            selection: { anchor: from + next.length },
-            userEvent: 'input.type',
-          })
-          return true
-        }
-
-        // Open task continuation
-        const openTask = text.match(/^(\s*)- \[ \] (.*)$/)
-        if (openTask) {
-          const indent = openTask[1] ?? ''
-          const content = openTask[2] ?? ''
-          if (!content.trim()) {
-            view.dispatch({
-              changes: { from: line.from, to: from, insert: '' },
-              userEvent: 'input.type',
-            })
-            return true
-          }
-          view.dispatch({
-            changes: { from, to: from, insert: `\n${indent}- [ ] ` },
-            selection: { anchor: from + indent.length + 7 },
-            userEvent: 'input.type',
-          })
-          return true
-        }
-
-        // Checklist continuation
-        const checklist = text.match(/^(\s*)\+ (.*)$/)
-        if (checklist) {
-          const indent = checklist[1] ?? ''
-          const content = checklist[2] ?? ''
-          if (!content.trim()) {
-            view.dispatch({
-              changes: { from: line.from, to: from, insert: '' },
-              userEvent: 'input.type',
-            })
-            return true
-          }
-          view.dispatch({
-            changes: { from, to: from, insert: `\n${indent}+ ` },
-            selection: { anchor: from + indent.length + 3 },
-            userEvent: 'input.type',
-          })
-          return true
-        }
-
-        // Regular bullet continuation (- text)
-        const bullet = text.match(/^(\s*)- (.*)$/)
-        if (bullet && !/^\s*- \[/.test(text)) {
-          const indent = bullet[1] ?? ''
-          const content = bullet[2] ?? ''
-          if (!content.trim()) {
-            view.dispatch({
-              changes: { from: line.from, to: from, insert: '' },
-              userEvent: 'input.type',
-            })
-            return true
-          }
-          view.dispatch({
-            changes: { from, to: from, insert: `\n${indent}- ` },
-            selection: { anchor: from + indent.length + 3 },
-            userEvent: 'input.type',
-          })
-          return true
-        }
-
+      // 조합 커밋 후의 Enter(한글 포함)는 여기서 처리 → 이어가기가 한글에서도 동작하고 이중 X
+      beforeinput(e, view) {
+        if (e.inputType !== 'insertParagraph') return false
+        if (continueList(view)) { e.preventDefault(); return true }
         return false
       },
     }),
   ]
+}
+
+/** 리스트/태스크 줄에서 Enter → 같은 타입 줄 이어가기. 처리했으면 true. */
+function continueList(view: EditorView): boolean {
+  const { from } = view.state.selection.main
+  const line = view.state.doc.lineAt(from)
+  const text = line.text
+
+  // Numbered list continuation
+  const numberedList = text.match(/^(\s*)(\d+)\.\s(.*)$/)
+  if (numberedList) {
+    const indent = numberedList[1] ?? ''
+    const num    = parseInt(numberedList[2] ?? '1', 10)
+    const content = numberedList[3] ?? ''
+    if (!content.trim()) {
+      view.dispatch({ changes: { from: line.from, to: from, insert: '' }, userEvent: 'input.type' })
+      return true
+    }
+    const next = `\n${indent}${num + 1}. `
+    view.dispatch({ changes: { from, to: from, insert: next }, selection: { anchor: from + next.length }, userEvent: 'input.type' })
+    return true
+  }
+
+  // Open task continuation
+  const openTask = text.match(/^(\s*)- \[ \] (.*)$/)
+  if (openTask) {
+    const indent = openTask[1] ?? ''
+    const content = openTask[2] ?? ''
+    if (!content.trim()) {
+      view.dispatch({ changes: { from: line.from, to: from, insert: '' }, userEvent: 'input.type' })
+      return true
+    }
+    view.dispatch({ changes: { from, to: from, insert: `\n${indent}- [ ] ` }, selection: { anchor: from + indent.length + 7 }, userEvent: 'input.type' })
+    return true
+  }
+
+  // Checklist continuation
+  const checklist = text.match(/^(\s*)\+ (.*)$/)
+  if (checklist) {
+    const indent = checklist[1] ?? ''
+    const content = checklist[2] ?? ''
+    if (!content.trim()) {
+      view.dispatch({ changes: { from: line.from, to: from, insert: '' }, userEvent: 'input.type' })
+      return true
+    }
+    view.dispatch({ changes: { from, to: from, insert: `\n${indent}+ ` }, selection: { anchor: from + indent.length + 3 }, userEvent: 'input.type' })
+    return true
+  }
+
+  // Regular bullet continuation (- text)
+  const bullet = text.match(/^(\s*)- (.*)$/)
+  if (bullet && !/^\s*- \[/.test(text)) {
+    const indent = bullet[1] ?? ''
+    const content = bullet[2] ?? ''
+    if (!content.trim()) {
+      view.dispatch({ changes: { from: line.from, to: from, insert: '' }, userEvent: 'input.type' })
+      return true
+    }
+    view.dispatch({ changes: { from, to: from, insert: `\n${indent}- ` }, selection: { anchor: from + indent.length + 3 }, userEvent: 'input.type' })
+    return true
+  }
+
+  return false
 }
