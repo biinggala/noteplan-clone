@@ -38,5 +38,4 @@ create trigger trg_capture_note_revision
   before update on notes
   for each row execute function capture_note_revision();
 
--- (선택) 오래된 리비전 정리 — 원하면 90일 지난 것 주기적으로 삭제:
--- delete from note_revisions where captured_at < (extract(epoch from now()) * 1000 - 90*24*3600*1000);
+-- 30일 지난 리비전 자동 정리는 20260706_note_revisions_cleanup.sql 참고 (pg_cron).
