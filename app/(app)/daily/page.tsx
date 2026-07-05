@@ -4,9 +4,10 @@ import { useSearchParams } from 'next/navigation'
 import { format, parseISO, isValid, getWeek, getWeekYear } from 'date-fns'
 import { useNoteStore } from '@/lib/stores/noteStore'
 import { useCalendarStore } from '@/lib/stores/calendarStore'
-import { getOrCreateDailyNote, getOrCreateWeeklyNote } from '@/lib/db/noteRepository'
+import { getOrCreateDailyNote, getOrCreateWeeklyNote, getNoteByDate, upsertNote } from '@/lib/db/noteRepository'
 import { extractTags, extractMentions, extractBacklinks } from '@/lib/parser/noteParser'
 import { parseTimeBlockLines } from '@/lib/parser/timeBlockParser'
+import { toggleTaskLine, type TaskOutlineTask } from '@/lib/parser/taskOutline'
 import { useTimeBlockStore } from '@/lib/stores/timeBlockStore'
 import { useLineUpdateStore } from '@/lib/stores/lineUpdateStore'
 import { useTaskDotStore, hasOpenTask } from '@/lib/stores/taskDotStore'
@@ -36,7 +37,7 @@ function DailyNoteInner() {
   const date = searchParams.get('date') ?? format(new Date(), 'yyyy-MM-dd')
   const { setActiveNote, updateNote } = useNoteStore()
   const { setSelectedDate } = useCalendarStore()
-  const { syncTimeBlocks } = useTimeBlockStore()
+  const { syncTimeBlocks, timeBlocks, updateTimeBlock } = useTimeBlockStore()
   const { pendingUpdate, clearUpdate } = useLineUpdateStore()
   const { setTaskDate } = useTaskDotStore()
 
@@ -57,10 +58,58 @@ function DailyNoteInner() {
   const weekKey = `${getWeekYear(validDate, WK)}-W${weekNum.toString().padStart(2, '0')}`
 
   // ── 이 주의 주간 노트에 있는 task를 상단 요약박스에 표시 ──────────────────
-  const [weeklyContent, setWeeklyContent] = useState('')
+  const [weeklyNote, setWeeklyNote] = useState<Note | null>(null)
   useEffect(() => {
-    getOrCreateWeeklyNote(weekKey).then(w => setWeeklyContent(w.content)).catch(console.error)
+    getOrCreateWeeklyNote(weekKey).then(setWeeklyNote).catch(console.error)
   }, [weekKey])
+
+  const weeklyNoteRef = useRef<Note | null>(null)
+  weeklyNoteRef.current = weeklyNote
+
+  // 요약박스에서 task 체크 클릭 → 주간 노트에 저장 + (혹시 그 라인이 오늘 타임라인의
+  // 타임블록으로도 잡혀있으면) 타임블록/구글캘린더 완료 표시까지 같이 동기화
+  const handleToggleWeeklyTask = useCallback(async (task: TaskOutlineTask) => {
+    const wn = weeklyNoteRef.current
+    if (!wn) return
+    const newLine = toggleTaskLine(task.raw, task.type)
+    if (newLine == null) return
+    const lines = wn.content.split('\n')
+    const idx = lines.findIndex(l => l === task.raw)
+    if (idx < 0) return
+    lines[idx] = newLine
+    const updatedContent = lines.join('\n')
+    const updated: Note = {
+      ...wn, content: updatedContent,
+      tags: extractTags(updatedContent), mentions: extractMentions(updatedContent), backlinks: extractBacklinks(updatedContent),
+    }
+    setWeeklyNote(updated)
+    try {
+      const saved = await upsertNote(updated)
+      setWeeklyNote(saved)
+    } catch (err) {
+      console.error('[주간 task 토글 저장 실패]', err)
+    }
+
+    // 이 task 라인이 (오늘이든 다른 날이든) 이번 세션에 이미 로드된 타임블록과
+    // 정확히 일치하면 타임라인/구글캘린더에도 완료 상태 반영 (DayTimeline의
+    // 기존 googleSync useEffect가 timeBlocks 변경을 감지해 자동으로 처리함)
+    const match = timeBlocks.find(b => b.noteLineText === task.raw)
+    if (match) {
+      const newPrefix = newLine.match(/^\s*(?:- \[[ x>-]\]\s|\+(?: \[x\])?\s)/i)?.[0] ?? match.linePrefix
+      updateTimeBlock(match.id, { linePrefix: newPrefix, noteLineText: newLine })
+      // 그 날짜의 실제 노트에도 반영해야 재방문/새로고침 시에도 유지됨
+      const dayNote = await getNoteByDate(match.date)
+      if (dayNote) {
+        const dLines = dayNote.content.split('\n')
+        const dIdx = dLines.findIndex(l => l === task.raw)
+        if (dIdx >= 0) {
+          dLines[dIdx] = newLine
+          await upsertNote({ ...dayNote, content: dLines.join('\n') }).catch(err =>
+            console.error('[타임블록 연결 노트 저장 실패]', err))
+        }
+      }
+    }
+  }, [timeBlocks, updateTimeBlock])
 
   // ── 실시간 동기화: 외부(MCP 등)가 이 노트를 고치면 즉시 반영 + 작성자 표시 ──
   const handleRemoteContent = useCallback((content: string) => {
@@ -238,7 +287,11 @@ function DailyNoteInner() {
         </div>
       </div>
 
-      <TaskOutlinePanel content={weeklyContent} title={`CW ${weekNum.toString().padStart(2, '0')} 할 일`} />
+      <TaskOutlinePanel
+        content={weeklyNote?.content ?? ''}
+        title={`CW ${weekNum.toString().padStart(2, '0')} 할 일`}
+        onToggleTask={handleToggleWeeklyTask}
+      />
 
       {/* Editor */}
       <div className="flex-1 overflow-hidden">

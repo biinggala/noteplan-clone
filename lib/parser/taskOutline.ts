@@ -25,6 +25,15 @@ function classify(text: string): { type: TaskOutlineType; rest: string } | null 
   return null
 }
 
+/** components/editor/extensions/taskCheckbox.ts의 클릭 토글 규칙과 동일. 토글 불가(cancelled/scheduled)면 null */
+export function toggleTaskLine(raw: string, type: TaskOutlineType): string | null {
+  if (type === 'done') return raw.replace(/- \[x\]/i, '- [ ]')
+  if (type === 'open') return raw.replace('- [ ]', '- [x]').replace(/^(\s*)\* /, '$1- [x] ')
+  if (type === 'checklist') return raw.replace(/^(\s*)\+ /, '$1+ [x] ')
+  if (type === 'checklist-done') return raw.replace(/^(\s*)\+ \[x\] /i, '$1+ ')
+  return null
+}
+
 /** 노트 본문에서 task가 있는 헤더 섹션만 뽑아 목차 형태로 정리 (task가 없는 헤더/일반 불릿은 제외) */
 export function parseTaskOutline(content: string): TaskOutlineSection[] {
   const lines = content.split('\n')

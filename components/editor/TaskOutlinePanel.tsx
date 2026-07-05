@@ -1,11 +1,12 @@
 'use client'
 import { useMemo, useState } from 'react'
-import { parseTaskOutline, type TaskOutlineType } from '@/lib/parser/taskOutline'
+import { parseTaskOutline, type TaskOutlineTask, type TaskOutlineType } from '@/lib/parser/taskOutline'
 import { useUIStore } from '@/lib/stores/uiStore'
 
 interface TaskOutlinePanelProps {
   content: string
   title?: string
+  onToggleTask?: (task: TaskOutlineTask) => void
 }
 
 const ICON: Record<TaskOutlineType, string> = {
@@ -17,12 +18,16 @@ const ICON: Record<TaskOutlineType, string> = {
   'checklist-done': '☑',
 }
 
-function TaskIcon({ type }: { type: TaskOutlineType }) {
+const TOGGLEABLE: TaskOutlineType[] = ['open', 'done', 'checklist', 'checklist-done']
+
+function TaskIcon({ type, onClick }: { type: TaskOutlineType; onClick?: () => void }) {
   const done = type === 'done' || type === 'checklist-done'
   const cancelled = type === 'cancelled'
+  const clickable = onClick && TOGGLEABLE.includes(type)
   return (
     <span
-      className={`inline-block w-4 text-center flex-shrink-0 ${
+      onClick={clickable ? onClick : undefined}
+      className={`inline-block w-4 text-center flex-shrink-0 ${clickable ? 'cursor-pointer hover:opacity-70' : ''} ${
         done ? 'text-[var(--accent)]' : cancelled ? 'text-[var(--text-muted)]' : 'text-amber-500/70'
       }`}
     >
@@ -31,7 +36,7 @@ function TaskIcon({ type }: { type: TaskOutlineType }) {
   )
 }
 
-export default function TaskOutlinePanel({ content, title = '할 일 요약' }: TaskOutlinePanelProps) {
+export default function TaskOutlinePanel({ content, title = '할 일 요약', onToggleTask }: TaskOutlinePanelProps) {
   const sections = useMemo(() => parseTaskOutline(content), [content])
   // 날짜를 이동해도(daily 페이지가 note===null인 순간 이 컴포넌트가 잠깐
   // 언마운트됐다 다시 마운트됨) 접힘 상태가 유지되도록 전역 store 사용
@@ -89,7 +94,7 @@ export default function TaskOutlinePanel({ content, title = '할 일 요약' }: 
                             : 'text-[var(--text-primary)]'
                         }`}
                       >
-                        <TaskIcon type={task.type} />
+                        <TaskIcon type={task.type} onClick={onToggleTask ? () => onToggleTask(task) : undefined} />
                         <span className="min-w-0 break-words">{task.text}</span>
                       </div>
                     ))}
