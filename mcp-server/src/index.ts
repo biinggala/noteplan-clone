@@ -63,6 +63,11 @@ function summarize(r: Row, query?: string): string {
 function text(s: string) { return { content: [{ type: 'text' as const, text: s }] } }
 function fail(s: string) { return { content: [{ type: 'text' as const, text: `⚠ ${s}` }], isError: true } }
 
+/** 클로드가 쓰는 모든 노트/블록 맨 앞에 #claude 태그를 달아 앱에서 모아볼 수 있게 함 */
+function tagged(body: string): string {
+  return `#claude\n${body}`
+}
+
 /** 열려있는 에디터에 "Claude AI 작성 중…" presence를 broadcast (노션 스타일 표시).
  *  구독자가 없어도 안전하게 무시됨 — 실패해도 실제 저장은 계속 진행. */
 async function broadcastTyping(noteId: string, typing: boolean): Promise<void> {
@@ -181,7 +186,7 @@ server.tool(
     const filePath = folder ? `Notes/${folder}/${title}.md` : `Notes/${title}.md`
     const row = {
       id: randomUUID(), user_id: USER_ID, type: 'project', title,
-      content: content ?? `# ${title}\n\n`, date: null, file_path: filePath,
+      content: tagged(content ?? `# ${title}\n\n`), date: null, file_path: filePath,
       folder: folder ?? null, tags: [], mentions: [], backlinks: [],
       created_at: now, updated_at: now,
     }
@@ -201,7 +206,7 @@ server.tool(
     if (error) return fail(error.message)
     if (!data) return fail('노트 없음')
     const r = data as Row
-    const newContent = `${r.content.replace(/\s+$/, '')}\n${body}\n`
+    const newContent = `${r.content.replace(/\s+$/, '')}\n${tagged(body)}\n`
     await broadcastTyping(id, true)
     const { error: e2 } = await db.from('notes')
       .update({ content: newContent, updated_at: Date.now() }).eq('id', id).eq('user_id', USER_ID)
@@ -223,7 +228,7 @@ server.tool(
     const now = Date.now()
     if (data) {
       const r = data as Row
-      const newContent = `${r.content.replace(/\s+$/, '')}\n${body}\n`
+      const newContent = `${r.content.replace(/\s+$/, '')}\n${tagged(body)}\n`
       await broadcastTyping(r.id, true)
       const { error } = await db.from('notes')
         .update({ content: newContent, updated_at: now }).eq('id', r.id).eq('user_id', USER_ID)
@@ -233,7 +238,7 @@ server.tool(
     }
     const row = {
       id: randomUUID(), user_id: USER_ID, type: 'daily', title: d,
-      content: `${body}\n`, date: d, file_path: `Calendar/${ymd}.md`,
+      content: `${tagged(body)}\n`, date: d, file_path: `Calendar/${ymd}.md`,
       folder: null, tags: [], mentions: [], backlinks: [], created_at: now, updated_at: now,
     }
     const { error } = await db.from('notes').insert(row)
