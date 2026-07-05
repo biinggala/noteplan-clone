@@ -37,12 +37,11 @@ function getMarkerRange(
 ): { from: number; to: number } | null {
   const { text, offset } = stripTimePrefix(lineText)
 
-  // "- [ ]" / "- [x]" / etc. — 위젯은 마커만 교체하고 뒤 공백은 실제 문자로 남김.
-  // (한글 IME 조합이 위젯 바로 뒤가 아니라 공백 뒤에서 시작 → 앞 공백 버그 방지)
+  // "- [ ] " / "- [x] " / etc. — replace entire "- [X] " incl. the dash
   const bracket = text.match(/^(\s*)(- )(\[ \]|\[x\]|\[-\]|\[>\]) /)
   if (bracket) {
     const start = lineFrom + offset + bracket[1].length   // after leading whitespace
-    const end = start + bracket[2].length + bracket[3].length // "- " + "[x]" (뒤 공백 제외)
+    const end = start + bracket[2].length + bracket[3].length + 1 // "- " + "[x]" + " "
     return { from: start, to: end }
   }
   // "* " (NotePlan open task)
@@ -159,7 +158,7 @@ class CheckboxWidget extends WidgetType {
   toDOM(view: EditorView): HTMLElement {
     const wrap = document.createElement('span')
     wrap.style.cssText =
-      'display:inline-flex;align-items:center;margin-right:1px;vertical-align:middle;' +
+      'display:inline-flex;align-items:center;margin-right:5px;vertical-align:middle;' +
       'cursor:pointer;position:relative;top:-0.5px;'
 
     const icon = buildIcon(this.taskType)
