@@ -5,10 +5,12 @@ import { useNoteStore } from '@/lib/stores/noteStore'
 import { getNoteById, upsertNote } from '@/lib/db/noteRepository'
 import { extractTags, extractMentions, extractBacklinks } from '@/lib/parser/noteParser'
 import { useNoteRealtime } from '@/lib/hooks/useNoteRealtime'
+import type { NoteRevision } from '@/lib/db/noteRepository'
 import type { Note } from '@/types/note'
 import dynamic from 'next/dynamic'
 
 const NoteEditor = dynamic(() => import('@/components/editor/NoteEditor'), { ssr: false })
+const NoteHistoryPanel = dynamic(() => import('@/components/editor/NoteHistoryPanel'), { ssr: false })
 
 export default function NotePage() {
   return (
@@ -23,6 +25,7 @@ function NoteInner() {
   const noteId = searchParams.get('id') ?? 'new'
   const { setActiveNote, updateNote } = useNoteStore()
   const [note, setNote] = useState<Note | null>(null)
+  const [showHistory, setShowHistory] = useState(false)
   const noteRef = useRef<Note | null>(null)
   noteRef.current = note
 
@@ -81,6 +84,14 @@ function NoteInner() {
     updateNote(note.id, { content, tags, mentions, backlinks })
   }, [note, setActiveNote, updateNote])
 
+  const handleChangeRef = useRef(handleChange)
+  handleChangeRef.current = handleChange
+
+  const handleRestore = useCallback((revision: NoteRevision) => {
+    handleChangeRef.current(revision.content)
+    setShowHistory(false)
+  }, [])
+
   const saveNote = useCallback(async (n: Note) => {
     const saved = await save(n)
     // 저장/충돌해결 결과의 updatedAt을 로컬에도 반영 — 안 그러면 다음 저장이
@@ -123,12 +134,21 @@ function NoteInner() {
     <div className="flex flex-col h-full">
       <div data-tauri-drag-region className="electron-drag px-12 py-3 border-b border-[var(--border)] flex-shrink-0 flex items-center justify-between">
         <h1 className="text-lg font-semibold text-[var(--text-primary)]">{note.title}</h1>
-        {typingAuthor && (
-          <span className="text-xs text-[var(--accent)] flex items-center gap-1">
-            <span className="w-1.5 h-1.5 rounded-full bg-[var(--accent)] animate-pulse" />
-            {typingAuthor} 작성 중…
-          </span>
-        )}
+        <div className="flex items-center gap-2">
+          {typingAuthor && (
+            <span className="text-xs text-[var(--accent)] flex items-center gap-1">
+              <span className="w-1.5 h-1.5 rounded-full bg-[var(--accent)] animate-pulse" />
+              {typingAuthor} 작성 중…
+            </span>
+          )}
+          <button
+            onClick={() => setShowHistory(true)}
+            title="이전 버전 보기"
+            className="text-xs text-[var(--text-muted)] hover:text-[var(--text-primary)] px-1.5 py-1 rounded hover:bg-white/5 transition-colors"
+          >
+            ⟲ 히스토리
+          </button>
+        </div>
       </div>
       <div className="flex-1 overflow-hidden">
         <NoteEditor
@@ -136,6 +156,14 @@ function NoteInner() {
           onChange={handleChange}
         />
       </div>
+
+      {showHistory && (
+        <NoteHistoryPanel
+          noteId={note.id}
+          onRestore={handleRestore}
+          onClose={() => setShowHistory(false)}
+        />
+      )}
     </div>
   )
 }

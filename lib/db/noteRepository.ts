@@ -125,6 +125,43 @@ export async function upsertNote(note: Note): Promise<Note> {
   return rowToNote(data)
 }
 
+export interface NoteRevision {
+  id: string
+  noteId: string
+  content: string
+  tags: string[]
+  mentions: string[]
+  backlinks: string[]
+  revisedAt: number   // 이 버전이 "현재"였던 시점
+  capturedAt: number  // 덮어써져서 기록된 시점
+}
+
+function rowToRevision(row: Record<string, unknown>): NoteRevision {
+  return {
+    id:         row.id as string,
+    noteId:     row.note_id as string,
+    content:    row.content as string,
+    tags:       (row.tags as string[]) ?? [],
+    mentions:   (row.mentions as string[]) ?? [],
+    backlinks:  (row.backlinks as string[]) ?? [],
+    revisedAt:  row.revised_at as number,
+    capturedAt: row.captured_at as number,
+  }
+}
+
+/** 노트의 이전 버전 목록 (최신순). DB 트리거(capture_note_revision)가 UPDATE 때마다 자동 기록. */
+export async function getNoteRevisions(noteId: string, limit = 30): Promise<NoteRevision[]> {
+  const supabase = createClient()
+  const { data, error } = await supabase
+    .from('note_revisions')
+    .select('*')
+    .eq('note_id', noteId)
+    .order('revised_at', { ascending: false })
+    .limit(limit)
+  if (error) { console.error('[getNoteRevisions]', error); return [] }
+  return (data ?? []).map(rowToRevision)
+}
+
 /** row 전체를 안 받아오는 가벼운 조회 — 저장 전 충돌(다른 기기가 그새 더 최신으로 고쳤는지) 검사용 */
 export async function getNoteUpdatedAt(id: string): Promise<number | null> {
   const supabase = createClient()

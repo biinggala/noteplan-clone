@@ -11,10 +11,12 @@ import { useTimeBlockStore } from '@/lib/stores/timeBlockStore'
 import { useLineUpdateStore } from '@/lib/stores/lineUpdateStore'
 import { useTaskDotStore, hasOpenTask } from '@/lib/stores/taskDotStore'
 import { useNoteRealtime } from '@/lib/hooks/useNoteRealtime'
+import type { NoteRevision } from '@/lib/db/noteRepository'
 import type { Note } from '@/types/note'
 import dynamic from 'next/dynamic'
 
 const NoteEditor = dynamic(() => import('@/components/editor/NoteEditor'), { ssr: false })
+const NoteHistoryPanel = dynamic(() => import('@/components/editor/NoteHistoryPanel'), { ssr: false })
 
 export default function DailyNotePage() {
   return (
@@ -36,6 +38,7 @@ function DailyNoteInner() {
   const [note, setNote]           = useState<Note | null>(null)
   const [isSaving, setIsSaving]   = useState(false)
   const [saveError, setSaveError] = useState<string | null>(null)
+  const [showHistory, setShowHistory] = useState(false)
 
   // 항상 최신 note를 가리키는 ref — effect cleanup에서 사용
   const noteRef = useRef<Note | null>(null)
@@ -131,6 +134,11 @@ function DailyNoteInner() {
 
   handleChangeRef.current = handleChange
 
+  const handleRestore = useCallback((revision: NoteRevision) => {
+    handleChangeRef.current(revision.content)
+    setShowHistory(false)
+  }, [])
+
   // ── 수동 저장 (⌘S / 버튼) ─────────────────────────────────────────────────
   const handleSave = useCallback(async () => {
     if (!note) return
@@ -206,6 +214,13 @@ function DailyNoteInner() {
           {isSaving && !saveError && (
             <span className="text-xs text-[var(--text-muted)]">Saving...</span>
           )}
+          <button
+            onClick={() => setShowHistory(true)}
+            title="이전 버전 보기"
+            className="text-xs text-[var(--text-muted)] hover:text-[var(--text-primary)] px-1.5 py-1 rounded hover:bg-white/5 transition-colors"
+          >
+            ⟲ 히스토리
+          </button>
         </div>
       </div>
 
@@ -217,6 +232,14 @@ function DailyNoteInner() {
           onSave={handleSave}
         />
       </div>
+
+      {showHistory && (
+        <NoteHistoryPanel
+          noteId={note.id}
+          onRestore={handleRestore}
+          onClose={() => setShowHistory(false)}
+        />
+      )}
     </div>
   )
 }
