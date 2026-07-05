@@ -63,6 +63,22 @@ function summarize(r: Row, query?: string): string {
 function text(s: string) { return { content: [{ type: 'text' as const, text: s }] } }
 function fail(s: string) { return { content: [{ type: 'text' as const, text: `⚠ ${s}` }], isError: true } }
 
+/** 열려있는 에디터에 "Claude AI 작성 중…" presence를 broadcast (노션 스타일 표시).
+ *  구독자가 없어도 안전하게 무시됨 — 실패해도 실제 저장은 계속 진행. */
+async function broadcastTyping(noteId: string, typing: boolean): Promise<void> {
+  const channel = db.channel(`note:${noteId}`)
+  try {
+    await new Promise<void>((resolve) => {
+      const timer = setTimeout(resolve, 1500) // 구독자 없으면 최대 1.5초만 대기
+      channel.subscribe((status) => {
+        if (status === 'SUBSCRIBED') { clearTimeout(timer); resolve() }
+      })
+    })
+    await channel.send({ type: 'broadcast', event: 'typing', payload: { typing, author: 'Claude AI' } })
+  } catch { /* presence는 부가기능 — 실패해도 무시 */ }
+  finally { db.removeChannel(channel) }
+}
+
 // ── 서버 ─────────────────────────────────────────────────────────────────────
 const server = new McpServer({ name: 'noteplan', version: '0.1.0' })
 
@@ -186,8 +202,10 @@ server.tool(
     if (!data) return fail('노트 없음')
     const r = data as Row
     const newContent = `${r.content.replace(/\s+$/, '')}\n${body}\n`
+    await broadcastTyping(id, true)
     const { error: e2 } = await db.from('notes')
       .update({ content: newContent, updated_at: Date.now() }).eq('id', id).eq('user_id', USER_ID)
+    await broadcastTyping(id, false)
     if (e2) return fail(e2.message)
     return text(`추가됨 → "${r.title}"`)
   },
@@ -206,8 +224,10 @@ server.tool(
     if (data) {
       const r = data as Row
       const newContent = `${r.content.replace(/\s+$/, '')}\n${body}\n`
+      await broadcastTyping(r.id, true)
       const { error } = await db.from('notes')
         .update({ content: newContent, updated_at: now }).eq('id', r.id).eq('user_id', USER_ID)
+      await broadcastTyping(r.id, false)
       if (error) return fail(error.message)
       return text(`${d} 데일리 노트에 추가됨`)
     }

@@ -4,6 +4,7 @@ import { useSearchParams } from 'next/navigation'
 import { useNoteStore } from '@/lib/stores/noteStore'
 import { getNoteById, upsertNote } from '@/lib/db/noteRepository'
 import { extractTags, extractMentions, extractBacklinks } from '@/lib/parser/noteParser'
+import { useNoteRealtime } from '@/lib/hooks/useNoteRealtime'
 import type { Note } from '@/types/note'
 import dynamic from 'next/dynamic'
 
@@ -63,21 +64,39 @@ function NoteInner() {
     updateNote(note.id, { content, tags, mentions, backlinks })
   }, [note, setActiveNote, updateNote])
 
+  // ── 실시간 동기화: 외부(MCP 등)가 이 노트를 고치면 즉시 반영 + 작성자 표시 ──
+  const handleRemoteContent = useCallback((content: string) => {
+    setNote(prev => {
+      if (!prev) return prev
+      const tags      = extractTags(content)
+      const mentions  = extractMentions(content)
+      const backlinks = extractBacklinks(content)
+      const updated   = { ...prev, content, tags, mentions, backlinks }
+      setActiveNote(updated)
+      updateNote(prev.id, { content, tags, mentions, backlinks })
+      return updated
+    })
+  }, [setActiveNote, updateNote])
+
+  const { typingAuthor, selfWriteRef } = useNoteRealtime(note?.id, handleRemoteContent)
+
   // 언마운트 시 즉시 저장
   useEffect(() => {
     return () => {
       if (noteRef.current) {
-        upsertNote(noteRef.current).catch(console.error)
+        upsertNote(noteRef.current).then(() => { selfWriteRef.current = noteRef.current!.content }).catch(console.error)
       }
     }
-  }, []) // eslint-disable-line react-hooks/exhaustive-deps
+  }, [selfWriteRef]) // eslint-disable-line react-hooks/exhaustive-deps
 
   // Auto-save every 2s
   useEffect(() => {
     if (!note) return
-    const timer = setTimeout(() => upsertNote(note).catch(console.error), 2000)
+    const timer = setTimeout(() => {
+      upsertNote(note).then(() => { selfWriteRef.current = note.content }).catch(console.error)
+    }, 2000)
     return () => clearTimeout(timer)
-  }, [note?.content])
+  }, [note?.content, selfWriteRef])
 
   if (!note) {
     return (
@@ -89,8 +108,14 @@ function NoteInner() {
 
   return (
     <div className="flex flex-col h-full">
-      <div data-tauri-drag-region className="electron-drag px-12 py-3 border-b border-[var(--border)] flex-shrink-0">
+      <div data-tauri-drag-region className="electron-drag px-12 py-3 border-b border-[var(--border)] flex-shrink-0 flex items-center justify-between">
         <h1 className="text-lg font-semibold text-[var(--text-primary)]">{note.title}</h1>
+        {typingAuthor && (
+          <span className="text-xs text-[var(--accent)] flex items-center gap-1">
+            <span className="w-1.5 h-1.5 rounded-full bg-[var(--accent)] animate-pulse" />
+            {typingAuthor} 작성 중…
+          </span>
+        )}
       </div>
       <div className="flex-1 overflow-hidden">
         <NoteEditor

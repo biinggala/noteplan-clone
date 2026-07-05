@@ -10,14 +10,16 @@ import { parseTimeBlockLines } from '@/lib/parser/timeBlockParser'
 import { useTimeBlockStore } from '@/lib/stores/timeBlockStore'
 import { useLineUpdateStore } from '@/lib/stores/lineUpdateStore'
 import { useTaskDotStore, hasOpenTask } from '@/lib/stores/taskDotStore'
+import { useNoteRealtime } from '@/lib/hooks/useNoteRealtime'
 import type { Note } from '@/types/note'
 import dynamic from 'next/dynamic'
 
 const NoteEditor = dynamic(() => import('@/components/editor/NoteEditor'), { ssr: false })
 
-async function saveNote(note: Note): Promise<void> {
+async function saveNote(note: Note, markSelf?: (content: string) => void): Promise<void> {
   try {
     await upsertNote(note)
+    markSelf?.(note.content)
     console.log('[Save] ✅', note.date, 'len=', note.content.length)
   } catch (err) {
     console.error('[Save] ❌', err)
@@ -60,7 +62,7 @@ function DailyNoteInner() {
     // (component unmount 시에도 동일하게 동작)
     return () => {
       if (noteRef.current) {
-        saveNote(noteRef.current).catch(() => {})
+        saveNote(noteRef.current, c => { selfWriteRef.current = c }).catch(() => {})
       }
     }
   }, [date])  // date가 바뀔 때마다 cleanup 실행
@@ -99,20 +101,38 @@ function DailyNoteInner() {
 
   handleChangeRef.current = handleChange
 
+  // ── 실시간 동기화: 외부(MCP 등)가 이 노트를 고치면 즉시 반영 + 작성자 표시 ──
+  const handleRemoteContent = useCallback((content: string) => {
+    setNote(prev => {
+      if (!prev) return prev
+      const tags      = extractTags(content)
+      const mentions  = extractMentions(content)
+      const backlinks = extractBacklinks(content)
+      const updated   = { ...prev, content, tags, mentions, backlinks }
+      setActiveNote(updated)
+      updateNote(prev.id, { content, tags, mentions, backlinks })
+      syncTimeBlocks(dateStr, parseTimeBlockLines(content))
+      setTaskDate(dateStr, hasOpenTask(content))
+      return updated
+    })
+  }, [setActiveNote, updateNote, syncTimeBlocks, dateStr, setTaskDate])
+
+  const { typingAuthor, selfWriteRef } = useNoteRealtime(note?.id, handleRemoteContent)
+
   // ── 수동 저장 (⌘S / 버튼) ─────────────────────────────────────────────────
   const handleSave = useCallback(async () => {
     if (!note) return
     setIsSaving(true)
     setSaveError(null)
     try {
-      await saveNote(note)
+      await saveNote(note, c => { selfWriteRef.current = c })
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err)
       setSaveError(msg)
     } finally {
       setTimeout(() => setIsSaving(false), 600)
     }
-  }, [note])
+  }, [note, selfWriteRef])
 
   // ── Auto-save: 마지막 타이핑 후 2초 ───────────────────────────────────────
   useEffect(() => {
@@ -120,12 +140,12 @@ function DailyNoteInner() {
     const timer = setTimeout(() => {
       setIsSaving(true)
       setSaveError(null)
-      saveNote(note)
+      saveNote(note, c => { selfWriteRef.current = c })
         .catch(err => setSaveError(err instanceof Error ? err.message : String(err)))
         .finally(() => setTimeout(() => setIsSaving(false), 600))
     }, 2000)
     return () => clearTimeout(timer)
-  }, [note?.content])
+  }, [note?.content, selfWriteRef])
 
   // ── Timeline → Note 라인 업데이트 ─────────────────────────────────────────
   useEffect(() => {
@@ -160,6 +180,12 @@ function DailyNoteInner() {
           </div>
         </div>
         <div className="flex items-center gap-2">
+          {typingAuthor && (
+            <span className="text-xs text-[var(--accent)] flex items-center gap-1">
+              <span className="w-1.5 h-1.5 rounded-full bg-[var(--accent)] animate-pulse" />
+              {typingAuthor} 작성 중…
+            </span>
+          )}
           {saveError && (
             <span className="text-xs text-red-400 max-w-[200px] truncate" title={saveError}>
               ⚠ {saveError}
