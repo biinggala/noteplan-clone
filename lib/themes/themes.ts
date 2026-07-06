@@ -26,7 +26,12 @@ export interface ThemeVars {
   '--cm-code-fg':     string
   '--cm-activeline':  string
   '--cm-hr':          string
+  // Editor font — 테마별로 다른 서체를 쓸 수 있게 필수 필드로 둠
+  // (선택 필드로 두면 지정 안 한 테마로 전환 시 이전 테마의 inline 값이 안 지워지고 남는 버그가 생김)
+  '--font-editor':    string
 }
+
+const DEFAULT_FONT = '"SF Pro Text", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif'
 
 export interface Theme {
   id:     string
@@ -61,6 +66,7 @@ export const THEMES: Theme[] = [
       '--cm-code-fg':    '#e2b96f',
       '--cm-activeline': 'rgba(255,255,255,0.025)',
       '--cm-hr':         'rgba(255,255,255,0.15)',
+      '--font-editor':   DEFAULT_FONT,
     },
   },
   {
@@ -87,6 +93,7 @@ export const THEMES: Theme[] = [
       '--cm-code-fg':    '#c2410c',
       '--cm-activeline': 'rgba(0,0,0,0.04)',
       '--cm-hr':         'rgba(0,0,0,0.12)',
+      '--font-editor':   DEFAULT_FONT,
     },
   },
   {
@@ -113,6 +120,7 @@ export const THEMES: Theme[] = [
       '--cm-code-fg':    '#a6e3a1',
       '--cm-activeline': 'rgba(205,214,244,0.04)',
       '--cm-hr':         'rgba(205,214,244,0.1)',
+      '--font-editor':   DEFAULT_FONT,
     },
   },
   {
@@ -139,6 +147,7 @@ export const THEMES: Theme[] = [
       '--cm-code-fg':    '#ebcb8b',
       '--cm-activeline': 'rgba(216,222,233,0.04)',
       '--cm-hr':         'rgba(216,222,233,0.1)',
+      '--font-editor':   DEFAULT_FONT,
     },
   },
   {
@@ -165,6 +174,7 @@ export const THEMES: Theme[] = [
       '--cm-code-fg':    '#50fa7b',
       '--cm-activeline': 'rgba(248,248,242,0.04)',
       '--cm-hr':         'rgba(248,248,242,0.1)',
+      '--font-editor':   DEFAULT_FONT,
     },
   },
   {
@@ -191,6 +201,7 @@ export const THEMES: Theme[] = [
       '--cm-code-fg':    '#9ccfd8',
       '--cm-activeline': 'rgba(224,222,244,0.04)',
       '--cm-hr':         'rgba(224,222,244,0.1)',
+      '--font-editor':   DEFAULT_FONT,
     },
   },
   {
@@ -217,6 +228,36 @@ export const THEMES: Theme[] = [
       '--cm-code-fg':    '#2aa198',
       '--cm-activeline': 'rgba(131,148,150,0.06)',
       '--cm-hr':         'rgba(131,148,150,0.2)',
+      '--font-editor':   DEFAULT_FONT,
+    },
+  },
+  {
+    // Teenage Engineering(OP-1 Field) 오마주 — 따뜻한 오프화이트 바디 + 시그니처 오렌지 포인트,
+    // 모노스페이스 서체로 하드웨어스러운 기술적 무드
+    id: 'te-field', name: 'TE Field', dark: false, swatch: '#FF4B00',
+    vars: {
+      '--bg-primary':    '#EDECE6',
+      '--bg-secondary':  '#F5F4EF',
+      '--bg-tertiary':   '#DEDCD1',
+      '--text-primary':  '#14130F',
+      '--text-secondary':'#47453C',
+      '--text-muted':    '#8C8A7D',
+      '--border':                  'rgba(20,19,15,0.14)',
+      '--accent':        '#FF4B00',
+      '--sidebar-bg':    'rgba(237,236,230,0.94)',
+      '--scrollbar-thumb':       'rgba(20,19,15,0.18)',
+      '--scrollbar-thumb-hover': 'rgba(20,19,15,0.3)',
+      '--cm-h1':  '#FF4B00',
+      '--cm-h2':  '#14130F',
+      '--cm-h3':  '#47453C',
+      '--cm-strong':     '#14130F',
+      '--cm-em':         '#47453C',
+      '--cm-formatting': '#B7B4A4',
+      '--cm-code-bg':    'rgba(20,19,15,0.07)',
+      '--cm-code-fg':    '#B34700',
+      '--cm-activeline': 'rgba(255,75,0,0.05)',
+      '--cm-hr':         'rgba(20,19,15,0.16)',
+      '--font-editor':   'Menlo, Consolas, "SF Mono", "IBM Plex Mono", monospace',
     },
   },
 ]

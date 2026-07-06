@@ -7,7 +7,7 @@ export const noteplanTheme = [
     '&': {
       height: '100%',
       fontSize: '15px',
-      fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", "Helvetica Neue", Arial, sans-serif',
+      fontFamily: 'var(--font-editor)',
       background: 'transparent',
       color: 'var(--text-primary)',
     },
