@@ -104,9 +104,13 @@ export default function LeftSidebar() {
         onClick={() => router.push(path)}
         className={`flex items-center gap-2 w-full px-3 py-1.5 rounded-md text-sm transition-colors
           ${isActive
-            ? 'bg-blue-500/20 text-blue-400'
-            : 'text-[var(--text-secondary)] hover:bg-white/5 hover:text-[var(--text-primary)]'
+            ? ''
+            : 'text-[var(--text-secondary)] hover:bg-[var(--hover-bg)] hover:text-[var(--text-primary)]'
           }`}
+        style={isActive ? {
+          backgroundColor: 'color-mix(in srgb, var(--accent) 18%, transparent)',
+          color: 'var(--accent)',
+        } : undefined}
       >
         {icon}
         {label}
@@ -140,7 +144,8 @@ export default function LeftSidebar() {
       <button
         onClick={() => setCommandBarOpen(true)}
         className="flex items-center gap-2 w-full px-3 py-2 rounded-md text-sm
-          text-[var(--text-muted)] bg-white/5 hover:bg-white/10 transition-colors mb-2"
+          text-[var(--text-muted)] hover:bg-[var(--active-bg)] transition-colors mb-2"
+        style={{ backgroundColor: 'var(--hover-bg)' }}
       >
         <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
           <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5}
@@ -165,16 +170,20 @@ export default function LeftSidebar() {
       <div className="border-t border-[var(--border)] my-1" />
 
       {/* Tab Switcher */}
-      <div className="flex rounded-md overflow-hidden bg-white/5 mb-2">
+      <div className="flex rounded-md overflow-hidden mb-2" style={{ backgroundColor: 'var(--hover-bg)' }}>
         {(['notes', 'tags', 'review'] as const).map(tab => (
           <button
             key={tab}
             onClick={() => setActiveTab(tab)}
             className={`flex-1 py-1 text-xs font-medium capitalize transition-colors
               ${activeTab === tab
-                ? 'bg-blue-500/30 text-blue-300'
+                ? ''
                 : 'text-[var(--text-muted)] hover:text-[var(--text-primary)]'
               }`}
+            style={activeTab === tab ? {
+              backgroundColor: 'color-mix(in srgb, var(--accent) 25%, transparent)',
+              color: 'var(--accent)',
+            } : undefined}
           >
             {tab}
           </button>
@@ -206,7 +215,7 @@ export default function LeftSidebar() {
         <button
           onClick={() => setNewNoteOpen(true)}
           className="flex items-center gap-2 w-full px-3 py-2 rounded-md text-sm
-            text-[var(--text-secondary)] hover:bg-white/5 transition-colors"
+            text-[var(--text-secondary)] hover:bg-[var(--hover-bg)] transition-colors"
         >
           <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5}
@@ -219,7 +228,7 @@ export default function LeftSidebar() {
         <button
           onClick={() => setImportOpen(true)}
           className="flex items-center gap-2 w-full px-3 py-2 rounded-md text-sm
-            text-[var(--text-secondary)] hover:bg-white/5 transition-colors"
+            text-[var(--text-secondary)] hover:bg-[var(--hover-bg)] transition-colors"
         >
           <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5}
@@ -388,7 +397,7 @@ function TagsPanel({
         <div
           onClick={() => handleSelect(kind, node.fullPath)}
           className={`flex items-center gap-1 rounded text-sm cursor-pointer transition-colors pr-2 py-1
-            ${isOpen ? sel : 'text-[var(--text-secondary)] hover:bg-white/5'}`}
+            ${isOpen ? sel : 'text-[var(--text-secondary)] hover:bg-[var(--hover-bg)]'}`}
           style={{ paddingLeft: 6 + depth * 14 }}
         >
           {/* chevron (자식 있을 때만) — 클릭 시 펼침만 */}
@@ -418,7 +427,7 @@ function TagsPanel({
                 key={`${m.noteId}:${i}`}
                 onClick={() => openMatch(m)}
                 className="flex flex-col gap-0.5 px-2 py-1.5 rounded text-left w-full
-                  hover:bg-white/5 transition-colors"
+                  hover:bg-[var(--hover-bg)] transition-colors"
               >
                 <span className="flex items-center gap-1 text-[10px] text-[var(--text-muted)]">
                   <span>{noteIcon(m)}</span>
@@ -557,9 +566,10 @@ function NewNoteModal({ onClose }: { onClose: () => void }) {
           onChange={e => setTitle(e.target.value)}
           onKeyDown={e => { if (e.key === 'Enter') handleCreate(); if (e.key === 'Escape') onClose() }}
           placeholder="제목 입력..."
-          className="w-full px-3 py-2 rounded-lg bg-white/5 border border-[var(--border)]
+          className="w-full px-3 py-2 rounded-lg border border-[var(--border)]
             text-sm text-[var(--text-primary)] placeholder:text-[var(--text-muted)]
-            focus:outline-none focus:border-blue-400/50"
+            focus:outline-none focus:border-[var(--accent)]"
+          style={{ backgroundColor: 'var(--hover-bg)' }}
         />
 
         <div className="flex flex-col gap-1">
@@ -567,9 +577,10 @@ function NewNoteModal({ onClose }: { onClose: () => void }) {
           <select
             value={folder}
             onChange={e => setFolder(e.target.value)}
-            className="w-full px-3 py-2 rounded-lg bg-white/5 border border-[var(--border)]
-              text-sm text-[var(--text-secondary)] focus:outline-none focus:border-blue-400/50
+            className="w-full px-3 py-2 rounded-lg border border-[var(--border)]
+              text-sm text-[var(--text-secondary)] focus:outline-none focus:border-[var(--accent)]
               cursor-pointer"
+            style={{ backgroundColor: 'var(--hover-bg)' }}
           >
             <option value="none">Unfiled (분류 없음)</option>
             {folders.map(f => (
@@ -581,13 +592,15 @@ function NewNoteModal({ onClose }: { onClose: () => void }) {
         <div className="flex gap-2">
           <button
             onClick={onClose}
-            className="flex-1 py-2 rounded-lg bg-white/5 hover:bg-white/10 text-sm text-[var(--text-muted)] transition-colors"
+            className="flex-1 py-2 rounded-lg hover:bg-[var(--active-bg)] text-sm text-[var(--text-muted)] transition-colors"
+            style={{ backgroundColor: 'var(--hover-bg)' }}
           >
             취소
           </button>
           <button
             onClick={handleCreate}
-            className="flex-1 py-2 rounded-lg bg-blue-500 hover:bg-blue-600 text-sm text-white font-medium transition-colors"
+            className="flex-1 py-2 rounded-lg hover:opacity-90 text-sm text-white font-medium transition-colors"
+            style={{ backgroundColor: 'var(--accent)' }}
           >
             만들기
           </button>

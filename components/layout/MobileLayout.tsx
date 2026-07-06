@@ -40,7 +40,7 @@ export default function MobileLayout({ left, center, right }: MobileLayoutProps)
         <button
           onClick={() => setDrawer('left')}
           aria-label="메뉴 열기"
-          className="p-2 rounded-md text-[var(--text-secondary)] hover:bg-white/5 active:bg-white/10"
+          className="p-2 rounded-md text-[var(--text-secondary)] hover:bg-[var(--hover-bg)] active:bg-[var(--active-bg)]"
         >
           <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.8} d="M4 6h16M4 12h16M4 18h16" />
@@ -52,7 +52,7 @@ export default function MobileLayout({ left, center, right }: MobileLayoutProps)
         <button
           onClick={() => setCommandBarOpen(true)}
           aria-label="검색"
-          className="p-2 rounded-md text-[var(--text-secondary)] hover:bg-white/5 active:bg-white/10"
+          className="p-2 rounded-md text-[var(--text-secondary)] hover:bg-[var(--hover-bg)] active:bg-[var(--active-bg)]"
         >
           <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.8} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
@@ -61,7 +61,7 @@ export default function MobileLayout({ left, center, right }: MobileLayoutProps)
         <button
           onClick={() => setDrawer('right')}
           aria-label="캘린더 열기"
-          className="p-2 rounded-md text-[var(--text-secondary)] hover:bg-white/5 active:bg-white/10"
+          className="p-2 rounded-md text-[var(--text-secondary)] hover:bg-[var(--hover-bg)] active:bg-[var(--active-bg)]"
         >
           <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.8}

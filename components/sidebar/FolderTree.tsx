@@ -164,7 +164,7 @@ function InlineDialog({ dialog }: { dialog: Dialog }) {
           </button>
           <button
             onClick={handleConfirm}
-            className="px-3 py-1 text-xs bg-[var(--accent)] text-white rounded-md hover:bg-blue-600 transition-colors"
+            className="px-3 py-1 text-xs bg-[var(--accent)] text-white rounded-md hover:opacity-90 transition-opacity"
           >
             {dialog.confirmLabel ?? '확인'}
           </button>
@@ -188,10 +188,16 @@ function NoteItem({ note, depth, isActive, onClick, onContextMenu, dnd }: {
     <div
       className={`flex items-center gap-1.5 py-1 rounded-md cursor-pointer text-sm transition-colors
         ${isActive
-          ? 'bg-blue-500/20 text-blue-400'
-          : 'text-[var(--text-secondary)] hover:bg-white/5 hover:text-[var(--text-primary)]'
+          ? ''
+          : 'text-[var(--text-secondary)] hover:bg-[var(--hover-bg)] hover:text-[var(--text-primary)]'
         }`}
-      style={{ paddingLeft: `${8 + depth * 14}px`, paddingRight: '8px' }}
+      style={{
+        paddingLeft: `${8 + depth * 14}px`, paddingRight: '8px',
+        ...(isActive ? {
+          backgroundColor: 'color-mix(in srgb, var(--accent) 18%, transparent)',
+          color: 'var(--accent)',
+        } : {}),
+      }}
       onClick={onClick}
       onContextMenu={onContextMenu}
       onPointerDown={(e) => dnd.onPointerDown(e, { kind: 'note', id: note.id, label: note.title, path: note.folder })}
@@ -223,7 +229,7 @@ function FolderNode({ folder, depth, expandedFolders, toggleFolder, onContextMen
         data-folder-drop=""
         data-folder-path={folder.path}
         className="flex items-center gap-1 py-1 rounded-md cursor-pointer select-none
-          text-[var(--text-secondary)] hover:bg-white/5 group"
+          text-[var(--text-secondary)] hover:bg-[var(--hover-bg)] group"
         style={{ paddingLeft: `${6 + depth * 14}px`, paddingRight: '6px' }}
         onClick={() => toggleFolder(folder.id)}
         onContextMenu={(e) => onContextMenu(e, 'folder', folder.id, folder.path)}
@@ -291,7 +297,7 @@ function MenuItem({ children, onClick, danger }: {
   return (
     <button
       onClick={onClick}
-      className={`flex w-full items-center px-3 py-1.5 text-sm hover:bg-white/10 transition-colors
+      className={`flex w-full items-center px-3 py-1.5 text-sm hover:bg-[var(--hover-bg)] transition-colors
         ${danger ? 'text-red-400 hover:text-red-300' : 'text-[var(--text-primary)]'}`}
     >
       {children}
@@ -533,7 +539,7 @@ export default function FolderTree() {
             onClick={() => setUnfiledOpen(o => !o)}
             className="flex items-center gap-1.5 w-full px-2 py-1 text-xs
               text-[var(--text-muted)] hover:text-[var(--text-secondary)]
-              hover:bg-white/5 transition-colors rounded"
+              hover:bg-[var(--hover-bg)] transition-colors rounded"
           >
             <svg
               className={`w-2.5 h-2.5 flex-shrink-0 transition-transform ${unfiledOpen ? 'rotate-90' : ''}`}
@@ -554,9 +560,13 @@ export default function FolderTree() {
                   onPointerDown={(e) => dnd.onPointerDown(e, { kind: 'note', id: note.id, label: note.title, path: note.folder })}
                   className={`flex items-center gap-1.5 w-full pl-7 pr-2 py-1 rounded text-xs transition-colors
                     ${activeId === note.id
-                      ? 'bg-blue-500/20 text-blue-300'
-                      : 'text-[var(--text-muted)] hover:bg-white/5 hover:text-[var(--text-secondary)]'
+                      ? ''
+                      : 'text-[var(--text-muted)] hover:bg-[var(--hover-bg)] hover:text-[var(--text-secondary)]'
                     }`}
+                  style={activeId === note.id ? {
+                    backgroundColor: 'color-mix(in srgb, var(--accent) 18%, transparent)',
+                    color: 'var(--accent)',
+                  } : undefined}
                 >
                   <svg className="w-3.5 h-3.5 flex-shrink-0 text-[var(--text-muted)]" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5}

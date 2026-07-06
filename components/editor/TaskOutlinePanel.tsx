@@ -27,9 +27,8 @@ function TaskIcon({ type, onClick }: { type: TaskOutlineType; onClick?: () => vo
   return (
     <span
       onClick={clickable ? onClick : undefined}
-      className={`inline-block w-4 text-center flex-shrink-0 ${clickable ? 'cursor-pointer hover:opacity-70' : ''} ${
-        done ? 'text-[var(--accent)]' : cancelled ? 'text-[var(--text-muted)]' : 'text-amber-500/70'
-      }`}
+      className={`inline-block w-4 text-center flex-shrink-0 ${clickable ? 'cursor-pointer hover:opacity-70' : ''}`}
+      style={{ color: done ? 'var(--accent)' : cancelled ? 'var(--text-muted)' : 'var(--accent)', opacity: done ? 1 : cancelled ? 1 : 0.65 }}
     >
       {ICON[type]}
     </span>
@@ -56,10 +55,13 @@ export default function TaskOutlinePanel({ content, title = '할 일 요약', on
   }
 
   return (
-    <div className="mx-12 mt-3 rounded-lg border border-[var(--border)] bg-white/[0.02] overflow-hidden flex-shrink-0">
+    <div
+      className="mx-12 mt-3 rounded-lg border border-[var(--border)] overflow-hidden flex-shrink-0"
+      style={{ backgroundColor: 'var(--bg-tertiary)', borderTop: '2px solid var(--accent)' }}
+    >
       <button
         onClick={toggleCollapsed}
-        className="w-full flex items-center gap-1.5 px-3 py-2 text-xs font-semibold text-[var(--text-muted)] hover:text-[var(--text-primary)] transition-colors"
+        className="w-full flex items-center gap-1.5 px-3 py-2 text-xs font-semibold text-[var(--text-muted)] hover:text-[var(--text-primary)] hover:bg-[var(--hover-bg)] transition-colors"
       >
         <span className={`inline-block transition-transform ${collapsed ? '-rotate-90' : ''}`}>⌄</span>
         {title}
@@ -76,7 +78,8 @@ export default function TaskOutlinePanel({ content, title = '할 일 요약', on
               <div key={i}>
                 <button
                   onClick={() => toggleSection(i)}
-                  className="flex items-center gap-1 text-sm font-bold text-amber-500/80 hover:text-amber-400 transition-colors"
+                  className="flex items-center gap-1 text-sm font-bold hover:opacity-80 transition-opacity"
+                  style={{ color: 'var(--accent)' }}
                 >
                   <span className={`inline-block text-xs transition-transform ${sectionCollapsed ? '-rotate-90' : ''}`}>⌄</span>
                   {section.header}

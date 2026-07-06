@@ -167,7 +167,7 @@ export default function CommandBar() {
                 className="flex-1 bg-transparent text-[var(--text-primary)] placeholder-[var(--text-muted)]
                   text-sm outline-none"
               />
-              <kbd className="text-xs text-[var(--text-muted)] bg-white/10 px-2 py-0.5 rounded">ESC</kbd>
+              <kbd className="text-xs text-[var(--text-muted)] px-2 py-0.5 rounded" style={{ backgroundColor: 'var(--active-bg)' }}>ESC</kbd>
             </div>
 
             {/* Results */}
@@ -180,9 +180,10 @@ export default function CommandBar() {
                     onClick={() => handleSelect(note)}
                     className={`flex items-start gap-3 w-full px-4 py-2.5 text-sm text-left transition-colors
                       ${idx === selectedIdx
-                        ? 'bg-blue-500/20 text-[var(--text-primary)]'
-                        : 'text-[var(--text-secondary)] hover:bg-white/5'
+                        ? 'text-[var(--text-primary)]'
+                        : 'text-[var(--text-secondary)] hover:bg-[var(--hover-bg)]'
                       }`}
+                    style={idx === selectedIdx ? { backgroundColor: 'color-mix(in srgb, var(--accent) 18%, transparent)' } : undefined}
                   >
                     <span className="flex-shrink-0 text-[var(--text-muted)] mt-0.5">
                       {note.type === 'daily' ? '📅' : '📄'}

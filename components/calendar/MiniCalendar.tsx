@@ -139,7 +139,7 @@ export default function MiniCalendar() {
       <div className="flex items-center justify-between mb-3">
         <button
           onClick={() => setViewDate(subMonths(viewDate, 1))}
-          className="p-1 rounded hover:bg-white/10 text-[var(--text-muted)] transition-colors"
+          className="p-1 rounded hover:bg-[var(--hover-bg)] text-[var(--text-muted)] transition-colors"
         >
           <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
@@ -158,8 +158,9 @@ export default function MiniCalendar() {
           {format(viewDate, 'yyyy-MM') !== format(new Date(), 'yyyy-MM') && (
             <button
               onClick={() => setViewDate(new Date())}
-              className="text-[10px] px-1 py-0.5 rounded bg-white/10 text-[var(--text-muted)]
-                hover:bg-white/20 hover:text-[var(--text-primary)] transition-colors"
+              className="text-[10px] px-1 py-0.5 rounded text-[var(--text-muted)]
+                hover:text-[var(--text-primary)] transition-colors"
+              style={{ backgroundColor: 'var(--hover-bg)' }}
               title="Go to today"
             >
               today
@@ -168,7 +169,7 @@ export default function MiniCalendar() {
         </div>
         <button
           onClick={() => setViewDate(addMonths(viewDate, 1))}
-          className="p-1 rounded hover:bg-white/10 text-[var(--text-muted)] transition-colors"
+          className="p-1 rounded hover:bg-[var(--hover-bg)] text-[var(--text-muted)] transition-colors"
         >
           <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />

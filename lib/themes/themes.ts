@@ -11,6 +11,11 @@ export interface ThemeVars {
   '--border':        string
   '--accent':        string
   '--sidebar-bg':    string
+  // Interactive states (hover/active) — 사이드바·리스트·버튼 전반에서 사용.
+  // 예전엔 컴포넌트마다 hover:bg-white/5 같은 걸 하드코딩해서 라이트 계열
+  // 테마(Light, TE Field)에서 거의 안 보이는 문제가 있었음
+  '--hover-bg':      string
+  '--active-bg':     string
   // Scrollbar
   '--scrollbar-thumb':       string
   '--scrollbar-thumb-hover': string
@@ -54,6 +59,8 @@ export const THEMES: Theme[] = [
       '--border':                  'rgba(255,255,255,0.08)',
       '--accent':        '#3b82f6',
       '--sidebar-bg':    'rgba(30,30,30,0.85)',
+      '--hover-bg':      'rgba(255,255,255,0.06)',
+      '--active-bg':     'rgba(255,255,255,0.1)',
       '--scrollbar-thumb':       'rgba(255,255,255,0.15)',
       '--scrollbar-thumb-hover': 'rgba(255,255,255,0.25)',
       '--cm-h1':  '#f0f0f0',
@@ -81,6 +88,8 @@ export const THEMES: Theme[] = [
       '--border':                  'rgba(0,0,0,0.09)',
       '--accent':        '#2563eb',
       '--sidebar-bg':    'rgba(245,245,244,0.92)',
+      '--hover-bg':      'rgba(0,0,0,0.045)',
+      '--active-bg':     'rgba(0,0,0,0.08)',
       '--scrollbar-thumb':       'rgba(0,0,0,0.15)',
       '--scrollbar-thumb-hover': 'rgba(0,0,0,0.25)',
       '--cm-h1':  '#111111',
@@ -108,6 +117,8 @@ export const THEMES: Theme[] = [
       '--border':                  'rgba(205,214,244,0.1)',
       '--accent':        '#89b4fa',
       '--sidebar-bg':    'rgba(30,30,46,0.9)',
+      '--hover-bg':      'rgba(205,214,244,0.06)',
+      '--active-bg':     'rgba(205,214,244,0.1)',
       '--scrollbar-thumb':       'rgba(205,214,244,0.15)',
       '--scrollbar-thumb-hover': 'rgba(205,214,244,0.25)',
       '--cm-h1':  '#cba6f7',
@@ -135,6 +146,8 @@ export const THEMES: Theme[] = [
       '--border':                  'rgba(216,222,233,0.1)',
       '--accent':        '#88c0d0',
       '--sidebar-bg':    'rgba(46,52,64,0.9)',
+      '--hover-bg':      'rgba(216,222,233,0.06)',
+      '--active-bg':     'rgba(216,222,233,0.1)',
       '--scrollbar-thumb':       'rgba(216,222,233,0.15)',
       '--scrollbar-thumb-hover': 'rgba(216,222,233,0.25)',
       '--cm-h1':  '#88c0d0',
@@ -162,6 +175,8 @@ export const THEMES: Theme[] = [
       '--border':                  'rgba(248,248,242,0.1)',
       '--accent':        '#bd93f9',
       '--sidebar-bg':    'rgba(40,42,54,0.9)',
+      '--hover-bg':      'rgba(248,248,242,0.06)',
+      '--active-bg':     'rgba(248,248,242,0.1)',
       '--scrollbar-thumb':       'rgba(248,248,242,0.15)',
       '--scrollbar-thumb-hover': 'rgba(248,248,242,0.25)',
       '--cm-h1':  '#ff79c6',
@@ -189,6 +204,8 @@ export const THEMES: Theme[] = [
       '--border':                  'rgba(224,222,244,0.1)',
       '--accent':        '#c4a7e7',
       '--sidebar-bg':    'rgba(25,23,36,0.9)',
+      '--hover-bg':      'rgba(224,222,244,0.06)',
+      '--active-bg':     'rgba(224,222,244,0.1)',
       '--scrollbar-thumb':       'rgba(224,222,244,0.15)',
       '--scrollbar-thumb-hover': 'rgba(224,222,244,0.25)',
       '--cm-h1':  '#eb6f92',
@@ -216,6 +233,8 @@ export const THEMES: Theme[] = [
       '--border':                  'rgba(131,148,150,0.15)',
       '--accent':        '#268bd2',
       '--sidebar-bg':    'rgba(0,43,54,0.9)',
+      '--hover-bg':      'rgba(131,148,150,0.08)',
+      '--active-bg':     'rgba(131,148,150,0.14)',
       '--scrollbar-thumb':       'rgba(131,148,150,0.2)',
       '--scrollbar-thumb-hover': 'rgba(131,148,150,0.35)',
       '--cm-h1':  '#cb4b16',
@@ -245,6 +264,9 @@ export const THEMES: Theme[] = [
       '--border':                  'rgba(20,19,15,0.14)',
       '--accent':        '#FF4B00',
       '--sidebar-bg':    'rgba(237,236,230,0.94)',
+      // 중립 회색 대신 브랜드 오렌지를 옅게 써서 hover/active가 "TE답게" 도드라지게 함
+      '--hover-bg':      'rgba(255,75,0,0.07)',
+      '--active-bg':     'rgba(255,75,0,0.13)',
       '--scrollbar-thumb':       'rgba(20,19,15,0.18)',
       '--scrollbar-thumb-hover': 'rgba(20,19,15,0.3)',
       '--cm-h1':  '#FF4B00',
