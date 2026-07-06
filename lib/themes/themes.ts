@@ -282,6 +282,38 @@ export const THEMES: Theme[] = [
       '--font-editor':   'Menlo, Consolas, "SF Mono", "IBM Plex Mono", monospace',
     },
   },
+  {
+    // "Work OS" 스타일 대시보드 레퍼런스 오마주 — 웜 아이보리 배경 + 굵은 블랙 타이포 +
+    // 비비드 레드 포인트(오늘/강조만 레드, 나머지는 철저히 흑백에 가깝게)
+    id: 'ivory', name: 'Ivory', dark: false, swatch: '#FF3B30',
+    vars: {
+      '--bg-primary':    '#EFECE4',
+      '--bg-secondary':  '#F8F6F0',
+      '--bg-tertiary':   '#E3DFD3',
+      '--text-primary':  '#0A0A08',
+      '--text-secondary':'#4A4842',
+      '--text-muted':    '#8B887D',
+      '--border':                  'rgba(10,10,8,0.1)',
+      '--accent':        '#FF3B30',
+      '--sidebar-bg':    'rgba(239,236,228,0.94)',
+      // hover는 중립(흑백 위주 UI 유지), active/선택 상태만 레드로 포인트
+      '--hover-bg':      'rgba(10,10,8,0.045)',
+      '--active-bg':     'rgba(255,59,48,0.1)',
+      '--scrollbar-thumb':       'rgba(10,10,8,0.16)',
+      '--scrollbar-thumb-hover': 'rgba(10,10,8,0.28)',
+      '--cm-h1':  '#FF3B30',
+      '--cm-h2':  '#0A0A08',
+      '--cm-h3':  '#4A4842',
+      '--cm-strong':     '#0A0A08',
+      '--cm-em':         '#4A4842',
+      '--cm-formatting': '#B8B4A6',
+      '--cm-code-bg':    'rgba(10,10,8,0.06)',
+      '--cm-code-fg':    '#B3241B',
+      '--cm-activeline': 'rgba(255,59,48,0.04)',
+      '--cm-hr':         'rgba(10,10,8,0.14)',
+      '--font-editor':   '"Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    },
+  },
 ]
 
 export const DEFAULT_THEME_ID = 'dark'
