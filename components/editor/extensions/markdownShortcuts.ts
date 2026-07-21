@@ -36,11 +36,12 @@ function wrapSelection(open: string, close: string) {
   }
 }
 
-// Cmd/Ctrl + B / I / U 마크다운 단축키
+// Cmd/Ctrl + B / I / U / Shift+X 마크다운 단축키
 export const markdownShortcuts: KeyBinding[] = [
   { key: 'Mod-b', preventDefault: true, run: wrapSelection('**', '**') },
   { key: 'Mod-i', preventDefault: true, run: wrapSelection('*', '*') },
   { key: 'Mod-u', preventDefault: true, run: wrapSelection('<u>', '</u>') },
+  { key: 'Mod-Shift-x', preventDefault: true, run: wrapSelection('~~', '~~') },
 ]
 
 // ── <u>밑줄</u> 렌더 ────────────────────────────────────────────────────────
