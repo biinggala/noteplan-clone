@@ -136,9 +136,18 @@ function DailyNoteInner() {
       // 매번 옛 baseline과 비교돼 매번 "충돌"로 오판한다. 그 사이 다른 날짜로
       // 넘어갔다면(noteRef가 이미 다른 노트) 여기 적용하지 않음.
       if (noteRef.current?.id === n.id) {
-        setNote(prev => (prev && prev.id === n.id
-          ? { ...prev, content: saved.content, tags: saved.tags, mentions: saved.mentions, backlinks: saved.backlinks, updatedAt: saved.updatedAt }
-          : prev))
+        setNote(prev => {
+          if (!prev || prev.id !== n.id) return prev
+          // 저장이 서버를 왕복하는 동안(2초+네트워크) 사용자가 계속 타이핑했다면
+          // prev.content는 이미 n.content(저장 시점 스냅샷)보다 최신이다. 이때
+          // saved.content로 되돌리면 NoteEditor가 "완전히 다른 문서"로 보고
+          // 전체 교체 diff를 적용해 커서가 맨 위로 튕긴다 — updatedAt(충돌 판정
+          // baseline)만 갱신하고 content는 건드리지 않는다.
+          if (prev.content !== n.content) {
+            return { ...prev, updatedAt: saved.updatedAt }
+          }
+          return { ...prev, content: saved.content, tags: saved.tags, mentions: saved.mentions, backlinks: saved.backlinks, updatedAt: saved.updatedAt }
+        })
       }
       console.log('[Save] ✅', n.date, 'len=', saved.content.length)
     } catch (err) {
