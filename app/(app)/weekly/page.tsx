@@ -38,7 +38,7 @@ function WeeklyNoteInner() {
   const week = searchParams.get('week')
     ?? `${getWeekYear(new Date(), WK)}-W${getWeek(new Date(), WK).toString().padStart(2, '0')}`
   const { setActiveNote, updateNote } = useNoteStore()
-  const { setSelectedDate } = useCalendarStore()
+  const { setSelectedWeek } = useCalendarStore()
   const [note, setNote] = useState<Note | null>(null)
   const [isSaving, setIsSaving] = useState(false)
   const noteRef = useRef<Note | null>(null)
@@ -56,8 +56,8 @@ function WeeklyNoteInner() {
     : `${format(weekStart, 'MMM d, yyyy')} – ${format(weekEnd, 'MMM d, yyyy')}`
 
   useEffect(() => {
-    // Highlight the week's start (Sunday) in the mini-calendar when viewing a weekly note
-    setSelectedDate(format(weekStart, 'yyyy-MM-dd'))
+    // 미니 캘린더에서 이 주 '행 전체'를 강조 (예전엔 시작일 하루만 찍혀 헷갈렸음)
+    setSelectedWeek(week, weekStart)
     getOrCreateWeeklyNote(week).then(n => {
       // 예전 규칙(월~일)으로 자동 생성된 본문의 날짜 범위 줄을 교정.
       // "# Week N, YYYY" 바로 아래의 날짜 범위 형식 줄만 교체 (사용자 텍스트는 보존)
@@ -73,7 +73,7 @@ function WeeklyNoteInner() {
     })
   // weekStart/rangeLabel은 week에서 파생되므로 week만 의존 (weekStart는 매 렌더 새 객체라 넣으면 무한 루프)
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [week, setSelectedDate, setActiveNote])
+  }, [week, setSelectedWeek, setActiveNote])
 
   const handleChange = useCallback((content: string) => {
     if (!note) return

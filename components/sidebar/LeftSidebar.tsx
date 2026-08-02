@@ -12,6 +12,7 @@ import type { Note } from '@/types/note'
 import FolderTree from './FolderTree'
 import ThemePicker from '@/components/ThemePicker'
 import ImportModal from '@/components/import/ImportModal'
+import { routeForNote } from '@/lib/hooks/useWikiLink'
 import { getFolders, upsertNote } from '@/lib/db/noteRepository'
 import { extractTags, extractMentions } from '@/lib/parser/noteParser'
 import { v4 as uuidv4 } from 'uuid'
@@ -378,9 +379,7 @@ function TagsPanel({
   const noteIcon = (m: LineMatch) =>
     (m.noteType === 'daily' || m.noteType === 'weekly' || m.noteType === 'monthly') ? '📅' : '📄'
   const openMatch = (m: LineMatch) =>
-    m.noteType === 'daily' && m.date
-      ? router.push(`/daily?date=${m.date}`)
-      : router.push(`/notes?id=${m.noteId}`)
+    router.push(routeForNote({ type: m.noteType, id: m.noteId, date: m.date }))
 
   // 한 노드(+하위) 재귀 렌더
   const renderNode = (node: TagTreeNode, kind: 'tag' | 'mention', depth: number): React.ReactNode => {

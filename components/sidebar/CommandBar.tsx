@@ -3,6 +3,7 @@ import { useEffect, useState, useRef } from 'react'
 import { useRouter } from 'next/navigation'
 import { motion, AnimatePresence } from 'framer-motion'
 import { useUIStore } from '@/lib/stores/uiStore'
+import { routeForNote } from '@/lib/hooks/useWikiLink'
 import { searchNotes, getAllNotes } from '@/lib/db/noteRepository'
 import { format, addDays, subDays, parseISO, isValid } from 'date-fns'
 import type { Note } from '@/types/note'
@@ -96,11 +97,8 @@ export default function CommandBar() {
   }, [query])
 
   const handleSelect = (note: Note) => {
-    if (note.type === 'daily' && note.date) {
-      router.push(`/daily?date=${note.date}`)
-    } else {
-      router.push(`/notes?id=${note.id}`)
-    }
+    // 주간/월간 노트도 각자의 페이지로 보내야 미니 캘린더가 따라온다
+    router.push(routeForNote(note))
     setCommandBarOpen(false)
   }
 

@@ -23,7 +23,7 @@ const WK = { weekStartsOn: 0 as const, firstWeekContainsDate: 4 as const }
 
 export default function MiniCalendar() {
   const router = useRouter()
-  const { selectedDate, setSelectedDate, today, viewMonthDate: viewDate, setViewMonthDate: setViewDate } = useCalendarStore()
+  const { selectedDate, selectedWeek, setSelectedDate, today, viewMonthDate: viewDate, setViewMonthDate: setViewDate } = useCalendarStore()
 
   const { googleAccessToken, googleAuthError, googleRefreshToken, setGoogleAuthError } = useAuthStore()
   const {
@@ -195,15 +195,25 @@ export default function MiniCalendar() {
           const weekStart = week[0]   // 일요일
           const wk        = cwKey(weekStart)
           const cwNum     = getWeek(weekStart, WK).toString().padStart(2, '0')
+          // 주간 노트를 보는 중이면 그 주 행 전체를 강조 (하루만 찍히던 문제)
+          const isWeekSelected = selectedWeek === wk
 
           return (
-            <div key={wk} className="grid grid-cols-8">
+            <div
+              key={wk}
+              className="grid grid-cols-8 rounded-md transition-colors"
+              style={isWeekSelected
+                ? { backgroundColor: 'color-mix(in srgb, var(--accent) 16%, transparent)' }
+                : undefined}
+            >
               {/* CW week number */}
               <button
                 onClick={() => router.push(`/weekly?week=${wk}`)}
-                className="flex items-center justify-center text-[10px] font-semibold
-                           text-amber-500/60 hover:text-amber-400 hover:bg-amber-500/10
-                           rounded transition-colors"
+                className={`flex items-center justify-center text-[10px] font-semibold rounded transition-colors
+                  ${isWeekSelected
+                    ? ''
+                    : 'text-amber-500/60 hover:text-amber-400 hover:bg-amber-500/10'}`}
+                style={isWeekSelected ? { color: 'var(--accent)' } : undefined}
                 title={`Open weekly note ${wk}`}
               >
                 {cwNum}
@@ -213,7 +223,8 @@ export default function MiniCalendar() {
               {week.map(day => {
                 const dateStr        = format(day, 'yyyy-MM-dd')
                 const isCurrentMonth = isSameMonth(day, viewDate)
-                const isSelected     = isSameDay(day, selectedDateObj)
+                // 주 전체가 강조된 상태에선 개별 날짜 원형 강조를 끈다 (이중 강조 방지)
+                const isSelected     = !isWeekSelected && isSameDay(day, selectedDateObj)
                 const isTodayDay     = isToday(day)
                 const dayEvents = eventsByDate[dateStr] ?? []
                 const hasEvents = dayEvents.length > 0
