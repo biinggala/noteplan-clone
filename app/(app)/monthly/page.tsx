@@ -6,6 +6,8 @@ import { useNoteStore } from '@/lib/stores/noteStore'
 import { useCalendarStore } from '@/lib/stores/calendarStore'
 import { getOrCreateMonthlyNote, upsertNote } from '@/lib/db/noteRepository'
 import { extractTags, extractMentions, extractBacklinks } from '@/lib/parser/noteParser'
+import { useWikiLink } from '@/lib/hooks/useWikiLink'
+import BacklinksPanel from '@/components/editor/BacklinksPanel'
 import type { Note } from '@/types/note'
 import dynamic from 'next/dynamic'
 
@@ -28,6 +30,7 @@ function MonthlyNoteInner() {
   const [isSaving, setIsSaving] = useState(false)
   const noteRef = useRef<Note | null>(null)
   noteRef.current = note
+  const { linkTargets, openWikiLink } = useWikiLink()
 
   // 월 파싱
   const [yearStr, monthStr] = month.split('-')
@@ -119,8 +122,12 @@ function MonthlyNoteInner() {
           content={note.content}
           onChange={handleChange}
           onSave={handleSave}
+          onOpenWikiLink={openWikiLink}
+          linkTargets={linkTargets}
         />
       </div>
+
+      <BacklinksPanel title={note.title} noteId={note.id} />
     </div>
   )
 }

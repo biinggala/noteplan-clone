@@ -5,9 +5,11 @@ import { useNoteStore } from '@/lib/stores/noteStore'
 import { getNoteById, upsertNote } from '@/lib/db/noteRepository'
 import { extractTags, extractMentions, extractBacklinks } from '@/lib/parser/noteParser'
 import { useNoteRealtime } from '@/lib/hooks/useNoteRealtime'
+import { useWikiLink } from '@/lib/hooks/useWikiLink'
 import type { NoteRevision } from '@/lib/db/noteRepository'
 import type { Note } from '@/types/note'
 import HistoryIcon from '@/components/icons/HistoryIcon'
+import BacklinksPanel from '@/components/editor/BacklinksPanel'
 import dynamic from 'next/dynamic'
 
 const NoteEditor = dynamic(() => import('@/components/editor/NoteEditor'), { ssr: false })
@@ -29,6 +31,7 @@ function NoteInner() {
   const [showHistory, setShowHistory] = useState(false)
   const noteRef = useRef<Note | null>(null)
   noteRef.current = note
+  const { linkTargets, openWikiLink } = useWikiLink()
 
   // ── 실시간 동기화: 외부(MCP 등)가 이 노트를 고치면 즉시 반영 + 작성자 표시 ──
   const handleRemoteContent = useCallback((content: string) => {
@@ -163,8 +166,12 @@ function NoteInner() {
         <NoteEditor
           content={note.content}
           onChange={handleChange}
+          onOpenWikiLink={openWikiLink}
+          linkTargets={linkTargets}
         />
       </div>
+
+      <BacklinksPanel title={note.title} noteId={note.id} />
 
       {showHistory && (
         <NoteHistoryPanel

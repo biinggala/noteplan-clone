@@ -16,18 +16,30 @@ import { dragHandleExtension } from './extensions/dragHandle'
 import { hrRuleExtension } from './extensions/hrRule'
 import { markdownShortcuts, underlineExtension } from './extensions/markdownShortcuts'
 import { hangingIndentExtension } from './extensions/hangingIndent'
+import { wikiLinkCompleteExtension } from './extensions/wikiLinkComplete'
+import type { LinkTarget } from '@/lib/db/noteRepository'
 
 interface NoteEditorProps {
   content: string
   onChange: (content: string) => void
   onSave?: () => void
+  /** [[링크]] 클릭 시 해당 제목의 노트로 이동 */
+  onOpenWikiLink?: (title: string) => void
+  /** [[ 자동완성 후보 (노트 제목 목록) */
+  linkTargets?: LinkTarget[]
 }
 
-export default function NoteEditor({ content, onChange, onSave }: NoteEditorProps) {
+export default function NoteEditor({ content, onChange, onSave, onOpenWikiLink, linkTargets }: NoteEditorProps) {
   const containerRef = useRef<HTMLDivElement>(null)
   const viewRef = useRef<EditorView | null>(null)
   const onChangeRef = useRef(onChange)
   onChangeRef.current = onChange
+  // 에디터는 최초 1회만 생성되므로(아래 useEffect deps=[]), 이후 갱신되는 값들은
+  // ref를 통해 읽어야 stale closure를 피할 수 있다.
+  const onOpenWikiLinkRef = useRef(onOpenWikiLink)
+  onOpenWikiLinkRef.current = onOpenWikiLink
+  const linkTargetsRef = useRef<LinkTarget[]>(linkTargets ?? [])
+  linkTargetsRef.current = linkTargets ?? []
 
   useEffect(() => {
     if (!containerRef.current) return
@@ -65,7 +77,8 @@ export default function NoteEditor({ content, onChange, onSave }: NoteEditorProp
         taskLineStyleExtension(),
         taskCheckboxExtension(),
         tagMentionExtension(),
-        wikiLinkExtension(),
+        ...wikiLinkExtension(title => onOpenWikiLinkRef.current?.(title)),
+        wikiLinkCompleteExtension(() => linkTargetsRef.current),
         scheduleDateExtension(),
         ...inputRulesExtension(),
         ...markdownWYSIWYGExtension(),

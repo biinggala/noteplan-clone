@@ -74,16 +74,25 @@ export function parseTasks(content: string, noteId: string): Task[] {
   return tasks
 }
 
+/**
+ * 한글 유니코드 정규화(NFC).
+ * macOS 파일명은 자모 분해형(NFD)이라 "비주얼"이 눈엔 같아도 바이트가 달라
+ * 제목 매칭이 실패한다. 태그/멘션/백링크는 전부 매칭 키로 쓰이므로 NFC로 통일한다.
+ */
+export function normalizeKey(s: string): string {
+  return s.normalize('NFC')
+}
+
 export function extractTags(content: string): string[] {
-  return [...new Set([...maskLinks(content).matchAll(TAG_PATTERN)].map(m => m[1]))]
+  return [...new Set([...maskLinks(content).matchAll(TAG_PATTERN)].map(m => normalizeKey(m[1])))]
 }
 
 export function extractMentions(content: string): string[] {
-  return [...new Set([...maskLinks(content).matchAll(MENTION_PATTERN)].map(m => m[1]))]
+  return [...new Set([...maskLinks(content).matchAll(MENTION_PATTERN)].map(m => normalizeKey(m[1])))]
 }
 
 export function extractBacklinks(content: string): string[] {
-  return [...new Set([...content.matchAll(WIKILINK_PATTERN)].map(m => m[1]))]
+  return [...new Set([...content.matchAll(WIKILINK_PATTERN)].map(m => normalizeKey(m[1].trim())))]
 }
 
 export function toggleTaskStatus(

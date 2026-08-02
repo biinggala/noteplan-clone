@@ -5,6 +5,7 @@ import { format, addDays, startOfWeek, endOfWeek } from 'date-fns'
 const WK = { weekStartsOn: 0 as const, firstWeekContainsDate: 4 as const }
 import { v4 as uuidv4 } from 'uuid'
 import { createClient } from '@/lib/supabase/client'
+import { normalizeKey } from '@/lib/parser/noteParser'
 
 // ── Supabase row → Note 변환 ─────────────────────────────────────────────────
 
@@ -203,6 +204,76 @@ export async function getNotesByMention(mention: string): Promise<Note[]> {
     .contains('mentions', [mention])
     .order('updated_at', { ascending: false })
   return (data ?? []).map(rowToNote)
+}
+
+// ── 위키링크 / 백링크 (제텔카스텐) ─────────────────────────────────────────
+
+/** 앞머리 이모지/기호를 떼어낸 비교용 제목 (NotePlan은 "🎲 조선 검시관"을 [[조선 검시관]]으로 링크) */
+function bareTitle(s: string): string {
+  return s.replace(/^[^\p{L}\p{N}]+/u, '').trim().toLowerCase()
+}
+
+/**
+ * 제목으로 노트 찾기. 위키링크 해석용이라 아래 순서로 관대하게 매칭한다.
+ *   1) 제목 완전일치  2) 파일명 일치  3) 이모지 접두어 뗀 제목 일치
+ * 한글 NFC/NFD 차이는 normalizeKey로 흡수.
+ */
+export async function getNoteByTitle(title: string): Promise<Note | undefined> {
+  const supabase = createClient()
+  const userId = await getUserId()
+  const want = normalizeKey(title).trim()
+  const wantLower = want.toLowerCase()
+
+  const { data } = await supabase
+    .from('notes')
+    .select('*')
+    .eq('user_id', userId)
+    .order('updated_at', { ascending: false })
+  const rows = (data ?? []).map(rowToNote)
+
+  const exact = rows.find(n => normalizeKey(n.title).trim().toLowerCase() === wantLower)
+  if (exact) return exact
+
+  const byFile = rows.find(n => {
+    const base = normalizeKey(n.filePath ?? '').split('/').pop()?.replace(/\.md$/, '') ?? ''
+    return base.toLowerCase() === wantLower
+  })
+  if (byFile) return byFile
+
+  return rows.find(n => bareTitle(normalizeKey(n.title)) === bareTitle(want))
+}
+
+/** 이 노트(title)를 [[위키링크]]로 참조하는 노트들 — Obsidian의 "Linked mentions" */
+export async function getBacklinks(title: string): Promise<Note[]> {
+  const supabase = createClient()
+  const userId = await getUserId()
+  const { data } = await supabase
+    .from('notes')
+    .select('*')
+    .eq('user_id', userId)
+    .contains('backlinks', [normalizeKey(title).trim()])
+    .order('updated_at', { ascending: false })
+  return (data ?? []).map(rowToNote)
+}
+
+export interface LinkTarget { id: string; title: string; type: NoteType; folder?: string }
+
+/** [[ 자동완성용 경량 목록 (content 제외) */
+export async function getLinkTargets(): Promise<LinkTarget[]> {
+  const supabase = createClient()
+  const userId = await getUserId()
+  const { data } = await supabase
+    .from('notes')
+    .select('id,title,type,folder')
+    .eq('user_id', userId)
+    .order('updated_at', { ascending: false })
+    .limit(1000)
+  return (data ?? []).map(r => ({
+    id: r.id as string,
+    title: r.title as string,
+    type: r.type as NoteType,
+    folder: (r.folder as string) ?? undefined,
+  }))
 }
 
 /** folder가 null인 노트 (미분류) */

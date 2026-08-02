@@ -12,10 +12,12 @@ import { useTimeBlockStore } from '@/lib/stores/timeBlockStore'
 import { useLineUpdateStore } from '@/lib/stores/lineUpdateStore'
 import { useTaskDotStore, hasOpenTask } from '@/lib/stores/taskDotStore'
 import { useNoteRealtime } from '@/lib/hooks/useNoteRealtime'
+import { useWikiLink } from '@/lib/hooks/useWikiLink'
 import type { NoteRevision } from '@/lib/db/noteRepository'
 import type { Note } from '@/types/note'
 import HistoryIcon from '@/components/icons/HistoryIcon'
 import TaskOutlinePanel from '@/components/editor/TaskOutlinePanel'
+import BacklinksPanel from '@/components/editor/BacklinksPanel'
 import dynamic from 'next/dynamic'
 
 const NoteEditor = dynamic(() => import('@/components/editor/NoteEditor'), { ssr: false })
@@ -45,6 +47,7 @@ function DailyNoteInner() {
   const [isSaving, setIsSaving]   = useState(false)
   const [saveError, setSaveError] = useState<string | null>(null)
   const [showHistory, setShowHistory] = useState(false)
+  const { linkTargets, openWikiLink } = useWikiLink()
 
   // 항상 최신 note를 가리키는 ref — effect cleanup에서 사용
   const noteRef = useRef<Note | null>(null)
@@ -308,8 +311,12 @@ function DailyNoteInner() {
           content={note.content}
           onChange={handleChange}
           onSave={handleSave}
+          onOpenWikiLink={openWikiLink}
+          linkTargets={linkTargets}
         />
       </div>
+
+      <BacklinksPanel title={note.title} noteId={note.id} />
 
       {showHistory && (
         <NoteHistoryPanel
