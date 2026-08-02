@@ -82,6 +82,56 @@ export const noteplanTheme = [
     '.cm-line.cm-setext-header span.cm-wikilink': { color: '#34d399 !important' },
     '.cm-scroller': { overflow: 'auto' },
     '&.cm-focused': { outline: 'none' },
+
+    // ── [[ 자동완성 드롭다운 ────────────────────────────────────────────
+    // CodeMirror 기본 스타일(흰 배경 + 시스템 폰트)이 테마와 전혀 안 맞아서 새로 입힘
+    '.cm-tooltip.cm-tooltip-autocomplete': {
+      backgroundColor: 'var(--bg-secondary)',
+      border: '1px solid var(--border)',
+      borderRadius: '10px',
+      boxShadow: '0 12px 32px rgba(0,0,0,0.28)',
+      overflow: 'hidden',
+      padding: '4px',
+      marginTop: '4px',
+    },
+    '.cm-tooltip.cm-tooltip-autocomplete > ul': {
+      fontFamily: 'var(--font-editor)',
+      fontSize: '13px',
+      maxHeight: '18em',
+      margin: '0',
+    },
+    '.cm-tooltip.cm-tooltip-autocomplete > ul > li': {
+      display: 'flex',
+      alignItems: 'baseline',
+      gap: '8px',
+      padding: '6px 10px',
+      borderRadius: '6px',
+      lineHeight: '1.4',
+      color: 'var(--text-primary)',
+    },
+    '.cm-tooltip.cm-tooltip-autocomplete > ul > li[aria-selected]': {
+      backgroundColor: 'color-mix(in srgb, var(--accent) 20%, transparent)',
+      color: 'var(--accent)',
+    },
+    '.cm-completionLabel': { flex: '1 1 auto', minWidth: '0' },
+    // 입력한 글자와 일치하는 부분 강조
+    '.cm-completionMatchedText': {
+      textDecoration: 'none',
+      fontWeight: '700',
+      color: 'var(--accent)',
+    },
+    'li[aria-selected] .cm-completionMatchedText': { color: 'inherit' },
+    // 폴더 경로 / 피참조 수(↩N)
+    '.cm-completionDetail': {
+      flex: '0 0 auto',
+      fontStyle: 'normal',
+      fontSize: '11px',
+      opacity: '0.6',
+      maxWidth: '45%',
+      overflow: 'hidden',
+      textOverflow: 'ellipsis',
+      whiteSpace: 'nowrap',
+    },
   }),
 
   syntaxHighlighting(

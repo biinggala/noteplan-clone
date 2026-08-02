@@ -88,24 +88,33 @@ export default function BacklinksPanel({ title, noteId }: BacklinksPanelProps) {
       </button>
 
       {!collapsed && (
-        <div className="px-3 pb-2.5 space-y-2">
+        <div className="px-2 pb-2 space-y-1">
           {refs.map(({ note, lines }) => (
-            <div key={note.id}>
-              <button
-                onClick={() => router.push(routeForNote(note))}
-                className="text-sm font-semibold hover:underline"
-                style={{ color: 'var(--accent)' }}
-              >
-                {refLabel(note)}
-              </button>
-              <div className="pl-3 mt-0.5 space-y-0.5 border-l-2 border-[var(--border)]">
+            // 카드 전체가 클릭 대상 — 발췌 문장을 눌러도 그 노트로 이동
+            <button
+              key={note.id}
+              onClick={() => router.push(routeForNote(note))}
+              className="w-full text-left px-2.5 py-2 rounded-md hover:bg-[var(--hover-bg)] transition-colors"
+            >
+              <div className="flex items-center gap-1.5">
+                <span className="text-[11px] opacity-50">
+                  {note.type === 'project' ? '📄' : '📅'}
+                </span>
+                <span className="text-[13px] font-semibold truncate" style={{ color: 'var(--accent)' }}>
+                  {refLabel(note)}
+                </span>
+                {note.folder && (
+                  <span className="text-[10px] text-[var(--text-muted)] truncate">{note.folder}</span>
+                )}
+              </div>
+              <div className="mt-1 pl-2 space-y-0.5 border-l-2 border-[var(--border)]">
                 {lines.map((l, i) => (
-                  <div key={i} className="text-sm text-[var(--text-secondary)] break-words">
+                  <div key={i} className="text-[13px] leading-snug text-[var(--text-secondary)] break-words">
                     {renderLine(l, title)}
                   </div>
                 ))}
               </div>
-            </div>
+            </button>
           ))}
         </div>
       )}

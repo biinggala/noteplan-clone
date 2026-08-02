@@ -51,13 +51,18 @@ export function wikiLinkExtension(onOpen?: (title: string) => void) {
   )
 
   // 링크 클릭 → 해당 노트로 이동.
-  // target의 class를 보는 대신 좌표→문서위치로 판정한다. CodeMirror가 문법
-  // 하이라이팅 때문에 mark를 여러 span으로 쪼갤 수 있어, class 검사만으로는
-  // 링크 중간을 눌렀을 때 놓치는 경우가 있음.
+  //
+  // 좌표→문서위치(posAtCoords)만으로 판정하면 안 된다. 줄 오른쪽 빈 여백이나
+  // 문단 아래를 클릭해도 "가장 가까운" 위치(= 줄 끝)를 돌려주기 때문에,
+  // 줄이 [[링크]]로 끝나면 엉뚱한 빈 공간 클릭에도 이동해버린다.
+  // 그래서 실제로 링크 span 위를 눌렀는지(DOM)부터 확인한 뒤,
+  // 어떤 링크인지는 위치로 특정한다(마크가 여러 span으로 쪼개져도 안전).
   const clickHandler = EditorView.domEventHandlers({
     mousedown(event, view) {
       if (!onOpen) return false
       if (event.button !== 0) return false
+      const el = event.target as HTMLElement | null
+      if (!el?.closest?.('.cm-wikilink')) return false
       const pos = view.posAtCoords({ x: event.clientX, y: event.clientY })
       if (pos == null) return false
       const title = linkAt(view, pos)
