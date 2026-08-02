@@ -256,24 +256,44 @@ export async function getBacklinks(title: string): Promise<Note[]> {
   return (data ?? []).map(rowToNote)
 }
 
-export interface LinkTarget { id: string; title: string; type: NoteType; folder?: string }
+export interface LinkTarget {
+  id: string; title: string; type: NoteType; folder?: string
+  updatedAt: number
+  /** 이 노트가 [[링크]]로 참조된 횟수 — 제텔카스텐의 '허브 노트'를 위로 올리는 데 사용 */
+  inbound: number
+}
 
-/** [[ 자동완성용 경량 목록 (content 제외) */
+/** [[ 자동완성용 경량 목록 (content 제외) + 피참조 수 집계 */
 export async function getLinkTargets(): Promise<LinkTarget[]> {
   const supabase = createClient()
   const userId = await getUserId()
   const { data } = await supabase
     .from('notes')
-    .select('id,title,type,folder')
+    .select('id,title,type,folder,updated_at,backlinks')
     .eq('user_id', userId)
-    .order('updated_at', { ascending: false })
-    .limit(1000)
-  return (data ?? []).map(r => ({
-    id: r.id as string,
-    title: r.title as string,
-    type: r.type as NoteType,
-    folder: (r.folder as string) ?? undefined,
-  }))
+    .limit(2000)
+  const rows = data ?? []
+
+  // 전체 노트의 backlinks를 모아 "제목 → 피참조 횟수" 집계
+  const inboundBy = new Map<string, number>()
+  for (const r of rows) {
+    for (const t of ((r.backlinks as string[]) ?? [])) {
+      const k = normalizeKey(t).trim().toLowerCase()
+      inboundBy.set(k, (inboundBy.get(k) ?? 0) + 1)
+    }
+  }
+
+  return rows.map(r => {
+    const title = r.title as string
+    return {
+      id: r.id as string,
+      title,
+      type: r.type as NoteType,
+      folder: (r.folder as string) ?? undefined,
+      updatedAt: (r.updated_at as number) ?? 0,
+      inbound: inboundBy.get(normalizeKey(title).trim().toLowerCase()) ?? 0,
+    }
+  })
 }
 
 /** folder가 null인 노트 (미분류) */

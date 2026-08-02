@@ -1,5 +1,6 @@
 import { autocompletion, type CompletionContext, type CompletionResult } from '@codemirror/autocomplete'
 import type { LinkTarget } from '@/lib/db/noteRepository'
+import { rankLinkTargets } from '@/lib/parser/linkRanking'
 
 const TYPE_LABEL: Record<string, string> = {
   daily: '데일리', weekly: '주간', monthly: '월간', yearly: '연간', project: '노트',
@@ -19,19 +20,13 @@ export function wikiLinkCompleteExtension(getTargets: () => LinkTarget[]) {
     if (typed.includes(']')) return null           // 이미 닫힌 링크
     if (!ctx.explicit && typed.length === 0 && !before.endsWith('[[')) return null
 
-    const q = typed.toLowerCase()
-    const seen = new Set<string>()
-    const options = getTargets()
-      .filter(t => {
-        if (!t.title || seen.has(t.title)) return false
-        if (q && !t.title.toLowerCase().includes(q)) return false
-        seen.add(t.title)
-        return true
-      })
-      .slice(0, 30)
+    // 랭킹: 접두어 일치 > 부분일치, 피참조(허브) 가중, 캘린더 노트 감점
+    const options = rankLinkTargets(getTargets(), typed)
       .map(t => ({
         label: t.title,
-        detail: t.folder ?? TYPE_LABEL[t.type] ?? t.type,
+        detail: t.inbound > 0
+          ? `${t.folder ?? TYPE_LABEL[t.type] ?? t.type} · ↩${t.inbound}`
+          : (t.folder ?? TYPE_LABEL[t.type] ?? t.type),
         // 선택 시 "[[제목]]" 으로 완성 (여는 괄호부터 교체)
         apply: (view: import('@codemirror/view').EditorView, _c: unknown, from: number, to: number) => {
           view.dispatch({

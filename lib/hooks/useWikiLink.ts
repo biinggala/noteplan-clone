@@ -56,7 +56,10 @@ export function useWikiLink() {
       createdAt: Date.now(), updatedAt: Date.now(),
     }
     await upsertNote(note)
-    setLinkTargets(prev => [{ id: note.id, title, type: 'project' }, ...prev])
+    setLinkTargets(prev => [
+      { id: note.id, title, type: 'project', updatedAt: note.updatedAt, inbound: 0 },
+      ...prev,
+    ])
     router.push(`/notes?id=${note.id}`)
   }, [router])
 
