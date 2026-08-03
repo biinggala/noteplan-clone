@@ -81,7 +81,9 @@ export function tagMentionCompletionSource(
       filter: false,   // 위에서 한글/계층까지 직접 랭킹함
       options: scored.map(({ f }) => ({
         label: sigil + f.value,
-        detail: f.uses > 0 ? `${f.uses}` : undefined,
+        // 직접 쓰인 적 없는 상위 경로는 사용 횟수 대신 하위 개수를 보여준다
+        // (숫자만 비어 있으면 "이건 왜 떴지?" 싶으므로)
+        detail: f.isPrefix ? `하위 ${f.children ?? 0}` : `${f.uses}`,
         apply: (view: EditorView, _c: unknown, from: number, to: number) => {
           view.dispatch({
             changes: { from, to, insert: sigil + f.value },

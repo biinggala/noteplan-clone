@@ -362,12 +362,21 @@ export interface FacetItem {
   /** '#'/'@' 없는 알맹이. 계층은 슬래시로 (예: 'crng/이연주') */
   value: string
   uses: number
+  /** 직접 쓰인 적은 없고 하위 항목의 상위 경로로만 존재 (예: 'crng/이연주'의 'crng') */
+  isPrefix?: boolean
+  /** 이 값을 접두어로 갖는 하위 항목 수 */
+  children?: number
 }
 
 /**
  * #태그 / @멘션 자동완성 후보 — 이미 쓰인 값들을 사용 횟수와 함께 모은다.
- * 중간 노드(예: 'crng/이연주'만 있고 'crng'는 없는 경우)도 만들어 넣어
- * '@cr' 로도 상위를 고를 수 있게 한다.
+ *
+ * - 대소문자만 다른 표기는 하나로 합친다. 많이 쓴 표기를 대표로 삼는다
+ *   (#Journal/travel 47 vs #journal/travel 1 처럼 갈려 있으면 둘 다 뜨는 게
+ *   더 헷갈리므로).
+ * - 중간 노드(예: 'crng/이연주'만 있고 'crng'는 없는 경우)도 만들어 넣어
+ *   '@cr' 로도 상위를 고를 수 있게 한다. 이 항목은 isPrefix로 표시해
+ *   실제로 쓰인 태그와 구분되게 한다.
  */
 export async function getTagMentionFacets(): Promise<{ tags: FacetItem[]; mentions: FacetItem[] }> {
   const supabase = createClient()
@@ -375,36 +384,44 @@ export async function getTagMentionFacets(): Promise<{ tags: FacetItem[]; mentio
   const { data } = await supabase
     .from('notes').select('tags,mentions').eq('user_id', userId).limit(5000)
 
-  const tally = (lists: unknown): Map<string, number> => {
-    const counts = new Map<string, number>()
+  interface Acc { uses: number; variants: Map<string, number> }
+
+  const bump = (acc: Map<string, Acc>, value: string, n: number) => {
+    const key = value.toLowerCase()
+    const cur = acc.get(key) ?? { uses: 0, variants: new Map() }
+    cur.uses += n
+    if (n > 0) cur.variants.set(value, (cur.variants.get(value) ?? 0) + n)
+    acc.set(key, cur)
+  }
+
+  const tally = (acc: Map<string, Acc>, lists: unknown) => {
     for (const raw of (lists as string[]) ?? []) {
       const v = normalizeKey(raw).trim().replace(/^[#@]/, '').replace(/\/+$/, '')
       if (!v) continue
-      counts.set(v, (counts.get(v) ?? 0) + 1)
-      // 상위 경로도 후보로 (사용 횟수는 세지 않고 존재만 보장)
+      bump(acc, v, 1)
+      // 상위 경로는 존재만 보장 (사용 횟수 0)
       const parts = v.split('/')
-      for (let i = 1; i < parts.length; i++) {
-        const parent = parts.slice(0, i).join('/')
-        if (!counts.has(parent)) counts.set(parent, 0)
-      }
+      for (let i = 1; i < parts.length; i++) bump(acc, parts.slice(0, i).join('/'), 0)
     }
-    return counts
   }
 
-  const merge = (target: Map<string, number>, src: Map<string, number>) => {
-    for (const [k, v] of src) target.set(k, (target.get(k) ?? 0) + v)
-    return target
-  }
-
-  const tags = new Map<string, number>()
-  const mentions = new Map<string, number>()
+  const tags = new Map<string, Acc>()
+  const mentions = new Map<string, Acc>()
   for (const row of data ?? []) {
-    merge(tags, tally(row.tags))
-    merge(mentions, tally(row.mentions))
+    tally(tags, row.tags)
+    tally(mentions, row.mentions)
   }
 
-  const toList = (m: Map<string, number>): FacetItem[] =>
-    [...m].map(([value, uses]) => ({ value, uses })).sort((a, b) => b.uses - a.uses)
+  const toList = (acc: Map<string, Acc>): FacetItem[] => {
+    const keys = [...acc.keys()]
+    return keys.map(key => {
+      const { uses, variants } = acc.get(key)!
+      // 대표 표기: 가장 많이 쓴 것 (동률이면 사전순으로 안정적이게)
+      const value = [...variants].sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))[0]?.[0] ?? key
+      const children = keys.filter(k => k.startsWith(key + '/')).length
+      return { value, uses, children, ...(uses === 0 ? { isPrefix: true } : {}) }
+    }).sort((a, b) => b.uses - a.uses)
+  }
 
   return { tags: toList(tags), mentions: toList(mentions) }
 }
