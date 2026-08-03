@@ -2,37 +2,28 @@
 /**
  * NotePlan MCP server
  * Claude(데스크톱/Code)에 내 노트(Supabase)를 검색·조회·연결·작성하는 도구로 노출.
- * 로컬 전용: service_role 키 + 내 user_id 로 동작 (앱 번들과 무관).
+ *
+ * service_role 키를 쓰지 않는다. service_role은 RLS를 완전히 우회하는
+ * 프로젝트 전체 마스터키라, 이 서버를 지인에게 공유하면 그 키를 가진
+ * 사람이 (코드를 안 봐도) 다른 사용자의 노트까지 볼 수 있게 된다.
+ *
+ * 대신 `npm run login` 으로 (앱과 같은) 자기 Google 계정 세션을 로컬에 저장하고,
+ * 그 세션으로 접속한다. 이러면 Postgres RLS(`auth.uid() = user_id`)가 모든
+ * 쿼리를 자동으로 자기 자신의 행에만 묶는다 — 코드가 필터를 빼먹어도 DB가 막는다.
+ * 친구가 이 저장소를 그대로 clone해서 `npm run login` 만 하면 자기 노트만
+ * 보는 자기 전용 서버가 된다.
  */
-import { readFileSync } from 'node:fs'
-import { fileURLToPath } from 'node:url'
-import { dirname, join } from 'node:path'
 import { randomUUID } from 'node:crypto'
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js'
-import { createClient } from '@supabase/supabase-js'
 import { z } from 'zod'
 import { derive, countOccurrences, replaceLiteral } from './derive.js'
+import { getAuthedClient } from './supabase.js'
 
-// ── .env 로드 (패키지 루트) ──────────────────────────────────────────────────
-const here = dirname(fileURLToPath(import.meta.url))
-try {
-  const envText = readFileSync(join(here, '..', '.env'), 'utf8')
-  for (const line of envText.split('\n')) {
-    const m = line.match(/^\s*([A-Z0-9_]+)\s*=\s*(.*)\s*$/)
-    if (m && !process.env[m[1]]) process.env[m[1]] = m[2].replace(/^["']|["']$/g, '')
-  }
-} catch { /* .env 없으면 process.env 사용 */ }
-
-const SUPABASE_URL = process.env.SUPABASE_URL
-const SERVICE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY
-const USER_ID = process.env.NOTEPLAN_USER_ID
-if (!SUPABASE_URL || !SERVICE_KEY || !USER_ID) {
-  console.error('[noteplan-mcp] SUPABASE_URL / SUPABASE_SERVICE_ROLE_KEY / NOTEPLAN_USER_ID 필요 (.env 확인)')
+const { db, userId: USER_ID } = await getAuthedClient().catch((e: unknown) => {
+  console.error('[noteplan-mcp]', e instanceof Error ? e.message : e)
   process.exit(1)
-}
-
-const db = createClient(SUPABASE_URL, SERVICE_KEY, { auth: { persistSession: false } })
+})
 
 // ── 헬퍼 ─────────────────────────────────────────────────────────────────────
 interface Row {
