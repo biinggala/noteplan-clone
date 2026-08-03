@@ -12,6 +12,7 @@ import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js'
 import { createClient } from '@supabase/supabase-js'
 import { z } from 'zod'
+import { derive, countOccurrences, replaceLiteral } from './derive.js'
 
 // ── .env 로드 (패키지 루트) ──────────────────────────────────────────────────
 const here = dirname(fileURLToPath(import.meta.url))
@@ -184,10 +185,11 @@ server.tool(
   async ({ title, content, folder }) => {
     const now = Date.now()
     const filePath = folder ? `Notes/${folder}/${title}.md` : `Notes/${title}.md`
+    const body = tagged(content ?? `# ${title}\n\n`)
     const row = {
       id: randomUUID(), user_id: USER_ID, type: 'project', title,
-      content: tagged(content ?? `# ${title}\n\n`), date: null, file_path: filePath,
-      folder: folder ?? null, tags: [], mentions: [], backlinks: [],
+      content: body, date: null, file_path: filePath,
+      folder: folder ?? null, ...derive(body),
       created_at: now, updated_at: now,
     }
     const { error } = await db.from('notes').insert(row)
@@ -209,10 +211,73 @@ server.tool(
     const newContent = `${r.content.replace(/\s+$/, '')}\n${tagged(body)}\n`
     await broadcastTyping(id, true)
     const { error: e2 } = await db.from('notes')
-      .update({ content: newContent, updated_at: Date.now() }).eq('id', id).eq('user_id', USER_ID)
+      .update({ content: newContent, ...derive(newContent), updated_at: Date.now() })
+      .eq('id', id).eq('user_id', USER_ID)
     await broadcastTyping(id, false)
     if (e2) return fail(e2.message)
     return text(`추가됨 → "${r.title}"`)
+  },
+)
+
+// 기존 내용 수정 (덧붙이기가 아니라 고치기)
+server.tool(
+  'update_note',
+  `노트 본문 수정. 두 가지 방식:
+  • find + replace (권장) — 그 부분만 정확히 바꾼다. 원자로 승격처럼 한 줄을
+    [[링크]]로 갈아끼울 때 쓴다. find가 없거나 여러 번 나오면 실패한다(오작동 방지).
+  • content — 본문 전체 교체. 사용자가 편집 중이면 그 편집을 덮어쓸 수 있으니
+    되도록 find/replace를 쓸 것.
+  append_to_note와 달리 #claude 태그를 붙이지 않는다(본문 중간을 고치는 거라).`,
+  {
+    id: z.string(),
+    find: z.string().optional().describe('바꿀 대상 (리터럴, 정규식 아님)'),
+    replace: z.string().optional().describe('바꿀 내용. 빈 문자열이면 삭제'),
+    content: z.string().optional().describe('본문 전체 교체'),
+    all: z.boolean().optional().describe('find가 여러 번 나올 때 전부 바꾸려면 true'),
+  },
+  async ({ id, find, replace, content, all }) => {
+    const findMode = find !== undefined
+    if (findMode === (content !== undefined)) {
+      return fail('find+replace 또는 content 중 하나만 지정해야 합니다')
+    }
+    if (findMode && replace === undefined) return fail('find를 쓰면 replace도 필요합니다')
+
+    const { data, error } = await base().eq('id', id).limit(1).maybeSingle()
+    if (error) return fail(error.message)
+    if (!data) return fail('노트 없음')
+    const r = data as Row
+
+    let newContent: string
+    let summary: string
+    if (findMode) {
+      const hits = countOccurrences(r.content, find!)
+      if (hits === 0) {
+        return fail(`"${find!.slice(0, 60)}" 를 "${r.title}" 본문에서 찾지 못했습니다. ` +
+          `get_note로 현재 내용을 확인하세요 (공백·줄바꿈까지 정확히 일치해야 합니다).`)
+      }
+      if (hits > 1 && !all) {
+        return fail(`"${find!.slice(0, 40)}" 가 ${hits}번 나옵니다. ` +
+          `더 긴 문맥을 주거나 all:true 로 전부 바꾸세요.`)
+      }
+      newContent = replaceLiteral(r.content, find!, replace!, !!all)
+      summary = all && hits > 1 ? `${hits}곳 수정됨` : '1곳 수정됨'
+    } else {
+      newContent = content!
+      summary = '본문 전체 교체됨'
+    }
+
+    if (newContent === r.content) return text(`변경 없음 → "${r.title}"`)
+
+    // 파생값(tags/mentions/backlinks)을 다시 계산한다.
+    // 안 하면 사이드바 태그 목록과 백링크 패널에서 노트가 사라진다.
+    const d = derive(newContent)
+    await broadcastTyping(id, true)
+    const { error: e2 } = await db.from('notes')
+      .update({ content: newContent, ...d, updated_at: Date.now() })
+      .eq('id', id).eq('user_id', USER_ID)
+    await broadcastTyping(id, false)
+    if (e2) return fail(e2.message)
+    return text(`${summary} → "${r.title}" (id:${id})`)
   },
 )
 
@@ -231,15 +296,17 @@ server.tool(
       const newContent = `${r.content.replace(/\s+$/, '')}\n${tagged(body)}\n`
       await broadcastTyping(r.id, true)
       const { error } = await db.from('notes')
-        .update({ content: newContent, updated_at: now }).eq('id', r.id).eq('user_id', USER_ID)
+        .update({ content: newContent, ...derive(newContent), updated_at: now })
+        .eq('id', r.id).eq('user_id', USER_ID)
       await broadcastTyping(r.id, false)
       if (error) return fail(error.message)
       return text(`${d} 데일리 노트에 추가됨`)
     }
+    const dailyBody = `${tagged(body)}\n`
     const row = {
       id: randomUUID(), user_id: USER_ID, type: 'daily', title: d,
-      content: `${tagged(body)}\n`, date: d, file_path: `Calendar/${ymd}.md`,
-      folder: null, tags: [], mentions: [], backlinks: [], created_at: now, updated_at: now,
+      content: dailyBody, date: d, file_path: `Calendar/${ymd}.md`,
+      folder: null, ...derive(dailyBody), created_at: now, updated_at: now,
     }
     const { error } = await db.from('notes').insert(row)
     if (error) return fail(error.message)
