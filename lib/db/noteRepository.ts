@@ -358,6 +358,57 @@ export async function getLinkTargets(): Promise<LinkTarget[]> {
   })
 }
 
+export interface FacetItem {
+  /** '#'/'@' 없는 알맹이. 계층은 슬래시로 (예: 'crng/이연주') */
+  value: string
+  uses: number
+}
+
+/**
+ * #태그 / @멘션 자동완성 후보 — 이미 쓰인 값들을 사용 횟수와 함께 모은다.
+ * 중간 노드(예: 'crng/이연주'만 있고 'crng'는 없는 경우)도 만들어 넣어
+ * '@cr' 로도 상위를 고를 수 있게 한다.
+ */
+export async function getTagMentionFacets(): Promise<{ tags: FacetItem[]; mentions: FacetItem[] }> {
+  const supabase = createClient()
+  const userId = await getUserId()
+  const { data } = await supabase
+    .from('notes').select('tags,mentions').eq('user_id', userId).limit(5000)
+
+  const tally = (lists: unknown): Map<string, number> => {
+    const counts = new Map<string, number>()
+    for (const raw of (lists as string[]) ?? []) {
+      const v = normalizeKey(raw).trim().replace(/^[#@]/, '').replace(/\/+$/, '')
+      if (!v) continue
+      counts.set(v, (counts.get(v) ?? 0) + 1)
+      // 상위 경로도 후보로 (사용 횟수는 세지 않고 존재만 보장)
+      const parts = v.split('/')
+      for (let i = 1; i < parts.length; i++) {
+        const parent = parts.slice(0, i).join('/')
+        if (!counts.has(parent)) counts.set(parent, 0)
+      }
+    }
+    return counts
+  }
+
+  const merge = (target: Map<string, number>, src: Map<string, number>) => {
+    for (const [k, v] of src) target.set(k, (target.get(k) ?? 0) + v)
+    return target
+  }
+
+  const tags = new Map<string, number>()
+  const mentions = new Map<string, number>()
+  for (const row of data ?? []) {
+    merge(tags, tally(row.tags))
+    merge(mentions, tally(row.mentions))
+  }
+
+  const toList = (m: Map<string, number>): FacetItem[] =>
+    [...m].map(([value, uses]) => ({ value, uses })).sort((a, b) => b.uses - a.uses)
+
+  return { tags: toList(tags), mentions: toList(mentions) }
+}
+
 /** folder가 null인 노트 (미분류) */
 export async function getUnfiledNotes(): Promise<Note[]> {
   const supabase = createClient()

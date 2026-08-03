@@ -3,8 +3,8 @@ import { useCallback, useEffect, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { v4 as uuidv4 } from 'uuid'
 import {
-  getLinkTargets, getNoteByTitle, upsertNote,
-  type LinkTarget,
+  getLinkTargets, getNoteByTitle, upsertNote, getTagMentionFacets,
+  type LinkTarget, type FacetItem,
 } from '@/lib/db/noteRepository'
 import type { Note } from '@/types/note'
 
@@ -28,8 +28,13 @@ export function routeForNote(n: { type: string; id: string; date?: string }): st
 export function useWikiLink() {
   const router = useRouter()
   const [linkTargets, setLinkTargets] = useState<LinkTarget[]>([])
+  // #태그 / @멘션 자동완성 후보 (같은 시점에 한 번만 읽어둔다)
+  const [facets, setFacets] = useState<{ tags: FacetItem[]; mentions: FacetItem[] }>({
+    tags: [], mentions: [],
+  })
 
   useEffect(() => { getLinkTargets().then(setLinkTargets).catch(console.error) }, [])
+  useEffect(() => { getTagMentionFacets().then(setFacets).catch(console.error) }, [])
 
   const openWikiLink = useCallback(async (rawTitle: string) => {
     const title = rawTitle.trim()
@@ -63,5 +68,5 @@ export function useWikiLink() {
     router.push(`/notes?id=${note.id}`)
   }, [router])
 
-  return { linkTargets, openWikiLink }
+  return { linkTargets, facets, openWikiLink }
 }

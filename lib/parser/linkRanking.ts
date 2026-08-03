@@ -21,6 +21,12 @@ function looksLikeDateTitle(title: string): boolean {
     || /^Week \d{1,2}, \d{4}$/.test(title)
 }
 
+/** Archive 폴더(및 그 하위) 소속인지 — 'Archive', 'Archive/2025/…' */
+export function isArchived(folder?: string): boolean {
+  if (!folder) return false
+  return /^archive(\/|$)/i.test(normalizeKey(folder).trim())
+}
+
 export interface RankOptions {
   /** 노트 id → 0~1 의미 유사도 (B단계 벡터검색에서 주입) */
   semanticScore?: Map<string, number>
@@ -72,6 +78,12 @@ export function rankLinkTargets(
     // ── PARA 폴더에 정리된 노트 소폭 가산 ──
     const filed = t.folder ? 6 : 0
 
+    // ── Archive 감점 ──
+    // 보관된 노트는 시의성이 낮다. 캘린더 노트만큼 세게 누르진 않는다 —
+    // 이름을 알고 찾아 치면(쿼리 있음) 나와야 하므로.
+    const archived = isArchived(t.folder)
+    const archivePenalty = archived ? (q ? 18 : 40) : 0
+
     // ── 최근성: 최근 90일 안에서만 완만하게 (0~10) ──
     const days = (now - (t.updatedAt || 0)) / 86_400_000
     const recency = days < 0 ? 0 : Math.max(0, 10 - days / 9)
@@ -79,7 +91,10 @@ export function rankLinkTargets(
     // ── 의미 유사도 (B단계) ──
     const semantic = (semanticScore?.get(t.id) ?? 0) * 45
 
-    out.push({ t, score: lexical + hub + filed + recency + semantic - calendarPenalty })
+    out.push({
+      t,
+      score: lexical + hub + filed + recency + semantic - calendarPenalty - archivePenalty,
+    })
   }
 
   out.sort((a, b) => b.score - a.score || a.t.title.localeCompare(b.t.title))

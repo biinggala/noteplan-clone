@@ -19,8 +19,9 @@ import { hangingIndentExtension } from './extensions/hangingIndent'
 import { autocompletion } from '@codemirror/autocomplete'
 import { wikiLinkCompletionSource } from './extensions/wikiLinkComplete'
 import { slashInsertSource } from './extensions/slashInsert'
+import { tagMentionCompletionSource } from './extensions/tagMentionComplete'
 import { mdTableExtension } from './extensions/mdTable'
-import type { LinkTarget } from '@/lib/db/noteRepository'
+import type { LinkTarget, FacetItem } from '@/lib/db/noteRepository'
 
 interface NoteEditorProps {
   content: string
@@ -30,9 +31,13 @@ interface NoteEditorProps {
   onOpenWikiLink?: (title: string) => void
   /** [[ 자동완성 후보 (노트 제목 목록) */
   linkTargets?: LinkTarget[]
+  /** #태그 / @멘션 자동완성 후보 */
+  facets?: { tags: FacetItem[]; mentions: FacetItem[] }
 }
 
-export default function NoteEditor({ content, onChange, onSave, onOpenWikiLink, linkTargets }: NoteEditorProps) {
+const EMPTY_FACETS = { tags: [] as FacetItem[], mentions: [] as FacetItem[] }
+
+export default function NoteEditor({ content, onChange, onSave, onOpenWikiLink, linkTargets, facets }: NoteEditorProps) {
   const containerRef = useRef<HTMLDivElement>(null)
   const viewRef = useRef<EditorView | null>(null)
   const onChangeRef = useRef(onChange)
@@ -43,6 +48,8 @@ export default function NoteEditor({ content, onChange, onSave, onOpenWikiLink, 
   onOpenWikiLinkRef.current = onOpenWikiLink
   const linkTargetsRef = useRef<LinkTarget[]>(linkTargets ?? [])
   linkTargetsRef.current = linkTargets ?? []
+  const facetsRef = useRef(facets ?? EMPTY_FACETS)
+  facetsRef.current = facets ?? EMPTY_FACETS
 
   useEffect(() => {
     if (!containerRef.current) return
@@ -82,11 +89,13 @@ export default function NoteEditor({ content, onChange, onSave, onOpenWikiLink, 
         tagMentionExtension(),
         ...wikiLinkExtension(title => onOpenWikiLinkRef.current?.(title)),
         // 자동완성은 한 번만 등록하고 소스를 나열한다
-        // ([[ 노트링크 + / 요소삽입). 여러 번 등록하면 설정이 충돌해 한쪽이 죽음.
+        // ([[ 노트링크 + / 요소삽입 + #태그/@멘션).
+        // 여러 번 등록하면 설정이 충돌해 한쪽이 죽음.
         autocompletion({
           override: [
             wikiLinkCompletionSource(() => linkTargetsRef.current),
             slashInsertSource(),
+            tagMentionCompletionSource(() => facetsRef.current),
           ],
           icons: false,
           closeOnBlur: true,

@@ -31,7 +31,7 @@ function NoteInner() {
   const [showHistory, setShowHistory] = useState(false)
   const noteRef = useRef<Note | null>(null)
   noteRef.current = note
-  const { linkTargets, openWikiLink } = useWikiLink()
+  const { linkTargets, facets, openWikiLink } = useWikiLink()
 
   // ── 실시간 동기화: 외부(MCP 등)가 이 노트를 고치면 즉시 반영 + 작성자 표시 ──
   const handleRemoteContent = useCallback((content: string) => {
@@ -168,6 +168,7 @@ function NoteInner() {
           onChange={handleChange}
           onOpenWikiLink={openWikiLink}
           linkTargets={linkTargets}
+          facets={facets}
         />
       </div>
 

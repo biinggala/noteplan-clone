@@ -47,7 +47,7 @@ function DailyNoteInner() {
   const [isSaving, setIsSaving]   = useState(false)
   const [saveError, setSaveError] = useState<string | null>(null)
   const [showHistory, setShowHistory] = useState(false)
-  const { linkTargets, openWikiLink } = useWikiLink()
+  const { linkTargets, facets, openWikiLink } = useWikiLink()
 
   // 항상 최신 note를 가리키는 ref — effect cleanup에서 사용
   const noteRef = useRef<Note | null>(null)
@@ -313,6 +313,7 @@ function DailyNoteInner() {
           onSave={handleSave}
           onOpenWikiLink={openWikiLink}
           linkTargets={linkTargets}
+          facets={facets}
         />
       </div>
 

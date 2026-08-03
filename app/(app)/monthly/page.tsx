@@ -30,7 +30,7 @@ function MonthlyNoteInner() {
   const [isSaving, setIsSaving] = useState(false)
   const noteRef = useRef<Note | null>(null)
   noteRef.current = note
-  const { linkTargets, openWikiLink } = useWikiLink()
+  const { linkTargets, facets, openWikiLink } = useWikiLink()
 
   // 월 파싱
   const [yearStr, monthStr] = month.split('-')
@@ -124,6 +124,7 @@ function MonthlyNoteInner() {
           onSave={handleSave}
           onOpenWikiLink={openWikiLink}
           linkTargets={linkTargets}
+          facets={facets}
         />
       </div>
 
