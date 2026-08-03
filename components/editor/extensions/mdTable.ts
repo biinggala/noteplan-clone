@@ -1,6 +1,7 @@
-import { Decoration, EditorView, ViewPlugin, WidgetType } from '@codemirror/view'
-import type { DecorationSet, ViewUpdate } from '@codemirror/view'
-import { RangeSetBuilder } from '@codemirror/state'
+import { Decoration, EditorView, WidgetType } from '@codemirror/view'
+import type { DecorationSet } from '@codemirror/view'
+import { StateField, RangeSetBuilder } from '@codemirror/state'
+import type { EditorState } from '@codemirror/state'
 
 /**
  * 마크다운 표 렌더링 (NotePlan 방식).
@@ -8,6 +9,12 @@ import { RangeSetBuilder } from '@codemirror/state'
  * 커서가 표 밖에 있을 때만 실제 <table>로 그리고, 표 안으로 커서가 들어오면
  * 원본 마크다운을 그대로 보여줘 편집할 수 있게 한다.
  * (markdownWYSIWYG의 cursor-reveal과 같은 규칙)
+ *
+ * ⚠️ 반드시 StateField로 구현해야 한다. CodeMirror는 block 데코레이션을
+ * ViewPlugin에서 제공하는 걸 금지한다("Block decorations may not be
+ * specified via plugins") — ViewPlugin으로 만들면 표가 뷰포트에 들어오는
+ * 순간(스크롤 등 재측정 시) RangeError가 반복 발생해 에디터 렌더링 전체가
+ * 깨진다. 처음 구현 때 이걸 놓쳐서 실제로 이 버그가 났었다 (2026-08-03).
  */
 
 type Align = 'left' | 'center' | 'right'
@@ -51,8 +58,8 @@ function parseDelimiter(line: string): Align[] | null {
 const isTableLine = (s: string) => /^\s*\|/.test(s)
 
 /** 문서에서 표 블록을 모두 찾는다 (헤더 + 구분행 + 본문 0줄 이상) */
-function findTables(view: EditorView): TableBlock[] {
-  const doc = view.state.doc
+function findTables(state: EditorState): TableBlock[] {
+  const doc = state.doc
   const out: TableBlock[] = []
   let n = 1
   while (n <= doc.lines) {
@@ -144,10 +151,10 @@ class TableWidget extends WidgetType {
   ignoreEvent(): boolean { return false }
 }
 
-function build(view: EditorView): DecorationSet {
+function build(state: EditorState): DecorationSet {
   const builder = new RangeSetBuilder<Decoration>()
-  const sel = view.state.selection
-  for (const b of findTables(view)) {
+  const sel = state.selection
+  for (const b of findTables(state)) {
     // 커서/선택이 표에 걸쳐 있으면 원본 마크다운을 그대로 노출 (편집 모드)
     const inside = sel.ranges.some(r => r.to >= b.from && r.from <= b.to)
     if (inside) continue
@@ -156,17 +163,15 @@ function build(view: EditorView): DecorationSet {
   return builder.finish()
 }
 
+const tableField = StateField.define<DecorationSet>({
+  create(state) { return build(state) },
+  update(value, tr) {
+    if (!tr.docChanged && !tr.selection) return value
+    return build(tr.state)
+  },
+  provide: f => EditorView.decorations.from(f),
+})
+
 export function mdTableExtension() {
-  return ViewPlugin.fromClass(
-    class {
-      decorations: DecorationSet
-      constructor(view: EditorView) { this.decorations = build(view) }
-      update(u: ViewUpdate) {
-        if (u.docChanged || u.viewportChanged || u.selectionSet) {
-          this.decorations = build(u.view)
-        }
-      }
-    },
-    { decorations: v => v.decorations },
-  )
+  return tableField
 }
