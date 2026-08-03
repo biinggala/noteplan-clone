@@ -83,11 +83,20 @@ export const noteplanTheme = [
     '.cm-scroller': { overflow: 'auto' },
     '&.cm-focused': { outline: 'none' },
 
-    // ── 마크다운 표 (커서가 밖에 있을 때 렌더) ──────────────────────────
+    // ── 마크다운 표 ─────────────────────────────────────────────────────
+    // 바깥 wrap은 +바/삭제버튼이 놓일 여백만 차지하고, 표의 가로 스크롤은
+    // 안쪽 scroll이 맡는다 (스크롤 컨테이너는 넘치는 버튼을 잘라먹으므로).
     '.cm-md-table-wrap': {
+      position: 'relative',
       margin: '10px 0',
-      overflowX: 'auto',
+      paddingRight: '14px',
+      paddingBottom: '14px',
       cursor: 'text',
+    },
+    '.cm-md-table-scroll': {
+      overflowX: 'auto',
+      paddingTop: '13px',
+      paddingLeft: '15px',
     },
     '.cm-md-table': {
       borderCollapse: 'collapse',
@@ -96,6 +105,7 @@ export const noteplanTheme = [
       lineHeight: '1.5',
     },
     '.cm-md-table th, .cm-md-table td': {
+      position: 'relative',
       border: '1px solid var(--border)',
       padding: '6px 10px',
       verticalAlign: 'top',
@@ -104,10 +114,10 @@ export const noteplanTheme = [
       fontWeight: '650',
       color: 'var(--text-primary)',
       backgroundColor: 'var(--cm-code-bg)',
-      whiteSpace: 'nowrap',
     },
     '.cm-md-table td': { color: 'var(--text-secondary)' },
     '.cm-md-table tbody tr:hover td': { backgroundColor: 'var(--cm-activeline)' },
+
     // 셀은 그 자리에서 바로 편집되는 contentEditable
     '.cm-tcell': {
       outline: 'none',
@@ -119,30 +129,91 @@ export const noteplanTheme = [
       boxShadow: 'inset 0 0 0 2px var(--accent)',
       borderRadius: '2px',
     },
-    // 행/열 추가·삭제 버튼 — 표 위에 마우스를 올렸을 때만 드러난다
-    '.cm-md-table-toolbar': {
-      display: 'flex',
-      gap: '4px',
-      marginTop: '4px',
+    // 셀 안에서 렌더된 인라인 마크다운
+    '.cm-tcell code': {
+      fontFamily: '"SF Mono", Menlo, Monaco, "Cascadia Code", monospace',
+      fontSize: '0.9em',
+      background: 'var(--cm-code-bg)',
+      borderRadius: '3px',
+      padding: '1px 4px',
+      color: 'var(--cm-code-fg)',
+    },
+    '.cm-tcell strong': { fontWeight: '700', color: 'var(--cm-strong)' },
+    '.cm-tcell em':     { fontStyle: 'italic', color: 'var(--cm-em)' },
+    '.cm-tcell s':      { color: 'var(--text-muted)' },
+    '.cm-tcell a':      { color: 'var(--accent)', textDecoration: 'underline' },
+
+    // 열 경계선 드래그로 너비 조절
+    '.cm-tresize': {
+      position: 'absolute',
+      top: '0',
+      right: '-3px',
+      width: '7px',
+      height: '100%',
+      cursor: 'col-resize',
+      zIndex: '2',
+      userSelect: 'none',
+    },
+    '.cm-tresize::after': {
+      content: '""',
+      position: 'absolute',
+      top: '0',
+      left: '3px',
+      width: '1px',
+      height: '100%',
+      background: 'var(--accent)',
       opacity: '0',
-      transition: 'opacity 120ms ease',
+      transition: 'opacity 100ms ease',
     },
-    '.cm-md-table-wrap:hover .cm-md-table-toolbar, .cm-md-table-wrap:focus-within .cm-md-table-toolbar': {
-      opacity: '1',
-    },
-    '.cm-md-table-btn': {
+    '.cm-tresize:hover::after': { opacity: '1' },
+    'body.cm-table-resizing': { cursor: 'col-resize', userSelect: 'none' },
+
+    // 행/열 삭제 — 해당 행·열에 마우스를 올렸을 때만 여백에 나타난다
+    '.cm-tdel': {
+      position: 'absolute',
+      display: 'flex',
+      alignItems: 'center',
+      justifyContent: 'center',
       font: 'inherit',
       fontSize: '11px',
       lineHeight: '1',
-      padding: '4px 8px',
+      padding: '0',
       cursor: 'pointer',
       color: 'var(--text-muted)',
       background: 'var(--bg-secondary)',
       border: '1px solid var(--border)',
-      borderRadius: '5px',
+      borderRadius: '3px',
+      opacity: '0',
+      transition: 'opacity 100ms ease',
     },
-    '.cm-md-table-btn:hover': { color: 'var(--text-primary)' },
-    '.cm-md-table-btn-danger:hover': { color: '#ef4444', borderColor: '#ef4444' },
+    '.cm-tdel:hover': { color: '#ef4444', borderColor: '#ef4444' },
+    '.cm-tdel-col': { top: '-13px', left: '0', right: '0', height: '11px' },
+    '.cm-tdel-row': { left: '-15px', top: '0', bottom: '0', width: '11px' },
+    '.cm-md-table th:hover .cm-tdel-col': { opacity: '1' },
+    '.cm-md-table tbody tr:hover .cm-tdel-row': { opacity: '1' },
+
+    // 표 아래·오른쪽 + 바 (Notion 방식)
+    '.cm-tadd': {
+      position: 'absolute',
+      display: 'flex',
+      alignItems: 'center',
+      justifyContent: 'center',
+      font: 'inherit',
+      fontSize: '12px',
+      lineHeight: '1',
+      padding: '0',
+      cursor: 'pointer',
+      color: 'var(--text-muted)',
+      background: 'var(--cm-code-bg)',
+      border: '1px solid var(--border)',
+      borderRadius: '4px',
+      opacity: '0',
+      transition: 'opacity 120ms ease',
+    },
+    '.cm-tadd:hover': { color: 'var(--text-primary)', background: 'var(--cm-activeline)' },
+    '.cm-tadd-row': { left: '15px', right: '14px', bottom: '0', height: '12px' },
+    '.cm-tadd-col': { top: '13px', bottom: '14px', right: '0', width: '12px' },
+    '.cm-md-table-wrap:hover .cm-tadd, .cm-md-table-wrap:focus-within .cm-tadd': { opacity: '1' },
 
     // ── [[ 자동완성 드롭다운 ────────────────────────────────────────────
     // CodeMirror 기본 스타일(흰 배경 + 시스템 폰트)이 테마와 전혀 안 맞아서 새로 입힘
