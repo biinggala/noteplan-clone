@@ -19,6 +19,7 @@ import { hangingIndentExtension } from './extensions/hangingIndent'
 import { autocompletion } from '@codemirror/autocomplete'
 import { wikiLinkCompletionSource } from './extensions/wikiLinkComplete'
 import { slashInsertSource } from './extensions/slashInsert'
+import { mdTableExtension } from './extensions/mdTable'
 import type { LinkTarget } from '@/lib/db/noteRepository'
 
 interface NoteEditorProps {
@@ -97,6 +98,7 @@ export default function NoteEditor({ content, onChange, onSave, onOpenWikiLink, 
         underlineExtension(),
         hangingIndentExtension(),
         hrRuleExtension(),
+        mdTableExtension(),
         ...dragHandleExtension(),
         EditorView.lineWrapping,
         updateListener,

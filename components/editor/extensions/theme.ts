@@ -83,6 +83,32 @@ export const noteplanTheme = [
     '.cm-scroller': { overflow: 'auto' },
     '&.cm-focused': { outline: 'none' },
 
+    // ── 마크다운 표 (커서가 밖에 있을 때 렌더) ──────────────────────────
+    '.cm-md-table-wrap': {
+      margin: '10px 0',
+      overflowX: 'auto',
+      cursor: 'text',
+    },
+    '.cm-md-table': {
+      borderCollapse: 'collapse',
+      width: '100%',
+      fontSize: '0.95em',
+      lineHeight: '1.5',
+    },
+    '.cm-md-table th, .cm-md-table td': {
+      border: '1px solid var(--border)',
+      padding: '6px 10px',
+      verticalAlign: 'top',
+    },
+    '.cm-md-table th': {
+      fontWeight: '650',
+      color: 'var(--text-primary)',
+      backgroundColor: 'var(--cm-code-bg)',
+      whiteSpace: 'nowrap',
+    },
+    '.cm-md-table td': { color: 'var(--text-secondary)' },
+    '.cm-md-table tbody tr:hover td': { backgroundColor: 'var(--cm-activeline)' },
+
     // ── [[ 자동완성 드롭다운 ────────────────────────────────────────────
     // CodeMirror 기본 스타일(흰 배경 + 시스템 폰트)이 테마와 전혀 안 맞아서 새로 입힘
     '.cm-tooltip.cm-tooltip-autocomplete': {

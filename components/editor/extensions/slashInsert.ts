@@ -23,11 +23,11 @@ const TABLE_SKELETON =
 
 const ITEMS: SlashItem[] = [
   // ── 할 일 ──
-  { label: '할 일',        keywords: 'todo task 할일 태스크 체크', detail: '- [ ]',  insert: '- [ ] ', block: true },
-  { label: '체크리스트',    keywords: 'checklist 체크리스트',        detail: '+',      insert: '+ ',     block: true },
-  { label: '완료된 할 일',  keywords: 'done complete 완료',          detail: '- [x]',  insert: '- [x] ', block: true },
-  { label: '취소된 할 일',  keywords: 'cancel 취소',                 detail: '- [-]',  insert: '- [-] ', block: true },
-  { label: '미룬 할 일',    keywords: 'schedule 예정 미룸',          detail: '- [>]',  insert: '- [>] ', block: true },
+  // 완료/취소/미룸 상태는 넣지 않는다. 생성은 '할 일'로만 하고 상태는 만든 뒤
+  // 체크박스를 눌러 바꾼다. (취소·미룸은 아직 클릭 토글이 없어서 넣어두면
+  // 되돌릴 방법이 없는 상태가 됨)
+  { label: '할 일',      keywords: 'todo task 할일 태스크 체크', detail: '- [ ]', insert: '- [ ] ', block: true },
+  { label: '체크리스트',  keywords: 'checklist 체크리스트',        detail: '+',     insert: '+ ',     block: true },
 
   // ── 제목 ──
   { label: '제목 1', keywords: 'heading h1 제목 title', detail: '#',   insert: '# ',   block: true },
@@ -51,9 +51,9 @@ const ITEMS: SlashItem[] = [
   { label: '구분선', keywords: 'divider separator hr 구분선 라인', detail: '---', insert: '---\n', block: true },
 
   // ── 인라인 ──
+  // 태그(#)·멘션(@)은 넣지 않는다 — 한 글자라 직접 치는 게 더 빠르고,
+  // 이미 각자의 자동완성이 붙어 있음
   { label: '노트 링크', keywords: 'link wikilink 링크 노트',  detail: '[[ ]]', insert: '[[]]', cursor: 2 },
-  { label: '태그',      keywords: 'tag 태그 해시',            detail: '#',     insert: '#' },
-  { label: '멘션',      keywords: 'mention 멘션 사람',        detail: '@',     insert: '@' },
   {
     label: '오늘 날짜', keywords: 'date today 오늘 날짜',
     detail: format(new Date(), 'yyyy-MM-dd'),
