@@ -6,6 +6,7 @@ import { useNoteStore } from '@/lib/stores/noteStore'
 import { useCalendarStore } from '@/lib/stores/calendarStore'
 import { getOrCreateMonthlyNote, upsertNote } from '@/lib/db/noteRepository'
 import { extractTags, extractMentions, extractBacklinks } from '@/lib/parser/noteParser'
+import { usePromoteToAtom } from '@/lib/hooks/usePromoteToAtom'
 import { useWikiLink } from '@/lib/hooks/useWikiLink'
 import BacklinksPanel from '@/components/editor/BacklinksPanel'
 import type { Note } from '@/types/note'
@@ -31,6 +32,7 @@ function MonthlyNoteInner() {
   const noteRef = useRef<Note | null>(null)
   noteRef.current = note
   const { linkTargets, facets, openWikiLink } = useWikiLink()
+  const { promote, dialog: promoteDialog } = usePromoteToAtom(note?.title)
 
   // 월 파싱
   const [yearStr, monthStr] = month.split('-')
@@ -125,8 +127,10 @@ function MonthlyNoteInner() {
           onOpenWikiLink={openWikiLink}
           linkTargets={linkTargets}
           facets={facets}
+          onPromote={promote}
         />
       </div>
+      {promoteDialog}
 
       <BacklinksPanel title={note.title} noteId={note.id} />
     </div>

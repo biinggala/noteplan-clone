@@ -5,6 +5,7 @@ import { useNoteStore } from '@/lib/stores/noteStore'
 import { getNoteById, upsertNote } from '@/lib/db/noteRepository'
 import { extractTags, extractMentions, extractBacklinks } from '@/lib/parser/noteParser'
 import { useNoteRealtime } from '@/lib/hooks/useNoteRealtime'
+import { usePromoteToAtom } from '@/lib/hooks/usePromoteToAtom'
 import { useWikiLink } from '@/lib/hooks/useWikiLink'
 import type { NoteRevision } from '@/lib/db/noteRepository'
 import type { Note } from '@/types/note'
@@ -32,6 +33,7 @@ function NoteInner() {
   const noteRef = useRef<Note | null>(null)
   noteRef.current = note
   const { linkTargets, facets, openWikiLink } = useWikiLink()
+  const { promote, dialog: promoteDialog } = usePromoteToAtom(note?.title)
 
   // ── 실시간 동기화: 외부(MCP 등)가 이 노트를 고치면 즉시 반영 + 작성자 표시 ──
   const handleRemoteContent = useCallback((content: string) => {
@@ -169,8 +171,10 @@ function NoteInner() {
           onOpenWikiLink={openWikiLink}
           linkTargets={linkTargets}
           facets={facets}
+          onPromote={promote}
         />
       </div>
+      {promoteDialog}
 
       <BacklinksPanel title={note.title} noteId={note.id} />
 

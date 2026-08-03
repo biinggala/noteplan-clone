@@ -12,6 +12,7 @@ import { useTimeBlockStore } from '@/lib/stores/timeBlockStore'
 import { useLineUpdateStore } from '@/lib/stores/lineUpdateStore'
 import { useTaskDotStore, hasOpenTask } from '@/lib/stores/taskDotStore'
 import { useNoteRealtime } from '@/lib/hooks/useNoteRealtime'
+import { usePromoteToAtom } from '@/lib/hooks/usePromoteToAtom'
 import { useWikiLink } from '@/lib/hooks/useWikiLink'
 import type { NoteRevision } from '@/lib/db/noteRepository'
 import type { Note } from '@/types/note'
@@ -48,6 +49,7 @@ function DailyNoteInner() {
   const [saveError, setSaveError] = useState<string | null>(null)
   const [showHistory, setShowHistory] = useState(false)
   const { linkTargets, facets, openWikiLink } = useWikiLink()
+  const { promote, dialog: promoteDialog } = usePromoteToAtom(note?.title)
 
   // 항상 최신 note를 가리키는 ref — effect cleanup에서 사용
   const noteRef = useRef<Note | null>(null)
@@ -314,8 +316,10 @@ function DailyNoteInner() {
           onOpenWikiLink={openWikiLink}
           linkTargets={linkTargets}
           facets={facets}
+          onPromote={promote}
         />
       </div>
+      {promoteDialog}
 
       <BacklinksPanel title={note.title} noteId={note.id} />
 

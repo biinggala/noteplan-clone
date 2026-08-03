@@ -21,6 +21,7 @@ import { wikiLinkCompletionSource } from './extensions/wikiLinkComplete'
 import { slashInsertSource } from './extensions/slashInsert'
 import { tagMentionCompletionSource } from './extensions/tagMentionComplete'
 import { mdTableExtension } from './extensions/mdTable'
+import { promoteAtomExtension } from './extensions/promoteAtom'
 import type { LinkTarget, FacetItem } from '@/lib/db/noteRepository'
 
 interface NoteEditorProps {
@@ -33,11 +34,13 @@ interface NoteEditorProps {
   linkTargets?: LinkTarget[]
   /** #태그 / @멘션 자동완성 후보 */
   facets?: { tags: FacetItem[]; mentions: FacetItem[] }
+  /** 선택 영역을 독립 노트로 승격. 새 노트 제목을 돌려주면 [[링크]]로 교체된다 */
+  onPromote?: (text: string) => Promise<string | null>
 }
 
 const EMPTY_FACETS = { tags: [] as FacetItem[], mentions: [] as FacetItem[] }
 
-export default function NoteEditor({ content, onChange, onSave, onOpenWikiLink, linkTargets, facets }: NoteEditorProps) {
+export default function NoteEditor({ content, onChange, onSave, onOpenWikiLink, linkTargets, facets, onPromote }: NoteEditorProps) {
   const containerRef = useRef<HTMLDivElement>(null)
   const viewRef = useRef<EditorView | null>(null)
   const onChangeRef = useRef(onChange)
@@ -50,6 +53,8 @@ export default function NoteEditor({ content, onChange, onSave, onOpenWikiLink, 
   linkTargetsRef.current = linkTargets ?? []
   const facetsRef = useRef(facets ?? EMPTY_FACETS)
   facetsRef.current = facets ?? EMPTY_FACETS
+  const onPromoteRef = useRef(onPromote)
+  onPromoteRef.current = onPromote
 
   useEffect(() => {
     if (!containerRef.current) return
@@ -108,6 +113,7 @@ export default function NoteEditor({ content, onChange, onSave, onOpenWikiLink, 
         hangingIndentExtension(),
         hrRuleExtension(),
         mdTableExtension(title => onOpenWikiLinkRef.current?.(title)),
+        ...promoteAtomExtension(text => onPromoteRef.current?.(text) ?? Promise.resolve(null)),
         ...dragHandleExtension(),
         EditorView.lineWrapping,
         updateListener,
