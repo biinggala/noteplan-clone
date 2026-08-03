@@ -4,7 +4,7 @@ import { createPortal } from 'react-dom'
 import { v4 as uuidv4 } from 'uuid'
 import { upsertNote, getNoteByTitle } from '@/lib/db/noteRepository'
 import { extractTags, extractMentions, extractBacklinks } from '@/lib/parser/noteParser'
-import { suggestAtomTitle } from '@/components/editor/extensions/promoteAtom'
+import { suggestAtomTitle } from '@/components/editor/extensions/selectionMenu'
 import type { Note } from '@/types/note'
 
 interface Pending {

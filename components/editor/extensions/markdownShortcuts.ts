@@ -4,7 +4,7 @@ import type { DecorationSet, EditorView, KeyBinding, ViewUpdate } from '@codemir
 
 // 선택 영역을 open/close 마커로 감싸기(토글). 선택이 없으면 마커만 넣고 커서를 사이에 둠.
 // 이미 마커로 감싸진 선택이면 해제.
-function wrapSelection(open: string, close: string) {
+export function wrapSelection(open: string, close: string) {
   return (view: EditorView): boolean => {
     view.dispatch(
       view.state.changeByRange((range) => {
@@ -15,11 +15,29 @@ function wrapSelection(open: string, close: string) {
           selected.endsWith(close)
 
         if (wrapped) {
-          // 마커 제거
+          // 마커 제거 (선택 안에 마커까지 들어온 경우)
           const inner = selected.slice(open.length, selected.length - close.length)
           return {
             changes: { from: range.from, to: range.to, insert: inner },
             range: EditorSelection.range(range.from, range.from + inner.length),
+          }
+        }
+
+        // 선택 '바깥'이 마커인 경우도 해제한다.
+        // 한 번 감싸고 나면 선택이 마커를 뺀 안쪽으로 잡히기 때문에, 이 검사가
+        // 없으면 Cmd+B를 두 번 눌렀을 때 해제가 아니라 ****이중으로 감싸진다****.
+        const before = view.state.sliceDoc(Math.max(0, range.from - open.length), range.from)
+        const after = view.state.sliceDoc(
+          range.to,
+          Math.min(view.state.doc.length, range.to + close.length),
+        )
+        if (before === open && after === close) {
+          return {
+            changes: [
+              { from: range.from - open.length, to: range.from },
+              { from: range.to, to: range.to + close.length },
+            ],
+            range: EditorSelection.range(range.from - open.length, range.to - open.length),
           }
         }
         // 마커 추가 (선택 텍스트는 그대로 선택 유지, 빈 선택이면 커서를 사이에)
@@ -36,11 +54,12 @@ function wrapSelection(open: string, close: string) {
   }
 }
 
-// Cmd/Ctrl + B / I / U / Shift+X 마크다운 단축키
+// Cmd/Ctrl + B / I / U / E / Shift+X 마크다운 단축키
 export const markdownShortcuts: KeyBinding[] = [
   { key: 'Mod-b', preventDefault: true, run: wrapSelection('**', '**') },
   { key: 'Mod-i', preventDefault: true, run: wrapSelection('*', '*') },
   { key: 'Mod-u', preventDefault: true, run: wrapSelection('<u>', '</u>') },
+  { key: 'Mod-e', preventDefault: true, run: wrapSelection('`', '`') },
   { key: 'Mod-Shift-x', preventDefault: true, run: wrapSelection('~~', '~~') },
 ]
 

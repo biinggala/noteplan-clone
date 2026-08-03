@@ -231,21 +231,24 @@ html, body {
   box-shadow: 0 -2px 0 0 #f59e0b;
 }
 
-/* 선택 영역 우클릭 메뉴 — 원자로 승격.
+/* 선택 영역 우클릭 메뉴 — 서식 + 원자로 승격.
    document.body에 붙는 요소라 EditorView.theme() 스코프 밖이다.
    theme.ts에 두면 스타일이 하나도 안 먹으니 여기 있어야 한다. */
-.cm-promote-menu {
+.cm-sel-menu {
   position: fixed;
   z-index: 9999;
-  min-width: 140px;
+  min-width: 176px;
   padding: 4px;
   border-radius: 8px;
   border: 1px solid var(--border);
   background: var(--bg-secondary);
   box-shadow: 0 12px 32px rgb(0 0 0 / 0.28);
 }
-.cm-promote-item {
-  display: block;
+.cm-sel-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
   width: 100%;
   text-align: left;
   font: inherit;
@@ -258,7 +261,18 @@ html, body {
   border: none;
   color: var(--text-primary);
 }
-.cm-promote-item:hover {
+.cm-sel-item:hover {
   background: color-mix(in srgb, var(--accent) 20%, transparent);
   color: var(--accent);
+}
+.cm-sel-hint {
+  flex: 0 0 auto;
+  font-size: 11px;
+  opacity: 0.55;
+  font-variant-numeric: tabular-nums;
+}
+.cm-sel-divider {
+  height: 1px;
+  margin: 4px 6px;
+  background: var(--border);
 }
