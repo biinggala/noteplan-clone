@@ -1,4 +1,4 @@
-import { autocompletion, type CompletionContext, type CompletionResult } from '@codemirror/autocomplete'
+import type { CompletionContext, CompletionResult, CompletionSource } from '@codemirror/autocomplete'
 import type { LinkTarget } from '@/lib/db/noteRepository'
 import { rankLinkTargets } from '@/lib/parser/linkRanking'
 
@@ -7,11 +7,14 @@ const TYPE_LABEL: Record<string, string> = {
 }
 
 /**
- * `[[` 입력 시 노트 제목 자동완성.
+ * `[[` 입력 시 노트 제목 자동완성 소스.
  * getTargets는 최신 목록을 돌려주는 함수(에디터 생성 시점에 고정되지 않도록 ref 패턴).
+ *
+ * autocompletion() 자체는 NoteEditor에서 한 번만 등록한다 — 여러 번 등록하면
+ * 서로 다른 설정이 충돌해 한쪽 소스가 죽는다.
  */
-export function wikiLinkCompleteExtension(getTargets: () => LinkTarget[]) {
-  function source(ctx: CompletionContext): CompletionResult | null {
+export function wikiLinkCompletionSource(getTargets: () => LinkTarget[]): CompletionSource {
+  return function source(ctx: CompletionContext): CompletionResult | null {
     // 커서 앞에서 "[[" 이후 아직 "]]"로 닫히지 않은 부분을 잡는다
     const before = ctx.state.doc.sliceString(ctx.state.doc.lineAt(ctx.pos).from, ctx.pos)
     const open = before.lastIndexOf('[[')
@@ -44,11 +47,4 @@ export function wikiLinkCompleteExtension(getTargets: () => LinkTarget[]) {
       filter: false,   // 위에서 이미 필터링함 (한글 부분일치 유지)
     }
   }
-
-  return autocompletion({
-    override: [source],
-    icons: false,
-    closeOnBlur: true,
-    activateOnTyping: true,
-  })
 }

@@ -16,7 +16,9 @@ import { dragHandleExtension } from './extensions/dragHandle'
 import { hrRuleExtension } from './extensions/hrRule'
 import { markdownShortcuts, underlineExtension } from './extensions/markdownShortcuts'
 import { hangingIndentExtension } from './extensions/hangingIndent'
-import { wikiLinkCompleteExtension } from './extensions/wikiLinkComplete'
+import { autocompletion } from '@codemirror/autocomplete'
+import { wikiLinkCompletionSource } from './extensions/wikiLinkComplete'
+import { slashInsertSource } from './extensions/slashInsert'
 import type { LinkTarget } from '@/lib/db/noteRepository'
 
 interface NoteEditorProps {
@@ -78,7 +80,17 @@ export default function NoteEditor({ content, onChange, onSave, onOpenWikiLink, 
         taskCheckboxExtension(),
         tagMentionExtension(),
         ...wikiLinkExtension(title => onOpenWikiLinkRef.current?.(title)),
-        wikiLinkCompleteExtension(() => linkTargetsRef.current),
+        // 자동완성은 한 번만 등록하고 소스를 나열한다
+        // ([[ 노트링크 + / 요소삽입). 여러 번 등록하면 설정이 충돌해 한쪽이 죽음.
+        autocompletion({
+          override: [
+            wikiLinkCompletionSource(() => linkTargetsRef.current),
+            slashInsertSource(),
+          ],
+          icons: false,
+          closeOnBlur: true,
+          activateOnTyping: true,
+        }),
         scheduleDateExtension(),
         ...inputRulesExtension(),
         ...markdownWYSIWYGExtension(),
