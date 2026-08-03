@@ -12,6 +12,7 @@ import {
   getAllNotes,
   upsertNote,
   deleteNote as dbDeleteNote,
+  renameNote as dbRenameNote,
   moveNote,
   moveFolder,
 } from '@/lib/db/noteRepository'
@@ -476,11 +477,11 @@ export default function FolderTree() {
     const note = findNote(noteId)
     if (!note) return
     const raw = await showInputDialog('노트 이름 변경', '새 이름 입력...', note.title)
-    const name = raw?.replace(/[/\\]/g, '').trim()
+    // 대괄호가 들어가면 [[링크]] 문법이 깨진다
+    const name = raw?.replace(/[[\]/\\]/g, '').trim()
     if (!name || name === note.title) return
-    // filePath의 파일명(베이스네임)도 함께 변경
-    const newPath = note.filePath.replace(/[^/]+\.md$/, `${name}.md`)
-    await upsertNote({ ...note, title: name, filePath: newPath })
+    // 다른 노트의 [[옛 제목]]도 새 제목으로 함께 따라간다
+    await dbRenameNote(noteId, name)
     await reloadNotes()
   }
 

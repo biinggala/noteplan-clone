@@ -95,6 +95,18 @@ export function extractBacklinks(content: string): string[] {
   return [...new Set([...content.matchAll(WIKILINK_PATTERN)].map(m => normalizeKey(m[1].trim())))]
 }
 
+/**
+ * 본문의 [[옛 제목]]을 [[새 제목]]으로 바꾼다 (노트 이름 변경 시 링크 따라가기).
+ * 대소문자·앞뒤 공백·한글 NFC/NFD 차이는 무시하고 매칭한다.
+ */
+export function renameWikiLinks(content: string, from: string, to: string): string {
+  const want = normalizeKey(from).trim().toLowerCase()
+  if (!want) return content
+  // WIKILINK_PATTERN은 /g라 lastIndex를 공유한다 — 여기선 새로 만들어 쓴다
+  return content.replace(/\[\[([^\]]+)\]\]/g, (whole, inner: string) =>
+    normalizeKey(inner).trim().toLowerCase() === want ? `[[${to}]]` : whole)
+}
+
 export function toggleTaskStatus(
   content: string,
   lineNumber: number,

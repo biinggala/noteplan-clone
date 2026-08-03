@@ -5,7 +5,7 @@ import { format, addDays, startOfWeek, endOfWeek } from 'date-fns'
 const WK = { weekStartsOn: 0 as const, firstWeekContainsDate: 4 as const }
 import { v4 as uuidv4 } from 'uuid'
 import { createClient } from '@/lib/supabase/client'
-import { normalizeKey } from '@/lib/parser/noteParser'
+import { normalizeKey, renameWikiLinks, extractBacklinks } from '@/lib/parser/noteParser'
 
 // ── Supabase row → Note 변환 ─────────────────────────────────────────────────
 
@@ -124,6 +124,68 @@ export async function upsertNote(note: Note): Promise<Note> {
     .single()
   if (error) throw error
   return rowToNote(data)
+}
+
+/**
+ * 노트 이름 변경 + 다른 노트에 있는 [[옛 제목]]까지 새 제목으로 따라가기.
+ *
+ * 링크를 찾을 때 backlinks 컬럼이 아니라 본문을 직접 훑는다 — backlinks는
+ * 저장 시점에 파생된 값이라 대소문자·정규화가 어긋나면 놓칠 수 있는데,
+ * 정작 고쳐야 하는 건 본문이기 때문.
+ *
+ * @returns 새 노트와, 링크가 고쳐진 다른 노트 수
+ */
+export async function renameNote(
+  noteId: string,
+  newTitle: string,
+): Promise<{ note: Note; updatedLinks: number }> {
+  const supabase = createClient()
+  const userId = await getUserId()
+
+  const { data: cur, error: findErr } = await supabase
+    .from('notes').select('*').eq('user_id', userId).eq('id', noteId).single()
+  if (findErr || !cur) throw findErr ?? new Error('노트를 찾을 수 없습니다')
+
+  const oldTitle = cur.title as string
+  // 링크 문법이 깨지지 않게 대괄호와 경로 구분자는 제거
+  const title = normalizeKey(newTitle).replace(/[[\]/\\]/g, '').trim()
+  if (!title) throw new Error('제목이 비어 있습니다')
+
+  const now = Date.now()
+  let updatedLinks = 0
+
+  if (normalizeKey(oldTitle).trim() !== title) {
+    const { data: all } = await supabase
+      .from('notes').select('id,content').eq('user_id', userId).limit(5000)
+
+    for (const row of all ?? []) {
+      const content = (row.content as string) ?? ''
+      if (!content.includes('[[')) continue
+      const next = renameWikiLinks(content, oldTitle, title)
+      if (next === content) continue
+
+      const { error } = await supabase
+        .from('notes')
+        .update({ content: next, backlinks: extractBacklinks(next), updated_at: now })
+        .eq('id', row.id as string)
+        .eq('user_id', userId)
+      if (error) throw error
+      updatedLinks++
+    }
+  }
+
+  // filePath의 파일명(베이스네임)도 제목을 따라간다
+  const filePath = (cur.file_path as string ?? '').replace(/[^/]+\.md$/, `${title}.md`)
+  const { data, error } = await supabase
+    .from('notes')
+    .update({ title, file_path: filePath, updated_at: now })
+    .eq('id', noteId)
+    .eq('user_id', userId)
+    .select()
+    .single()
+  if (error) throw error
+
+  return { note: rowToNote(data), updatedLinks }
 }
 
 export interface NoteRevision {
