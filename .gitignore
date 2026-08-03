@@ -43,3 +43,7 @@ yarn-error.log*
 # typescript
 *.tsbuildinfo
 next-env.d.ts
+
+# Tauri 업데이트 서명 개인키 (절대 커밋 금지 — 실제 키는 ~/.tauri 에 있음)
+*.key
+*.key.pub

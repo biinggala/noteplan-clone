@@ -13,6 +13,10 @@ pub fn run() {
         let _ = w.set_focus();
       }
     }));
+    // 자동 업데이트 확인 + 설치 후 재시작 (데스크톱 전용)
+    builder = builder
+      .plugin(tauri_plugin_updater::Builder::new().build())
+      .plugin(tauri_plugin_process::init());
   }
 
   builder

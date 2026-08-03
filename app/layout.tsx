@@ -2,6 +2,7 @@ import type { Metadata, Viewport } from "next";
 import "./globals.css";
 import TauriTitlebarDrag from "@/components/TauriTitlebarDrag";
 import TauriAuthDeepLink from "@/components/TauriAuthDeepLink";
+import TauriUpdater from "@/components/TauriUpdater";
 import PWARegister from "@/components/PWARegister";
 
 export const metadata: Metadata = {
@@ -37,6 +38,7 @@ export default function RootLayout({
       <body suppressHydrationWarning>
         <TauriTitlebarDrag />
         <TauriAuthDeepLink />
+        <TauriUpdater />
         <PWARegister />
         {children}
       </body>
