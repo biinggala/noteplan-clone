@@ -215,36 +215,9 @@ export const noteplanTheme = [
     '.cm-tadd-col': { top: '13px', bottom: '14px', right: '0', width: '12px' },
     '.cm-md-table-wrap:hover .cm-tadd, .cm-md-table-wrap:focus-within .cm-tadd': { opacity: '1' },
 
-    // ── 선택 영역 우클릭 메뉴 (원자로 승격) ──────────────────────────────
-    // body에 직접 붙는 요소라 .cm- 스코프 밖이지만, 테마 변수를 쓰려고 여기 둔다
-    '.cm-promote-menu': {
-      position: 'fixed',
-      zIndex: '9999',
-      minWidth: '140px',
-      padding: '4px',
-      borderRadius: '8px',
-      border: '1px solid var(--border)',
-      backgroundColor: 'var(--bg-secondary)',
-      boxShadow: '0 12px 32px rgba(0,0,0,0.28)',
-    },
-    '.cm-promote-item': {
-      display: 'block',
-      width: '100%',
-      textAlign: 'left',
-      font: 'inherit',
-      fontSize: '13px',
-      lineHeight: '1.4',
-      padding: '6px 10px',
-      borderRadius: '5px',
-      cursor: 'pointer',
-      background: 'transparent',
-      border: 'none',
-      color: 'var(--text-primary)',
-    },
-    '.cm-promote-item:hover': {
-      backgroundColor: 'color-mix(in srgb, var(--accent) 20%, transparent)',
-      color: 'var(--accent)',
-    },
+    // ⚠️ 우클릭 승격 메뉴(.cm-promote-menu)는 여기 두면 안 된다.
+    // EditorView.theme()은 셀렉터를 에디터 내부로 스코프하는데 그 메뉴는
+    // document.body에 붙으므로 스타일이 하나도 안 먹는다 → globals.css에 있음.
 
     // ── [[ 자동완성 드롭다운 ────────────────────────────────────────────
     // CodeMirror 기본 스타일(흰 배경 + 시스템 폰트)이 테마와 전혀 안 맞아서 새로 입힘
