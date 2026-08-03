@@ -5,14 +5,14 @@ import {
   addMonths, subMonths, parseISO,
   getWeek, getWeekYear,
 } from 'date-fns'
-import { useEffect, useRef } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { useCalendarStore } from '@/lib/stores/calendarStore'
 import { useCalendarEventStore } from '@/lib/stores/calendarEventStore'
 import { useAuthStore } from '@/lib/stores/authStore'
 import { useTaskDotStore, hasOpenTask } from '@/lib/stores/taskDotStore'
 import { fetchAllCalendarEventsForRange } from '@/lib/google/calendar'
 import { getNoteSummariesByDateRange } from '@/lib/db/noteRepository'
-import { useRouter } from 'next/navigation'
+import { useRouter, usePathname } from 'next/navigation'
 import { startGoogleOAuth } from '@/lib/auth/googleOAuth'
 import { createClient } from '@/lib/supabase/client'
 
@@ -118,6 +118,16 @@ export default function MiniCalendar() {
   const todayDate       = parseISO(today)
   const selectedDateObj = parseISO(selectedDate)
 
+  // 선택 표시는 그 노트를 실제로 보고 있을 때만 켠다.
+  // selectedDate는 일반 노트로 이동해도 남아 있어서, 안 그러면 엉뚱한 날짜가
+  // 계속 강조된 채로 보인다.
+  // usePathname()은 서버에서 null이라 mounted 전에는 꺼둔다 (hydration 불일치 방지).
+  const pathname = usePathname()
+  const [mounted, setMounted] = useState(false)
+  useEffect(() => setMounted(true), [])
+  const showDaySelection  = mounted && pathname === '/daily'
+  const showWeekSelection = mounted && pathname === '/weekly'
+
   return (
     // 상단 영역을 창 드래그 영역으로 (별도 빈 spacer 제거) — 날짜/월 버튼은 TauriTitlebarDrag가 드래그에서 제외
     <div data-tauri-drag-region className="electron-drag px-3 pb-3 pt-4">
@@ -127,7 +137,7 @@ export default function MiniCalendar() {
           <div className="font-semibold mb-1">캘린더 연결 만료</div>
           <div className="text-red-300/70 mb-1.5 break-words leading-snug">{googleAuthError}</div>
           <button
-            onClick={() => startGoogleOAuth(createClient())}
+            onClick={() => startGoogleOAuth(createClient(), { withCalendar: true })}
             className="px-2 py-0.5 rounded bg-red-500/30 hover:bg-red-500/50 text-red-100 transition-colors"
           >
             재연결
@@ -196,7 +206,7 @@ export default function MiniCalendar() {
           const wk        = cwKey(weekStart)
           const cwNum     = getWeek(weekStart, WK).toString().padStart(2, '0')
           // 주간 노트를 보는 중이면 그 주 행 전체를 강조 (하루만 찍히던 문제)
-          const isWeekSelected = selectedWeek === wk
+          const isWeekSelected = showWeekSelection && selectedWeek === wk
 
           return (
             <div
@@ -224,7 +234,7 @@ export default function MiniCalendar() {
                 const dateStr        = format(day, 'yyyy-MM-dd')
                 const isCurrentMonth = isSameMonth(day, viewDate)
                 // 주 전체가 강조된 상태에선 개별 날짜 원형 강조를 끈다 (이중 강조 방지)
-                const isSelected     = !isWeekSelected && isSameDay(day, selectedDateObj)
+                const isSelected     = showDaySelection && !isWeekSelected && isSameDay(day, selectedDateObj)
                 const isTodayDay     = isToday(day)
                 const dayEvents = eventsByDate[dateStr] ?? []
                 const hasEvents = dayEvents.length > 0

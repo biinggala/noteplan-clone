@@ -7,19 +7,38 @@ export const GOOGLE_SCOPES =
 export const isTauri = () =>
   typeof window !== 'undefined' && '__TAURI_INTERNALS__' in window
 
-// Google OAuth 시작 — Tauri는 시스템 브라우저 + noteplan:// 딥링크,
-// 웹은 같은 창 redirect. (로그인 / 캘린더 재연결 공용)
+/**
+ * Google OAuth 시작 — Tauri는 시스템 브라우저 + noteplan:// 딥링크,
+ * 웹은 같은 창 redirect.
+ *
+ * `withCalendar`로 요청 권한을 나눈다.
+ *   false(기본, 로그인) — 이메일/프로필만. 민감하지 않은 권한이라 심사 없이
+ *                        누구나 가입할 수 있다.
+ *   true(캘린더 연결)   — calendar 권한까지. 이건 Google이 '민감한 범위'로
+ *                        분류해서 미검증 앱이면 경고 화면을 거쳐야 한다.
+ *
+ * 로그인에까지 캘린더 권한을 묶어두면, 캘린더를 안 쓰는 사람도 그 게이트를
+ * 통과해야 해서 가입 자체가 막힌다. 그래서 분리했다.
+ */
 export async function startGoogleOAuth(
-  supabase: SupabaseClient
+  supabase: SupabaseClient,
+  { withCalendar = false }: { withCalendar?: boolean } = {},
 ): Promise<{ error?: string }> {
+  // 캘린더는 refresh token이 필요해 offline + consent를 붙인다.
+  // 로그인엔 불필요하고, prompt:consent는 매번 동의 화면을 다시 띄워 성가시다.
+  const scopes = withCalendar ? GOOGLE_SCOPES : undefined
+  const queryParams = withCalendar
+    ? { access_type: 'offline', prompt: 'consent' }
+    : undefined
+
   if (isTauri()) {
     const { data, error } = await supabase.auth.signInWithOAuth({
       provider: 'google',
       options: {
         redirectTo: 'noteplan://auth-callback',
         skipBrowserRedirect: true,
-        scopes: GOOGLE_SCOPES,
-        queryParams: { access_type: 'offline', prompt: 'consent' },
+        ...(scopes ? { scopes } : {}),
+        ...(queryParams ? { queryParams } : {}),
       },
     })
     if (error || !data?.url) return { error: error?.message ?? 'OAuth URL 생성 실패' }
@@ -33,8 +52,8 @@ export async function startGoogleOAuth(
     provider: 'google',
     options: {
       redirectTo: `${window.location.origin}/auth/callback`,
-      scopes: GOOGLE_SCOPES,
-      queryParams: { access_type: 'offline', prompt: 'consent' },
+      ...(scopes ? { scopes } : {}),
+      ...(queryParams ? { queryParams } : {}),
     },
   })
   return {}

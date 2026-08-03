@@ -4,12 +4,16 @@ import { createPortal } from 'react-dom'
 import { createClient } from '@/lib/supabase/client'
 import { startGoogleOAuth } from '@/lib/auth/googleOAuth'
 import { useCalendarEventStore } from '@/lib/stores/calendarEventStore'
+import { useAuthStore } from '@/lib/stores/authStore'
 
 export default function CalendarSettings() {
   const [open, setOpen] = useState(false)
   const [panelPos, setPanelPos] = useState({ top: 0, left: 0 })
   const btnRef = useRef<HTMLButtonElement>(null)
   const { calendars, enabledCalendarIds, toggleCalendar } = useCalendarEventStore()
+  // 로그인은 캘린더 권한 없이도 되므로, 아직 연결 안 한 사용자가 있을 수 있다
+  const { googleAccessToken } = useAuthStore()
+  const connected = !!googleAccessToken
 
   // 버튼 위치 기반으로 패널 위치 계산
   useEffect(() => {
@@ -26,7 +30,7 @@ export default function CalendarSettings() {
     const supabase = createClient()
     // Tauri는 시스템 브라우저 + noteplan:// 딥링크, 웹은 같은 창 redirect
     // (콜백은 전역 TauriAuthDeepLink 핸들러가 처리)
-    await startGoogleOAuth(supabase)
+    await startGoogleOAuth(supabase, { withCalendar: true })
   }
 
   const panel = open && (
@@ -42,7 +46,7 @@ export default function CalendarSettings() {
         </div>
         {calendars.length === 0 && (
           <div className="px-3 py-2 text-xs text-[var(--text-muted)]">
-            캘린더를 불러오는 중...
+            {connected ? '캘린더를 불러오는 중...' : '아직 연결된 캘린더가 없습니다'}
           </div>
         )}
         {calendars.map(cal => {
@@ -85,7 +89,7 @@ export default function CalendarSettings() {
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2}
                 d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
             </svg>
-            Google 캘린더 재연결 (쓰기 권한)
+            {connected ? 'Google 캘린더 재연결 (쓰기 권한)' : 'Google 캘린더 연결'}
           </button>
         </div>
       </div>

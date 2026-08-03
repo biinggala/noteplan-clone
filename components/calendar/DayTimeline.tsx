@@ -98,6 +98,9 @@ export default function DayTimeline({ date, days = 1 }: DayTimelineProps) {
   // Updated to a real ID once calendars load (prefers writable owner/writer calendars).
   const [newEventCalId, setNewEventCalId] = useState<string>('primary')
   const [savingEvent, setSavingEvent] = useState(false)
+  // 중복 생성 방지용 동기 락. savingEvent(React state)는 반영이 한 박자 늦어서
+  // Enter 두 번이나 Enter+블러가 같은 틱에 겹치면 둘 다 통과해버린다.
+  const creatingRef = useRef(false)
   const newEventInputRef = useRef<HTMLInputElement>(null)
   const newEventFormRef  = useRef<HTMLDivElement>(null)
   const allDayInputRef   = useRef<HTMLInputElement>(null)
@@ -521,7 +524,9 @@ export default function DayTimeline({ date, days = 1 }: DayTimelineProps) {
   // ── Create Google Calendar event ─────────────────────────────────────────
 
   async function handleCreateEvent() {
+    if (creatingRef.current) return
     if (!newEventSlot || !newEventTitle.trim() || !googleAccessToken) return
+    creatingRef.current = true
     // If no calendar selected yet, fall back to "primary"
     const calId = newEventCalId || 'primary'
     setSavingEvent(true)
@@ -543,6 +548,7 @@ export default function DayTimeline({ date, days = 1 }: DayTimelineProps) {
     } catch (err) {
       console.error('[createCalendarEvent]', err)
     } finally {
+      creatingRef.current = false
       setSavingEvent(false)
       setNewEventSlot(null)
       setNewEventTitle('')
@@ -551,9 +557,12 @@ export default function DayTimeline({ date, days = 1 }: DayTimelineProps) {
 
   // 종일 이벤트 생성 (Google Calendar 연동)
   async function handleCreateAllDay() {
+    // Enter로 만든 뒤 입력창이 사라지며 blur가 또 들어온다 — 락으로 막는다
+    if (creatingRef.current) return
     if (!newAllDayDate || !newAllDayTitle.trim() || !googleAccessToken) {
       setNewAllDayDate(null); setNewAllDayTitle(''); return
     }
+    creatingRef.current = true
     const calId = newEventCalId || 'primary'
     const cal = calendars.find(c => c.id === calId)
     setSavingEvent(true)
@@ -568,6 +577,7 @@ export default function DayTimeline({ date, days = 1 }: DayTimelineProps) {
     } catch (err) {
       console.error('[createAllDayEvent]', err)
     } finally {
+      creatingRef.current = false
       setSavingEvent(false)
       setNewAllDayDate(null)
       setNewAllDayTitle('')
@@ -1164,6 +1174,8 @@ export default function DayTimeline({ date, days = 1 }: DayTimelineProps) {
                     onChange={(e) => setNewAllDayTitle(e.target.value)}
                     onClick={(e) => e.stopPropagation()}
                     onKeyDown={(e) => {
+                      // 한글 IME는 조합 확정 Enter와 실제 Enter가 각각 들어온다
+                      if (e.nativeEvent.isComposing || e.keyCode === 229) return
                       if (e.key === 'Enter') handleCreateAllDay()
                       else if (e.key === 'Escape') { setNewAllDayDate(null); setNewAllDayTitle('') }
                     }}
@@ -1296,6 +1308,8 @@ export default function DayTimeline({ date, days = 1 }: DayTimelineProps) {
                         value={newEventTitle}
                         onChange={e => setNewEventTitle(e.target.value)}
                         onKeyDown={e => {
+                          // 한글 IME는 조합 확정 Enter와 실제 Enter가 각각 들어온다
+                          if (e.nativeEvent.isComposing || e.keyCode === 229) return
                           if (e.key === 'Enter') handleCreateEvent()
                           if (e.key === 'Escape') { setNewEventSlot(null); setNewEventTitle('') }
                         }}
