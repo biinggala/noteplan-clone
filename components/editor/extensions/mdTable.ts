@@ -4,17 +4,19 @@ import { StateField, RangeSetBuilder } from '@codemirror/state'
 import type { EditorState } from '@codemirror/state'
 
 /**
- * 마크다운 표 렌더링 (NotePlan 방식).
+ * 마크다운 표를 실제 <table>로 렌더링하고, 셀을 클릭해 그 자리에서 바로
+ * 타이핑할 수 있게 한다 (Notion / NotePlan 방식).
  *
- * 커서가 표 밖에 있을 때만 실제 <table>로 그리고, 표 안으로 커서가 들어오면
- * 원본 마크다운을 그대로 보여줘 편집할 수 있게 한다.
- * (markdownWYSIWYG의 cursor-reveal과 같은 규칙)
+ * 편집 모델: 각 셀은 contentEditable 아일랜드. 키 입력마다 문서를 갱신하면
+ * 커밋할 때마다 위젯 DOM이 통째로 다시 생성돼 타이핑 중 포커스가 날아간다
+ * (eq()가 내용 비교라 셀 값이 바뀌는 순간 위젯이 "다른 것"으로 판정됨).
+ * 그래서 타이핑 자체는 로컬 DOM에서만 하고, 셀을 벗어날 때(Tab/Enter/블러)
+ * 표 전체를 마크다운으로 재직렬화해 한 번에 커밋한다.
  *
  * ⚠️ 반드시 StateField로 구현해야 한다. CodeMirror는 block 데코레이션을
  * ViewPlugin에서 제공하는 걸 금지한다("Block decorations may not be
- * specified via plugins") — ViewPlugin으로 만들면 표가 뷰포트에 들어오는
- * 순간(스크롤 등 재측정 시) RangeError가 반복 발생해 에디터 렌더링 전체가
- * 깨진다. 처음 구현 때 이걸 놓쳐서 실제로 이 버그가 났었다 (2026-08-03).
+ * specified via plugins") — 뷰포트 재측정 시 RangeError가 반복 발생해
+ * 에디터 렌더링 전체가 깨진다 (2026-08-03에 실제로 겪은 버그).
  */
 
 type Align = 'left' | 'center' | 'right'
@@ -41,6 +43,29 @@ function splitRow(line: string): string[] {
   }
   cells.push(cur.trim())
   return cells
+}
+
+/** 셀 텍스트 → 마크다운 행의 한 칸. 파이프는 이스케이프, 줄바꿈은 공백으로 */
+function escapeCell(s: string): string {
+  return s.replace(/\r?\n/g, ' ').replace(/\|/g, '\\|').trim()
+}
+
+function joinRow(cells: string[]): string {
+  return `| ${cells.map(escapeCell).join(' | ')} |`
+}
+
+function alignMarker(a: Align): string {
+  return a === 'center' ? ':---:' : a === 'right' ? '---:' : '---'
+}
+
+/** TableBlock → 전체 마크다운 텍스트 재직렬화 */
+function serializeTable(b: Pick<TableBlock, 'header' | 'aligns' | 'rows'>): string {
+  const lines = [
+    joinRow(b.header),
+    `| ${b.aligns.map(alignMarker).join(' | ')} |`,
+    ...b.rows.map(joinRow),
+  ]
+  return lines.join('\n')
 }
 
 const DELIM_CELL = /^:?-{1,}:?$/
@@ -83,81 +108,205 @@ function findTables(state: EditorState): TableBlock[] {
   return out
 }
 
+// data-table-from 속성으로 커밋 후 재생성된 위젯을 다시 찾아 포커스를 돌려준다
+const FROM_ATTR = 'data-table-from'
+
 class TableWidget extends WidgetType {
   constructor(private readonly b: TableBlock) { super() }
 
-  // 내용이 같으면 다시 그리지 않는다 (커서 이동마다 DOM 재생성 방지)
   eq(other: TableWidget): boolean {
-    return JSON.stringify(this.b.header) === JSON.stringify(other.b.header)
+    return this.b.from === other.b.from
+      && JSON.stringify(this.b.header) === JSON.stringify(other.b.header)
       && JSON.stringify(this.b.aligns) === JSON.stringify(other.b.aligns)
       && JSON.stringify(this.b.rows) === JSON.stringify(other.b.rows)
   }
 
   toDOM(view: EditorView): HTMLElement {
+    const b = this.b
+    const cols = b.aligns.length
+
     const wrap = document.createElement('div')
     wrap.className = 'cm-md-table-wrap'
+    wrap.setAttribute(FROM_ATTR, String(b.from))
 
     const table = document.createElement('table')
     table.className = 'cm-md-table'
 
-    const cols = this.b.aligns.length
+    // 커밋이 문서를 바꾸면 이 위젯 DOM은 통째로 교체된다. 교체된 뒤에 남은
+    // 옛 노드의 blur가 늦게 도착해 낡은 [from, to]로 또 쓰는 걸 막는 플래그.
+    let dead = false
+
+    /** 화면(contentEditable)에 지금 들어있는 값을 그대로 읽는다 */
+    function readCells(): { header: string[]; rows: string[][] } {
+      const header = Array.from(table.querySelectorAll('thead .cm-tcell'))
+        .map(el => el.textContent ?? '')
+      const rows = Array.from(table.querySelectorAll('tbody tr'))
+        .map(tr => Array.from(tr.querySelectorAll('.cm-tcell')).map(el => el.textContent ?? ''))
+      return { header, rows }
+    }
+
+    /** 현재 화면 값을 마크다운으로 재직렬화해 문서에 한 번에 반영 */
+    function commit(extra?: { header: string[]; aligns: Align[]; rows: string[][] }) {
+      if (dead) return
+      const next = extra ?? { ...readCells(), aligns: b.aligns }
+      const text = serializeTable(next)
+      if (text === view.state.doc.sliceString(b.from, b.to)) return
+      dead = true
+      view.dispatch({ changes: { from: b.from, to: b.to, insert: text } })
+    }
+
+    /** 커밋 후 새로 그려진 위젯에서 같은 좌표의 셀을 찾아 포커스 (row -1 = 헤더) */
+    function focusCell(row: number, col: number, atStart = false) {
+      const host = view.dom.querySelector(`[${FROM_ATTR}="${b.from}"]`)
+      const sel = row === -1
+        ? `thead tr th:nth-child(${col + 1}) .cm-tcell`
+        : `tbody tr:nth-child(${row + 1}) td:nth-child(${col + 1}) .cm-tcell`
+      const el = host?.querySelector(sel) as HTMLElement | null
+      if (!el) return
+      el.focus()
+      const range = document.createRange()
+      range.selectNodeContents(el)
+      range.collapse(atStart)
+      const s = window.getSelection()
+      s?.removeAllRanges()
+      s?.addRange(range)
+    }
+
+    function makeCell(tag: 'th' | 'td', text: string, row: number, col: number): HTMLElement {
+      const cell = document.createElement(tag)
+      cell.style.textAlign = b.aligns[col]
+      const editable = document.createElement('div')
+      editable.className = 'cm-tcell'
+      editable.contentEditable = 'true'
+      editable.textContent = text
+      editable.spellcheck = false
+
+      // 표 셀은 한 줄이므로 붙여넣기의 줄바꿈은 공백으로 눕힌다
+      editable.addEventListener('paste', (e) => {
+        e.preventDefault()
+        const t = e.clipboardData?.getData('text/plain') ?? ''
+        document.execCommand('insertText', false, t.replace(/\r?\n/g, ' '))
+      })
+
+      editable.addEventListener('blur', () => commit())
+
+      editable.addEventListener('keydown', (e) => {
+        if (e.key === 'Escape') {
+          editable.textContent = row === -1 ? b.header[col] : b.rows[row][col]
+          editable.blur()
+          return
+        }
+        if (e.key === 'Enter') {
+          e.preventDefault()
+          e.stopPropagation()
+          const rowCount = table.querySelectorAll('tbody tr').length
+          commit()
+          if (row + 1 < rowCount) focusCell(row + 1, col)
+          else editable.blur()
+          return
+        }
+        if (e.key === 'Tab') {
+          e.preventDefault()
+          e.stopPropagation()
+          const rowCount = table.querySelectorAll('tbody tr').length
+          const forward = !e.shiftKey
+          let r = row, c = col + (forward ? 1 : -1)
+          if (c >= cols) { r += 1; c = 0 }
+          else if (c < 0) { r -= 1; c = cols - 1 }
+          commit()
+          if (r < -1 || r >= rowCount) { editable.blur(); return }
+          focusCell(r, c, forward)
+          return
+        }
+        // 빈 셀에서 Backspace를 두면 브라우저가 셀 div 자체를 지워버린다
+        if (e.key === 'Backspace' && !editable.textContent) {
+          e.preventDefault()
+          return
+        }
+        // 저장 단축키는 그대로 흘려보내고, 나머지 키는 CM 키맵(들여쓰기·서식
+        // 단축키)이 표 밖 커서에 대해 동작하지 않도록 여기서 막는다
+        if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 's') return
+        e.stopPropagation()
+      })
+
+      cell.appendChild(editable)
+      return cell
+    }
+
     const thead = document.createElement('thead')
     const htr = document.createElement('tr')
-    for (let i = 0; i < cols; i++) {
-      const th = document.createElement('th')
-      th.textContent = this.b.header[i] ?? ''
-      th.style.textAlign = this.b.aligns[i]
-      htr.appendChild(th)
-    }
+    for (let i = 0; i < cols; i++) htr.appendChild(makeCell('th', b.header[i] ?? '', -1, i))
     thead.appendChild(htr)
     table.appendChild(thead)
 
     const tbody = document.createElement('tbody')
-    for (const row of this.b.rows) {
+    b.rows.forEach((row, r) => {
       const tr = document.createElement('tr')
-      for (let i = 0; i < cols; i++) {
-        const td = document.createElement('td')
-        td.textContent = row[i] ?? ''
-        td.style.textAlign = this.b.aligns[i]
-        tr.appendChild(td)
-      }
+      for (let i = 0; i < cols; i++) tr.appendChild(makeCell('td', row[i] ?? '', r, i))
       tbody.appendChild(tr)
-    }
+    })
     table.appendChild(tbody)
     wrap.appendChild(table)
 
-    // 표를 클릭하면 그 자리의 원본 마크다운으로 커서를 옮겨 바로 편집.
-    // 누른 셀에 해당하는 줄로 보내 준다.
-    wrap.addEventListener('mousedown', (e) => {
-      e.preventDefault()
-      const cell = (e.target as HTMLElement)?.closest?.('td, th') as HTMLTableCellElement | null
-      let pos = this.b.from
-      if (cell) {
-        const rowEl = cell.parentElement as HTMLTableRowElement
-        const isHeader = cell.tagName === 'TH'
-        // 0=헤더, 1=구분행, 2+=본문 → 구분행은 건너뛰고 계산
-        const rowIdx = isHeader ? 0 : rowEl.rowIndex + 1
-        const line = view.state.doc.lineAt(this.b.from).number + rowIdx
-        const target = Math.min(line, view.state.doc.lines)
-        pos = view.state.doc.line(target).to
-      }
-      view.dispatch({ selection: { anchor: pos }, scrollIntoView: true })
-      view.focus()
-    })
+    // ── 행/열 추가·삭제 ──
+    const toolbar = document.createElement('div')
+    toolbar.className = 'cm-md-table-toolbar'
+
+    function button(text: string, title: string, danger: boolean, onClick: () => void) {
+      const el = document.createElement('button')
+      el.type = 'button'
+      el.textContent = text
+      el.title = title
+      el.className = 'cm-md-table-btn' + (danger ? ' cm-md-table-btn-danger' : '')
+      // mousedown 기본동작을 막아야 편집 중이던 셀이 blur되지 않는다
+      el.addEventListener('mousedown', (e) => e.preventDefault())
+      el.addEventListener('click', onClick)
+      return el
+    }
+
+    toolbar.append(
+      button('+ 행', '아래에 행 추가', false, () => {
+        const { header, rows } = readCells()
+        commit({ header, aligns: b.aligns, rows: [...rows, new Array(cols).fill('')] })
+        focusCell(rows.length, 0)
+      }),
+      button('− 행', '마지막 행 삭제', true, () => {
+        const { header, rows } = readCells()
+        if (!rows.length) return
+        commit({ header, aligns: b.aligns, rows: rows.slice(0, -1) })
+      }),
+      button('+ 열', '오른쪽에 열 추가', false, () => {
+        const { header, rows } = readCells()
+        commit({
+          header: [...header, ''],
+          aligns: [...b.aligns, 'left'],
+          rows: rows.map(r => [...r, '']),
+        })
+        focusCell(-1, cols)
+      }),
+      button('− 열', '마지막 열 삭제', true, () => {
+        if (cols <= 1) return
+        const { header, rows } = readCells()
+        commit({
+          header: header.slice(0, -1),
+          aligns: b.aligns.slice(0, -1),
+          rows: rows.map(r => r.slice(0, -1)),
+        })
+      }),
+    )
+    wrap.appendChild(toolbar)
 
     return wrap
   }
 
-  ignoreEvent(): boolean { return false }
+  // 셀 안 클릭/타이핑은 우리 로직이 다 처리 — CM이 자체 커서 이동을 시도하지
+  // 않도록 이벤트를 통째로 무시하게 한다.
+  ignoreEvent(): boolean { return true }
 }
 
 function build(state: EditorState): DecorationSet {
   const builder = new RangeSetBuilder<Decoration>()
-  const sel = state.selection
   for (const b of findTables(state)) {
-    // 커서/선택이 표에 걸쳐 있으면 원본 마크다운을 그대로 노출 (편집 모드)
-    const inside = sel.ranges.some(r => r.to >= b.from && r.from <= b.to)
-    if (inside) continue
     builder.add(b.from, b.to, Decoration.replace({ widget: new TableWidget(b), block: true }))
   }
   return builder.finish()
@@ -166,7 +315,7 @@ function build(state: EditorState): DecorationSet {
 const tableField = StateField.define<DecorationSet>({
   create(state) { return build(state) },
   update(value, tr) {
-    if (!tr.docChanged && !tr.selection) return value
+    if (!tr.docChanged) return value
     return build(tr.state)
   },
   provide: f => EditorView.decorations.from(f),

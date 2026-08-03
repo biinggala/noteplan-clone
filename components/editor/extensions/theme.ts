@@ -108,6 +108,41 @@ export const noteplanTheme = [
     },
     '.cm-md-table td': { color: 'var(--text-secondary)' },
     '.cm-md-table tbody tr:hover td': { backgroundColor: 'var(--cm-activeline)' },
+    // 셀은 그 자리에서 바로 편집되는 contentEditable
+    '.cm-tcell': {
+      outline: 'none',
+      minHeight: '1.4em',
+      whiteSpace: 'pre-wrap',
+      wordBreak: 'break-word',
+    },
+    '.cm-tcell:focus': {
+      boxShadow: 'inset 0 0 0 2px var(--accent)',
+      borderRadius: '2px',
+    },
+    // 행/열 추가·삭제 버튼 — 표 위에 마우스를 올렸을 때만 드러난다
+    '.cm-md-table-toolbar': {
+      display: 'flex',
+      gap: '4px',
+      marginTop: '4px',
+      opacity: '0',
+      transition: 'opacity 120ms ease',
+    },
+    '.cm-md-table-wrap:hover .cm-md-table-toolbar, .cm-md-table-wrap:focus-within .cm-md-table-toolbar': {
+      opacity: '1',
+    },
+    '.cm-md-table-btn': {
+      font: 'inherit',
+      fontSize: '11px',
+      lineHeight: '1',
+      padding: '4px 8px',
+      cursor: 'pointer',
+      color: 'var(--text-muted)',
+      background: 'var(--bg-secondary)',
+      border: '1px solid var(--border)',
+      borderRadius: '5px',
+    },
+    '.cm-md-table-btn:hover': { color: 'var(--text-primary)' },
+    '.cm-md-table-btn-danger:hover': { color: '#ef4444', borderColor: '#ef4444' },
 
     // ── [[ 자동완성 드롭다운 ────────────────────────────────────────────
     // CodeMirror 기본 스타일(흰 배경 + 시스템 폰트)이 테마와 전혀 안 맞아서 새로 입힘
