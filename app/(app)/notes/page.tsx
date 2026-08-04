@@ -44,7 +44,7 @@ function NoteInner() {
       const mentions  = extractMentions(content)
       const backlinks = extractBacklinks(content)
       const supersedes = extractSupersedes(content)
-      const updated   = { ...prev, content, tags, mentions, backlinks }
+      const updated   = { ...prev, content, tags, mentions, backlinks, supersedes }
       setActiveNote(updated)
       updateNote(prev.id, { content, tags, mentions, backlinks, supersedes })
       return updated
@@ -88,7 +88,7 @@ function NoteInner() {
     const mentions = extractMentions(content)
     const backlinks = extractBacklinks(content)
     const supersedes = extractSupersedes(content)
-    const updated = { ...note, content, tags, mentions, backlinks }
+    const updated = { ...note, content, tags, mentions, backlinks, supersedes }
     setNote(updated)
     setActiveNote(updated)
     updateNote(note.id, { content, tags, mentions, backlinks, supersedes })
