@@ -7,6 +7,9 @@ import { extractTags, extractMentions, extractBacklinks, extractSupersedes } fro
 import { suggestAtomTitle } from '@/components/editor/extensions/selectionMenu'
 import type { Note } from '@/types/note'
 
+/** 승격한 원자가 들어갈 기본 폴더 (PARA) */
+const PROMOTE_FOLDER = 'Resources'
+
 interface Pending {
   body: string
   resolve: (title: string | null) => void
@@ -68,7 +71,10 @@ export function usePromoteToAtom(sourceTitle?: string) {
         type: 'project',
         title: clean,
         content,
-        filePath: `Notes/${safe}.md`,
+        // 원자는 기본 Resources — 마감 있는 일(Projects)도, 지속되는 역할(Areas)도
+        // 아닌 "나중에 참조할 지식"이라서. 다른 데가 맞으면 사이드바에서 옮기면 된다.
+        folder: PROMOTE_FOLDER,
+        filePath: `${PROMOTE_FOLDER}/${safe}.md`,
         tags: extractTags(content),
         mentions: extractMentions(content),
         backlinks: extractBacklinks(content), supersedes: extractSupersedes(content),
@@ -90,7 +96,7 @@ export function usePromoteToAtom(sourceTitle?: string) {
         rounded-xl border border-[var(--border)] bg-[var(--bg-secondary)] shadow-2xl p-4">
         <div className="text-sm font-semibold text-[var(--text-primary)] mb-1">원자로 승격</div>
         <div className="text-[11px] text-[var(--text-muted)] mb-3">
-          선택한 내용이 새 노트가 되고, 원래 자리엔 링크만 남습니다.
+          선택한 내용이 <b>{PROMOTE_FOLDER}</b>의 새 노트가 되고, 원래 자리엔 링크만 남습니다.
         </div>
 
         <input
