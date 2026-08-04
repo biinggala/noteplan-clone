@@ -57,7 +57,7 @@ export function useWikiLink() {
       title,
       content: `# ${title}\n\n`,
       filePath: `Notes/${safe}.md`,
-      tags: [], mentions: [], backlinks: [],
+      tags: [], mentions: [], backlinks: [], supersedes: [],
       createdAt: Date.now(), updatedAt: Date.now(),
     }
     await upsertNote(note)

@@ -55,6 +55,11 @@ const ITEMS: SlashItem[] = [
   // 이미 각자의 자동완성이 붙어 있음
   { label: '노트 링크', keywords: 'link wikilink 링크 노트',  detail: '[[ ]]', insert: '[[]]', cursor: 2 },
   {
+    // 이 노트가 옛 노트를 갈아치웠다는 선언. 옛 노트를 열면 "대체됨" 배너가 뜬다.
+    label: '이전 노트 대체', keywords: 'supersedes 대체 갱신 최신 deprecate',
+    detail: 'supersedes::', insert: 'supersedes:: [[]]', cursor: 15, block: true,
+  },
+  {
     label: '오늘 날짜', keywords: 'date today 오늘 날짜',
     detail: format(new Date(), 'yyyy-MM-dd'),
     insert: () => format(new Date(), 'yyyy-MM-dd'),

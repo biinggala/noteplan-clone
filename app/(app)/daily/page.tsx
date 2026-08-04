@@ -5,7 +5,7 @@ import { format, parseISO, isValid, getWeek, getWeekYear } from 'date-fns'
 import { useNoteStore } from '@/lib/stores/noteStore'
 import { useCalendarStore } from '@/lib/stores/calendarStore'
 import { getOrCreateDailyNote, getOrCreateWeeklyNote, getNoteByDate, upsertNote } from '@/lib/db/noteRepository'
-import { extractTags, extractMentions, extractBacklinks } from '@/lib/parser/noteParser'
+import { extractTags, extractMentions, extractBacklinks, extractSupersedes } from '@/lib/parser/noteParser'
 import { parseTimeBlockLines } from '@/lib/parser/timeBlockParser'
 import { toggleTaskLine, type TaskOutlineTask } from '@/lib/parser/taskOutline'
 import { useTimeBlockStore } from '@/lib/stores/timeBlockStore'
@@ -19,6 +19,7 @@ import type { Note } from '@/types/note'
 import HistoryIcon from '@/components/icons/HistoryIcon'
 import TaskOutlinePanel from '@/components/editor/TaskOutlinePanel'
 import BacklinksPanel from '@/components/editor/BacklinksPanel'
+import SupersededBanner from '@/components/editor/SupersededBanner'
 import dynamic from 'next/dynamic'
 
 const NoteEditor = dynamic(() => import('@/components/editor/NoteEditor'), { ssr: false })
@@ -85,7 +86,7 @@ function DailyNoteInner() {
     const updatedContent = lines.join('\n')
     const updated: Note = {
       ...wn, content: updatedContent,
-      tags: extractTags(updatedContent), mentions: extractMentions(updatedContent), backlinks: extractBacklinks(updatedContent),
+      tags: extractTags(updatedContent), mentions: extractMentions(updatedContent), backlinks: extractBacklinks(updatedContent), supersedes: extractSupersedes(updatedContent),
     }
     setWeeklyNote(updated)
     try {
@@ -123,9 +124,10 @@ function DailyNoteInner() {
       const tags      = extractTags(content)
       const mentions  = extractMentions(content)
       const backlinks = extractBacklinks(content)
+      const supersedes = extractSupersedes(content)
       const updated   = { ...prev, content, tags, mentions, backlinks }
       setActiveNote(updated)
-      updateNote(prev.id, { content, tags, mentions, backlinks })
+      updateNote(prev.id, { content, tags, mentions, backlinks, supersedes })
       syncTimeBlocks(dateStr, parseTimeBlockLines(content))
       setTaskDate(dateStr, hasOpenTask(content))
       return updated
@@ -151,7 +153,7 @@ function DailyNoteInner() {
           if (prev.content !== n.content) {
             return { ...prev, updatedAt: saved.updatedAt }
           }
-          return { ...prev, content: saved.content, tags: saved.tags, mentions: saved.mentions, backlinks: saved.backlinks, updatedAt: saved.updatedAt }
+          return { ...prev, content: saved.content, tags: saved.tags, mentions: saved.mentions, backlinks: saved.backlinks, supersedes: saved.supersedes, updatedAt: saved.updatedAt }
         })
       }
       console.log('[Save] ✅', n.date, 'len=', saved.content.length)
@@ -201,10 +203,11 @@ function DailyNoteInner() {
     const tags      = extractTags(content)
     const mentions  = extractMentions(content)
     const backlinks = extractBacklinks(content)
+    const supersedes = extractSupersedes(content)
     const updated   = { ...note, content, tags, mentions, backlinks }
     setNote(updated)
     setActiveNote(updated)
-    updateNote(note.id, { content, tags, mentions, backlinks })
+    updateNote(note.id, { content, tags, mentions, backlinks, supersedes })
     syncTimeBlocks(dateStr, parseTimeBlockLines(content))
     setTaskDate(dateStr, hasOpenTask(content))
   }, [note, setActiveNote, updateNote, syncTimeBlocks, dateStr])
@@ -308,6 +311,7 @@ function DailyNoteInner() {
       />
 
       {/* Editor */}
+      <SupersededBanner title={note.title} onOpen={openWikiLink} />
       <div className="flex-1 overflow-hidden">
         <NoteEditor
           content={note.content}

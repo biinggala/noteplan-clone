@@ -11,6 +11,8 @@ export interface Note {
   tags: string[]
   mentions: string[]
   backlinks: string[]
+  /** 이 노트가 갈아치운 옛 노트 제목들 (`supersedes:: [[옛 노트]]`) */
+  supersedes: string[]
   createdAt: number       // timestamp
   updatedAt: number       // timestamp
 }

@@ -1,7 +1,7 @@
 import { startOfISOWeek, addDays, format } from 'date-fns'
 import { v4 as uuidv4 } from 'uuid'
 import type { Note, NoteType } from '@/types/note'
-import { extractTags, extractMentions, extractBacklinks } from '@/lib/parser/noteParser'
+import { extractTags, extractMentions, extractBacklinks, extractSupersedes } from '@/lib/parser/noteParser'
 
 export interface ImportFileMeta {
   type: NoteType
@@ -99,7 +99,7 @@ export function parseProjectFile(relativePath: string, content: string): Note | 
     folder,
     tags: extractTags(content),
     mentions: extractMentions(content),
-    backlinks: extractBacklinks(content),
+    backlinks: extractBacklinks(content), supersedes: extractSupersedes(content),
     createdAt: now,
     updatedAt: now,
   }
@@ -119,7 +119,7 @@ export function parseBackupFile(filename: string, content: string): Note | null 
     filePath: meta.filePath,
     tags: extractTags(content),
     mentions: extractMentions(content),
-    backlinks: extractBacklinks(content),
+    backlinks: extractBacklinks(content), supersedes: extractSupersedes(content),
     createdAt: now,
     updatedAt: now,
   }

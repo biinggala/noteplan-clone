@@ -14,6 +14,8 @@ const KO = '가-힣ㄱ-ㅎㅏ-ㅣ'
 const TAG_PATTERN = new RegExp(`#([\\w${KO}/]+)`, 'g')
 const MENTION_PATTERN = new RegExp(`@([\\w${KO}/]+)`, 'g')
 const WIKILINK_PATTERN = /\[\[([^\]]+)\]\]/g
+// `supersedes:: [[옛 노트]]` — 이 노트가 저 노트를 갈아치웠다는 선언
+const SUPERSEDES_LINE = /^[ \t]*supersedes::[ \t]*(.+)$/gim
 
 // 링크/URL/이메일 영역 — 이 안의 #, @ 는 태그·멘션이 아니다
 const LINK_MASK_PATTERN = new RegExp(
@@ -39,6 +41,17 @@ export interface Derived {
   tags: string[]
   mentions: string[]
   backlinks: string[]
+  supersedes: string[]
+}
+
+function extractSupersedes(content: string): string[] {
+  const out: string[] = []
+  SUPERSEDES_LINE.lastIndex = 0
+  let line: RegExpExecArray | null
+  while ((line = SUPERSEDES_LINE.exec(content))) {
+    for (const m of line[1].matchAll(/\[\[([^\]]+)\]\]/g)) out.push(normalizeKey(m[1].trim()))
+  }
+  return [...new Set(out)]
 }
 
 export function derive(content: string): Derived {
@@ -47,6 +60,7 @@ export function derive(content: string): Derived {
     tags: [...new Set([...masked.matchAll(TAG_PATTERN)].map(m => normalizeKey(m[1])))],
     mentions: [...new Set([...masked.matchAll(MENTION_PATTERN)].map(m => normalizeKey(m[1])))],
     backlinks: [...new Set([...content.matchAll(WIKILINK_PATTERN)].map(m => normalizeKey(m[1].trim())))],
+    supersedes: extractSupersedes(content),
   }
 }
 

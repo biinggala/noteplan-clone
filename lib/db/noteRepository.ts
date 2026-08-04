@@ -5,7 +5,7 @@ import { format, addDays, startOfWeek, endOfWeek } from 'date-fns'
 const WK = { weekStartsOn: 0 as const, firstWeekContainsDate: 4 as const }
 import { v4 as uuidv4 } from 'uuid'
 import { createClient } from '@/lib/supabase/client'
-import { normalizeKey, renameWikiLinks, extractBacklinks } from '@/lib/parser/noteParser'
+import { normalizeKey, renameWikiLinks, extractBacklinks, extractSupersedes } from '@/lib/parser/noteParser'
 
 // ── Supabase row → Note 변환 ─────────────────────────────────────────────────
 
@@ -21,6 +21,7 @@ function rowToNote(row: Record<string, unknown>): Note {
     tags:      (row.tags as string[]) ?? [],
     mentions:  (row.mentions as string[]) ?? [],
     backlinks: (row.backlinks as string[]) ?? [],
+    supersedes: (row.supersedes as string[]) ?? [],
     createdAt: row.created_at as number,
     updatedAt: row.updated_at as number,
   }
@@ -39,6 +40,7 @@ function noteToRow(note: Partial<Note> & { id: string }, userId: string) {
     tags:       note.tags ?? [],
     mentions:   note.mentions ?? [],
     backlinks:  note.backlinks ?? [],
+    supersedes: note.supersedes ?? [],
     created_at: note.createdAt ?? Date.now(),
     updated_at: note.updatedAt ?? Date.now(),
   }
@@ -166,7 +168,12 @@ export async function renameNote(
 
       const { error } = await supabase
         .from('notes')
-        .update({ content: next, backlinks: extractBacklinks(next), updated_at: now })
+        .update({
+          content: next,
+          backlinks: extractBacklinks(next),
+          supersedes: extractSupersedes(next),
+          updated_at: now,
+        })
         .eq('id', row.id as string)
         .eq('user_id', userId)
       if (error) throw error
@@ -318,11 +325,29 @@ export async function getBacklinks(title: string): Promise<Note[]> {
   return (data ?? []).map(rowToNote)
 }
 
+/**
+ * 이 노트를 갈아치운 노트들 — `supersedes:: [[이 제목]]` 을 선언한 노트.
+ * 보통 0개 또는 1개다. 여러 개면 가장 최근 것이 현재 버전.
+ */
+export async function getSupersededBy(title: string): Promise<Note[]> {
+  const supabase = createClient()
+  const userId = await getUserId()
+  const { data } = await supabase
+    .from('notes')
+    .select('*')
+    .eq('user_id', userId)
+    .contains('supersedes', [normalizeKey(title).trim()])
+    .order('updated_at', { ascending: false })
+  return (data ?? []).map(rowToNote)
+}
+
 export interface LinkTarget {
   id: string; title: string; type: NoteType; folder?: string
   updatedAt: number
   /** 이 노트가 [[링크]]로 참조된 횟수 — 제텔카스텐의 '허브 노트'를 위로 올리는 데 사용 */
   inbound: number
+  /** 다른 노트가 supersedes로 이 노트를 갈아치웠는지 — 링크 후보에서 뒤로 민다 */
+  superseded?: boolean
 }
 
 /** [[ 자동완성용 경량 목록 (content 제외) + 피참조 수 집계 */
@@ -331,17 +356,22 @@ export async function getLinkTargets(): Promise<LinkTarget[]> {
   const userId = await getUserId()
   const { data } = await supabase
     .from('notes')
-    .select('id,title,type,folder,updated_at,backlinks')
+    .select('id,title,type,folder,updated_at,backlinks,supersedes')
     .eq('user_id', userId)
     .limit(2000)
   const rows = data ?? []
 
   // 전체 노트의 backlinks를 모아 "제목 → 피참조 횟수" 집계
   const inboundBy = new Map<string, number>()
+  // 누군가에게 갈아치워진 제목들 — 이제 링크 대상으로 권하면 안 된다
+  const supersededTitles = new Set<string>()
   for (const r of rows) {
     for (const t of ((r.backlinks as string[]) ?? [])) {
       const k = normalizeKey(t).trim().toLowerCase()
       inboundBy.set(k, (inboundBy.get(k) ?? 0) + 1)
+    }
+    for (const t of ((r.supersedes as string[]) ?? [])) {
+      supersededTitles.add(normalizeKey(t).trim().toLowerCase())
     }
   }
 
@@ -354,6 +384,7 @@ export async function getLinkTargets(): Promise<LinkTarget[]> {
       folder: (r.folder as string) ?? undefined,
       updatedAt: (r.updated_at as number) ?? 0,
       inbound: inboundBy.get(normalizeKey(title).trim().toLowerCase()) ?? 0,
+      superseded: supersededTitles.has(normalizeKey(title).trim().toLowerCase()),
     }
   })
 }
@@ -570,6 +601,7 @@ export async function getOrCreateDailyNote(dateStr: string): Promise<Note> {
     tags:       [] as string[],
     mentions:   [] as string[],
     backlinks:  [] as string[],
+    supersedes: [] as string[],
     created_at: Date.now(),
     updated_at: Date.now(),
   }
@@ -624,6 +656,7 @@ export async function getOrCreateWeeklyNote(weekKey: string): Promise<Note> {
     tags:       [] as string[],
     mentions:   [] as string[],
     backlinks:  [] as string[],
+    supersedes: [] as string[],
     created_at: Date.now(),
     updated_at: Date.now(),
   }
@@ -665,6 +698,7 @@ export async function getOrCreateMonthlyNote(monthKey: string): Promise<Note> {
     tags:       [] as string[],
     mentions:   [] as string[],
     backlinks:  [] as string[],
+    supersedes: [] as string[],
     created_at: Date.now(),
     updated_at: Date.now(),
   }

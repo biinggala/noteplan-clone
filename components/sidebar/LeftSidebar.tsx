@@ -545,6 +545,7 @@ function NewNoteModal({ onClose }: { onClose: () => void }) {
       tags: [],
       mentions: [],
       backlinks: [],
+      supersedes: [],
       createdAt: Date.now(),
       updatedAt: Date.now(),
     }

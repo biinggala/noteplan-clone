@@ -88,6 +88,7 @@ export default function CommandBar() {
         tags: [],
         mentions: [],
         backlinks: [],
+        supersedes: [],
         createdAt: 0,
         updatedAt: 0,
       }])

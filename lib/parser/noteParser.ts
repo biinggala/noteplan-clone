@@ -96,6 +96,31 @@ export function extractBacklinks(content: string): string[] {
 }
 
 /**
+ * `supersedes:: [[옛 노트]]` — 이 노트가 저 노트를 갈아치웠다는 선언.
+ *
+ * 노트의 시효성을 프로즈가 아니라 데이터로 만들기 위한 유일한 링크 타입이다.
+ * 이게 있으면 "6월에 쓴 방향성 노트"를 지금도 유효한 근거로 인용하는 사고를
+ * 구조적으로 막을 수 있다.
+ *
+ * 줄 맨 앞(들여쓰기 허용)에 와야 하고 한 줄에 여러 개 써도 된다.
+ * `::` 는 Dataview 관례 — 마크다운 렌더링과 충돌하지 않고(>는 인용구가 됨)
+ * 평문으로 읽어도 뜻이 통한다.
+ */
+const SUPERSEDES_LINE = /^[ \t]*supersedes::[ \t]*(.+)$/gim
+
+export function extractSupersedes(content: string): string[] {
+  const out: string[] = []
+  SUPERSEDES_LINE.lastIndex = 0
+  let line: RegExpExecArray | null
+  while ((line = SUPERSEDES_LINE.exec(content))) {
+    for (const m of line[1].matchAll(/\[\[([^\]]+)\]\]/g)) {
+      out.push(normalizeKey(m[1].trim()))
+    }
+  }
+  return [...new Set(out)]
+}
+
+/**
  * 본문의 [[옛 제목]]을 [[새 제목]]으로 바꾼다 (노트 이름 변경 시 링크 따라가기).
  * 대소문자·앞뒤 공백·한글 NFC/NFD 차이는 무시하고 매칭한다.
  */

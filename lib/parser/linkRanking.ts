@@ -78,6 +78,12 @@ export function rankLinkTargets(
     // ── PARA 폴더에 정리된 노트 소폭 가산 ──
     const filed = t.folder ? 6 : 0
 
+    // ── 대체된 노트 감점 ──
+    // 다른 노트가 supersedes로 갈아치운 노트는 더 이상 현재가 아니다.
+    // Archive보다 세게 누른다 — 보관은 "지난 일"이지만 대체는 "틀린 정보"에 가깝다.
+    // 그래도 완전히 숨기진 않는다: 옛 노트를 일부러 찾아볼 일이 있다.
+    const supersededPenalty = t.superseded ? (q ? 30 : 70) : 0
+
     // ── Archive 감점 ──
     // 보관된 노트는 시의성이 낮다. 캘린더 노트만큼 세게 누르진 않는다 —
     // 이름을 알고 찾아 치면(쿼리 있음) 나와야 하므로.
@@ -93,7 +99,8 @@ export function rankLinkTargets(
 
     out.push({
       t,
-      score: lexical + hub + filed + recency + semantic - calendarPenalty - archivePenalty,
+      score: lexical + hub + filed + recency + semantic
+        - calendarPenalty - archivePenalty - supersededPenalty,
     })
   }
 

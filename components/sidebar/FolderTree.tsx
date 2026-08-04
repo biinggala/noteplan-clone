@@ -405,6 +405,7 @@ export default function FolderTree() {
       tags: [] as string[],
       mentions: [] as string[],
       backlinks: [] as string[],
+      supersedes: [] as string[],
       createdAt: Date.now(),
       updatedAt: Date.now(),
     }

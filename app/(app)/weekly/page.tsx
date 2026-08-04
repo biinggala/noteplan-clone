@@ -5,10 +5,11 @@ import { format, addDays, startOfWeek, endOfWeek, getWeek, getWeekYear } from 'd
 import { useNoteStore } from '@/lib/stores/noteStore'
 import { useCalendarStore } from '@/lib/stores/calendarStore'
 import { getOrCreateWeeklyNote, upsertNote } from '@/lib/db/noteRepository'
-import { extractTags, extractMentions, extractBacklinks } from '@/lib/parser/noteParser'
+import { extractTags, extractMentions, extractBacklinks, extractSupersedes } from '@/lib/parser/noteParser'
 import { usePromoteToAtom } from '@/lib/hooks/usePromoteToAtom'
 import { useWikiLink } from '@/lib/hooks/useWikiLink'
 import BacklinksPanel from '@/components/editor/BacklinksPanel'
+import SupersededBanner from '@/components/editor/SupersededBanner'
 import type { Note } from '@/types/note'
 import dynamic from 'next/dynamic'
 
@@ -82,10 +83,11 @@ function WeeklyNoteInner() {
     const tags      = extractTags(content)
     const mentions  = extractMentions(content)
     const backlinks = extractBacklinks(content)
+    const supersedes = extractSupersedes(content)
     const updated   = { ...note, content, tags, mentions, backlinks }
     setNote(updated)
     setActiveNote(updated)
-    updateNote(note.id, { content, tags, mentions, backlinks })
+    updateNote(note.id, { content, tags, mentions, backlinks, supersedes })
   }, [note, setActiveNote, updateNote])
 
   const handleSave = useCallback(async () => {
@@ -147,6 +149,7 @@ function WeeklyNoteInner() {
       </div>
 
       {/* Editor */}
+      <SupersededBanner title={note.title} onOpen={openWikiLink} />
       <div className="flex-1 overflow-hidden">
         <NoteEditor
           content={note.content}
