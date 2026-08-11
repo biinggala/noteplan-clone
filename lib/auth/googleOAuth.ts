@@ -31,11 +31,50 @@ export async function startGoogleOAuth(
     ? { access_type: 'offline', prompt: 'consent' }
     : undefined
 
+  const redirectTo = isTauri()
+    ? 'noteplan://auth-callback'
+    : `${window.location.origin}/auth/callback`
+
+  // 이미 로그인한 상태에서 캘린더를 붙이는 경우엔 linkIdentity를 쓴다.
+  // signInWithOAuth는 말 그대로 '로그인'이라, 회사 계정으로 캘린더를 연결하면
+  // 앱 로그인 자체가 그 계정으로 갈아치워진다(실제로 겪은 버그 — 이후 만든
+  // 노트가 전부 엉뚱한 계정에 쌓였다). linkIdentity는 지금 사용자에
+  // 두 번째 구글 계정을 '추가'만 하므로 로그인이 유지된다.
+  const { data: { session } } = await supabase.auth.getSession()
+  const shouldLink = withCalendar && !!session
+
+  if (shouldLink) {
+    const { data, error } = await supabase.auth.linkIdentity({
+      provider: 'google',
+      options: {
+        redirectTo,
+        skipBrowserRedirect: isTauri(),
+        ...(scopes ? { scopes } : {}),
+        ...(queryParams ? { queryParams } : {}),
+      },
+    })
+    if (error) {
+      // Supabase 대시보드에서 Manual Linking이 꺼져 있으면 여기로 온다.
+      // 이 경우 signInWithOAuth로 폴백하면 계정이 바뀌어버리므로 폴백하지 않는다.
+      return {
+        error: `캘린더 연결 실패: ${error.message}\n` +
+          'Supabase 대시보드 → Authentication → Sign In / Providers 에서 ' +
+          '"Allow manual linking"을 켜야 합니다.',
+      }
+    }
+    if (isTauri() && data?.url) {
+      const { openUrl } = await import('@tauri-apps/plugin-opener')
+      await openUrl(data.url)
+    }
+    return {}
+  }
+
+  // 로그인(또는 로그아웃 상태에서의 캘린더 연결) — 세션을 새로 만든다
   if (isTauri()) {
     const { data, error } = await supabase.auth.signInWithOAuth({
       provider: 'google',
       options: {
-        redirectTo: 'noteplan://auth-callback',
+        redirectTo,
         skipBrowserRedirect: true,
         ...(scopes ? { scopes } : {}),
         ...(queryParams ? { queryParams } : {}),
@@ -47,11 +86,10 @@ export async function startGoogleOAuth(
     return {}
   }
 
-  // 웹앱: 같은 창 redirect
   await supabase.auth.signInWithOAuth({
     provider: 'google',
     options: {
-      redirectTo: `${window.location.origin}/auth/callback`,
+      redirectTo,
       ...(scopes ? { scopes } : {}),
       ...(queryParams ? { queryParams } : {}),
     },

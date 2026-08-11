@@ -12,6 +12,7 @@ import type { Note } from '@/types/note'
 import HistoryIcon from '@/components/icons/HistoryIcon'
 import BacklinksPanel from '@/components/editor/BacklinksPanel'
 import SupersededBanner from '@/components/editor/SupersededBanner'
+import NoteBreadcrumb from '@/components/editor/NoteBreadcrumb'
 import dynamic from 'next/dynamic'
 
 const NoteEditor = dynamic(() => import('@/components/editor/NoteEditor'), { ssr: false })
@@ -151,7 +152,7 @@ function NoteInner() {
   return (
     <div className="flex flex-col h-full">
       <div data-tauri-drag-region className="electron-drag px-12 py-3 border-b border-[var(--border)] flex-shrink-0 flex items-center justify-between">
-        <h1 className="text-lg font-semibold text-[var(--text-primary)]">{note.title}</h1>
+        <NoteBreadcrumb title={note.title} folder={note.folder} />
         <div className="flex items-center gap-2">
           {typingAuthor && (
             <span className="text-xs text-[var(--accent)] flex items-center gap-1">

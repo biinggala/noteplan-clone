@@ -98,6 +98,30 @@ export default function LeftSidebar() {
     })
   }, [setNotes])
 
+  // 노트 '목록'을 실시간으로 따라간다.
+  // useNoteRealtime은 열려 있는 노트 하나의 '내용'만 구독하므로, Claude(MCP)가
+  // 새 노트를 만들면 사이드바에는 안 나타났다(마운트 때 읽은 목록 그대로).
+  // CMD+J는 매번 새로 쿼리해서 찾아지는 바람에 더 헷갈렸다.
+  useEffect(() => {
+    const supabase = createClient()
+    let timer: ReturnType<typeof setTimeout> | undefined
+    // 한 번에 여러 행이 바뀔 수 있어 살짝 모아서 한 번만 재조회
+    const refresh = () => {
+      clearTimeout(timer)
+      timer = setTimeout(() => {
+        getAllNotes().then(allNotes => {
+          setNotes(allNotes)
+          setProjectNotes(allNotes.filter(n => n.type === 'project'))
+        }).catch(console.error)
+      }, 300)
+    }
+    const channel = supabase
+      .channel('notes-list')
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'notes' }, refresh)
+      .subscribe()
+    return () => { clearTimeout(timer); supabase.removeChannel(channel) }
+  }, [setNotes])
+
   const navItem = (label: string, path: string, icon: React.ReactNode) => {
     const isActive = mounted && currentUrl === path
     return (
