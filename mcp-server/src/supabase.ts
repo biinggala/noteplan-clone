@@ -19,12 +19,24 @@ const SESSION_PATH = join(SESSION_DIR, 'session.json')
 
 interface StoredSession {
   refresh_token: string
+  /** 아직 유효한 access token — 있으면 굳이 refresh하지 않는다 (아래 주석 참고) */
+  access_token?: string
+  /** access token 만료 시각 (초 단위 epoch) */
+  expires_at?: number
   email?: string
 }
 
-export function saveSession(refresh_token: string, email?: string): void {
+export function saveSession(
+  refresh_token: string,
+  email?: string,
+  access_token?: string,
+  expires_at?: number,
+): void {
   mkdirSync(SESSION_DIR, { recursive: true })
-  writeFileSync(SESSION_PATH, JSON.stringify({ refresh_token, email } satisfies StoredSession, null, 2))
+  writeFileSync(
+    SESSION_PATH,
+    JSON.stringify({ refresh_token, access_token, expires_at, email } satisfies StoredSession, null, 2),
+  )
   chmodSync(SESSION_PATH, 0o600)
 }
 
@@ -69,6 +81,28 @@ export async function getAuthedClient(): Promise<AuthedClient> {
     auth: { persistSession: false, autoRefreshToken: false },
   })
 
+  // 아직 안 만료된 access token이 있으면 그걸 그대로 쓴다.
+  //
+  // Supabase는 refresh할 때마다 refresh_token을 새로 발급하고 옛것을 죽인다
+  // (로테이션). 서버 인스턴스가 둘 이상 뜨면(예: Claude 데스크톱 + Claude Code)
+  // 각자 시작할 때 refresh를 해서 서로의 토큰을 무효화한다 — 실제로 이걸로
+  // 세션이 날아갔다. 만료 전에는 refresh를 아예 안 하는 게 가장 확실한 예방.
+  const now = Math.floor(Date.now() / 1000)
+  if (stored.access_token && stored.expires_at && stored.expires_at > now + 60) {
+    const { data: setData, error: setErr } = await db.auth.setSession({
+      access_token: stored.access_token,
+      refresh_token: stored.refresh_token,
+    })
+    if (!setErr && setData.session) {
+      return {
+        db,
+        userId: setData.session.user.id,
+        email: setData.session.user.email ?? stored.email,
+      }
+    }
+    // 실패하면 아래 refresh 경로로 폴백
+  }
+
   const { data, error } = await db.auth.refreshSession({ refresh_token: stored.refresh_token })
   if (error || !data.session) {
     throw new Error(
@@ -77,11 +111,12 @@ export async function getAuthedClient(): Promise<AuthedClient> {
     )
   }
 
-  // Supabase는 리프레시할 때마다 refresh_token을 새로 발급할 수 있다(로테이션).
-  // 다음 실행에서도 통하도록 매번 최신 값을 저장해둔다.
-  if (data.session.refresh_token !== stored.refresh_token) {
-    saveSession(data.session.refresh_token, stored.email)
-  }
+  saveSession(
+    data.session.refresh_token,
+    data.session.user.email ?? stored.email,
+    data.session.access_token,
+    data.session.expires_at,
+  )
 
   await db.auth.setSession({
     access_token: data.session.access_token,

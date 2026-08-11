@@ -76,6 +76,37 @@ async function broadcastTyping(noteId: string, typing: boolean): Promise<void> {
   finally { db.removeChannel(channel) }
 }
 
+/**
+ * 'Areas/블랙페이퍼' 같은 경로의 폴더 행을 (상위까지) 없으면 만든다.
+ *
+ * 앱 사이드바는 folders 테이블로 트리를 그린다. notes.folder에 문자열만 넣고
+ * 폴더 행을 안 만들면 그 노트는 트리에서 통째로 사라진다(검색으로만 나옴).
+ */
+async function ensureFolderPath(path: string): Promise<string | undefined> {
+  const segments = path.split('/').map(s => s.trim()).filter(Boolean)
+  if (!segments.length) return undefined
+
+  const { data: existing, error } = await db
+    .from('folders').select('id,path').eq('user_id', USER_ID)
+  if (error) return error.message
+  const byPath = new Map((existing ?? []).map(f => [f.path as string, f.id as string]))
+
+  let parentId: string | null = null
+  for (let i = 0; i < segments.length; i++) {
+    const sub = segments.slice(0, i + 1).join('/')
+    const hit = byPath.get(sub)
+    if (hit) { parentId = hit; continue }
+    const id = randomUUID()
+    const { error: insErr } = await db.from('folders').insert({
+      id, user_id: USER_ID, name: segments[i], path: sub, parent_id: parentId,
+    })
+    if (insErr) return `폴더 생성 실패(${sub}): ${insErr.message}`
+    byPath.set(sub, id)
+    parentId = id
+  }
+  return undefined
+}
+
 // ── 서버 ─────────────────────────────────────────────────────────────────────
 const server = new McpServer({ name: 'noteplan', version: '0.1.0' })
 
@@ -175,6 +206,13 @@ server.tool(
   { title: z.string(), content: z.string().optional(), folder: z.string().optional() },
   async ({ title, content, folder }) => {
     const now = Date.now()
+    // 폴더 행이 없으면 사이드바 트리에 이 노트가 아예 안 뜬다.
+    // (트리는 folders 테이블로 그리는데 notes.folder 문자열만 넣으면 붕 뜬다 —
+    //  CMD+J로는 찾아지는데 목록엔 없어서 한참 헤맸던 버그)
+    if (folder) {
+      const err = await ensureFolderPath(folder)
+      if (err) return fail(err)
+    }
     const filePath = folder ? `Notes/${folder}/${title}.md` : `Notes/${title}.md`
     const body = tagged(content ?? `# ${title}\n\n`)
     const row = {

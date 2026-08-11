@@ -70,7 +70,12 @@ async function main() {
     process.exit(1)
   }
 
-  saveSession(sessionData.session.refresh_token, sessionData.session.user.email ?? undefined)
+  saveSession(
+    sessionData.session.refresh_token,
+    sessionData.session.user.email ?? undefined,
+    sessionData.session.access_token,
+    sessionData.session.expires_at,
+  )
   console.log(`\n로그인 완료: ${sessionData.session.user.email ?? sessionData.session.user.id}`)
   console.log('이제 Claude에 MCP 서버를 등록하면 됩니다 (README 참고).')
 }
