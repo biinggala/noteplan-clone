@@ -12,7 +12,7 @@ export default function CalendarSettings() {
   const btnRef = useRef<HTMLButtonElement>(null)
   const { calendars, enabledCalendarIds, toggleCalendar } = useCalendarEventStore()
   // 로그인은 캘린더 권한 없이도 되므로, 아직 연결 안 한 사용자가 있을 수 있다
-  const { googleAccessToken } = useAuthStore()
+  const { googleAccessToken, setGoogleAuthError } = useAuthStore()
   const connected = !!googleAccessToken
 
   // 버튼 위치 기반으로 패널 위치 계산
@@ -30,7 +30,12 @@ export default function CalendarSettings() {
     const supabase = createClient()
     // Tauri는 시스템 브라우저 + noteplan:// 딥링크, 웹은 같은 창 redirect
     // (콜백은 전역 TauriAuthDeepLink 핸들러가 처리)
-    await startGoogleOAuth(supabase, { withCalendar: true })
+    const { error } = await startGoogleOAuth(supabase, { withCalendar: true })
+    // 여기서 나는 에러는 linkIdentity 요청 자체가 실패한 경우다(예: manual
+    // linking 꺼짐) — 리다이렉트가 시작되기도 전이라 플랫폼 무관하게 바로 뜬다.
+    // 리다이렉트 이후(코드 교환) 단계의 실패는 웹은 콜백 페이지가,
+    // Tauri는 TauriAuthDeepLink가 각각 별도로 처리한다.
+    if (error) setGoogleAuthError(error)
   }
 
   const panel = open && (

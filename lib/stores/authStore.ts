@@ -29,16 +29,20 @@ export const useAuthStore = create<AuthState>()(
       // provider_token / provider_refresh_token은 초기 OAuth 콜백에만 있음 → persist로 살려둠
       // session=null(로그아웃)이면 토큰 제거, 아니면 기존 캐시 유지
       setSession: (session) =>
-        set((state) => ({
-          session,
-          user: session?.user ?? null,
-          googleAccessToken:
-            (session as any)?.provider_token
-            ?? (session ? state.googleAccessToken : null),
-          googleRefreshToken:
-            (session as any)?.provider_refresh_token
-            ?? (session ? state.googleRefreshToken : null),
-        })),
+        set((state) => {
+          const providerToken = (session as any)?.provider_token
+          return {
+            session,
+            user: session?.user ?? null,
+            googleAccessToken: providerToken ?? (session ? state.googleAccessToken : null),
+            googleRefreshToken:
+              (session as any)?.provider_refresh_token
+              ?? (session ? state.googleRefreshToken : null),
+            // 새 provider_token을 받았다는 건 OAuth(로그인이든 캘린더 연결이든)가
+            // 방금 성공했다는 뜻 — 이전에 떠 있던 재연결 배너를 치운다.
+            ...(providerToken ? { googleAuthError: null } : {}),
+          }
+        }),
       setLoading: (loading) => set({ loading }),
       setGoogleToken: (token) => set({ googleAccessToken: token }),
       setGoogleAuthError: (msg) => set({ googleAuthError: msg }),
