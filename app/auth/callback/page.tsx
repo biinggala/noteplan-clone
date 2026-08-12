@@ -3,6 +3,7 @@ import { Suspense, useEffect, useState } from 'react'
 import { useRouter, useSearchParams } from 'next/navigation'
 import { createClient } from '@/lib/supabase/client'
 import { exchangeGoogleCode } from '@/lib/auth/googleOAuth'
+import { useAuthStore } from '@/lib/stores/authStore'
 
 // 웹앱 OAuth 콜백 — Supabase가 ?code=... 로 리다이렉트
 // (정적 export 호환: 서버 route handler 대신 클라이언트에서 code 교환)
@@ -17,8 +18,11 @@ function CallbackInner() {
       return
     }
     const supabase = createClient()
+    // 전체 페이지 리다이렉트라도 localStorage(zustand persist)는 그대로라
+    // 리다이렉트 직전 로그인 사용자를 여기서 읽을 수 있다.
+    const expectedUserId = useAuthStore.getState().user?.id
     // exchangeGoogleCode가 code 교환 + provider refresh token 캡처까지 처리
-    exchangeGoogleCode(supabase, window.location.href).then(({ error }) => {
+    exchangeGoogleCode(supabase, window.location.href, { expectedUserId, allowRetryAsSignIn: true }).then(({ error }) => {
       if (error) { setError(error); return }
       router.replace('/')
     })

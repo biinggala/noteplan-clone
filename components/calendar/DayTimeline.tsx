@@ -63,7 +63,7 @@ export default function DayTimeline({ date, days = 1 }: DayTimelineProps) {
   // ── Stores ────────────────────────────────────────────────────────────────
   const { timeBlocks, addTimeBlock, removeTimeBlock, updateTimeBlock } = useTimeBlockStore()
   const { requestUpdate } = useLineUpdateStore()
-  const { googleAccessToken } = useAuthStore()
+  const { googleAccessToken, setGoogleAuthError } = useAuthStore()
   const {
     calendars, enabledCalendarIds,
     setCalendars, eventsByDate, setFetching, fetchingDates,
@@ -227,9 +227,29 @@ export default function DayTimeline({ date, days = 1 }: DayTimelineProps) {
   useEffect(() => {
     if (!googleAccessToken) return
     fetchCalendarList(googleAccessToken)
-      .then(list => setCalendars(list))
-      .catch(err => console.error('[CalendarList]', err))
-  }, [googleAccessToken])
+      .then(list => {
+        setCalendars(list)
+        if (list.length === 0) {
+          // 권한은 있는데 읽을 캘린더가 하나도 없는 경우 — 드물지만
+          // 이때도 화면은 텅 비므로 이유를 남긴다
+          setGoogleAuthError('연결된 구글 계정에 읽을 수 있는 캘린더가 없습니다.')
+        }
+      })
+      .catch(err => {
+        // 여기가 조용히 죽으면 calendars가 빈 배열로 남고, MiniCalendar는
+        // calendars.length===0 에서 조기 리턴해 이벤트 fetch조차 안 한다.
+        // 결과: "연결은 했는데 일정이 아무것도 안 뜨고 에러도 없음".
+        console.error('[CalendarList]', err)
+        const msg = err instanceof Error ? err.message : String(err)
+        setGoogleAuthError(
+          msg === 'GOOGLE_CALENDAR_SCOPE_MISSING'
+            ? '이 토큰에는 캘린더 권한이 없습니다. 톱니 → Google 캘린더 연결을 다시 해주세요.'
+            : msg === 'GOOGLE_TOKEN_EXPIRED'
+              ? '구글 토큰이 만료됐습니다. 재연결이 필요합니다.'
+              : `캘린더 목록을 불러오지 못했습니다: ${msg}`,
+        )
+      })
+  }, [googleAccessToken, setCalendars, setGoogleAuthError])
 
   // ── Google Calendar: 날짜 범위 이벤트 fetch (한 번에) ───────────────────
   const fetchedTokenRef = useRef<string | null>(null)

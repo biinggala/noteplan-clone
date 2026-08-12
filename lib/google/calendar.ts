@@ -34,6 +34,10 @@ export async function fetchCalendarList(accessToken: string): Promise<GoogleCale
   )
   if (!res.ok) {
     if (res.status === 401) throw new Error('GOOGLE_TOKEN_EXPIRED')
+    // 403 = 토큰은 살아있는데 캘린더 권한이 없음. 로그인은 email/profile만
+    // 받으므로, 캘린더 연결을 한 번도 안 했거나 로그인 토큰이 캘린더 토큰을
+    // 덮어쓴 경우 여기로 온다. 만료와 구분해야 안내 문구가 맞다.
+    if (res.status === 403) throw new Error('GOOGLE_CALENDAR_SCOPE_MISSING')
     throw new Error(`CalendarList API error: ${res.status}`)
   }
   const data = await res.json()

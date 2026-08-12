@@ -24,7 +24,8 @@ export default function TauriAuthDeepLink() {
         // Supabase 서버에서 이미 처리돼 있어서(계정에 identity가 붙음) "연결은
         // 됐는데 캘린더는 안 뜬다"는 상태가 조용히 만들어질 수 있었다.
         // 기존 재연결 배너(MiniCalendar)를 그대로 재사용해 원인을 보여준다.
-        exchangeGoogleCode(supabase, url).then(({ error }) => {
+        const expectedUserId = useAuthStore.getState().user?.id
+        exchangeGoogleCode(supabase, url, { expectedUserId, allowRetryAsSignIn: true }).then(({ error }) => {
           if (error) useAuthStore.getState().setGoogleAuthError(`캘린더 연결 실패: ${error}`)
         })
       }).then(fn => { unlisten = fn })
