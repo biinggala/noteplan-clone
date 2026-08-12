@@ -103,8 +103,16 @@ export async function exchangeGoogleCode(
   url: string
 ): Promise<{ error?: string }> {
   try {
-    const code = new URL(url).searchParams.get('code')
-    if (!code) return { error: '인증 코드를 받지 못했습니다' }
+    const params = new URL(url).searchParams
+    const code = params.get('code')
+    if (!code) {
+      // code가 없으면 대개 구글/Supabase가 대신 error 파라미터를 보낸 것이다.
+      // 그동안은 이걸 버리고 "인증 코드를 받지 못했습니다"로 뭉뚱그려서
+      // 진짜 이유(예: access_denied, redirect_uri_mismatch, 이미 다른
+      // 계정에 연결된 identity 등)가 하나도 안 보였다.
+      const reason = params.get('error_description') ?? params.get('error')
+      return { error: reason ? `${reason} (${params.get('error') ?? 'no_code'})` : '인증 코드를 받지 못했습니다 (콜백 URL에 code도 error도 없음)' }
+    }
     const { data, error } = await supabase.auth.exchangeCodeForSession(code)
     if (error) return { error: error.message }
     // provider_token / provider_refresh_token은 이 교환 직후 세션에만 확실히 담김
