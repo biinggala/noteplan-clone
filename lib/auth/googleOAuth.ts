@@ -34,6 +34,23 @@ function consumeCalendarFlow(): boolean {
 }
 
 /**
+ * "already linked" 자동 재시도를 1회로 제한하는 표식.
+ * 재시도도 리다이렉트를 거쳐 콜백으로 돌아오므로, 표식이 없으면 같은 조건에서
+ * 계속 브라우저를 다시 여는 무한 루프가 될 수 있다.
+ */
+const RETRY_KEY = 'np-oauth-relink-retry'
+
+function markRetried() {
+  try { sessionStorage.setItem(RETRY_KEY, '1') } catch { /* 무시 */ }
+}
+function alreadyRetried(): boolean {
+  try { return sessionStorage.getItem(RETRY_KEY) === '1' } catch { return false }
+}
+function clearRetried() {
+  try { sessionStorage.removeItem(RETRY_KEY) } catch { /* 무시 */ }
+}
+
+/**
  * Google OAuth 시작 — Tauri는 시스템 브라우저 + noteplan:// 딥링크,
  * 웹은 같은 창 redirect.
  *
@@ -83,8 +100,18 @@ export async function startGoogleOAuth(
       },
     })
     if (error) {
-      // Supabase 대시보드에서 Manual Linking이 꺼져 있으면 여기로 온다.
-      // 이 경우 signInWithOAuth로 폴백하면 계정이 바뀌어버리므로 폴백하지 않는다.
+      // "이미 연결됨"은 실패가 아니라 정상 상태다. linkIdentity는 '새 계정
+      // 추가' 전용이라 이미 붙어 있는 계정의 토큰 갱신을 거부한다. 그런데
+      // 재연결이 필요한 상황은 대부분 '이미 붙어 있는 계정'이라, 이걸 에러로
+      // 두면 재연결 버튼이 영구히 막힌다.
+      // 그 identity는 이미 현재 사용자 소유이므로 signInWithOAuth로 다시
+      // 인증해도 같은 사용자로 돌아온다(콜백의 expectedUserId가 최종 확인).
+      if (/already linked/i.test(error.message)) {
+        return startGoogleOAuth(supabase, { withCalendar: true, forceSignIn: true })
+      }
+      // Manual Linking이 꺼져 있으면 여기로 온다. 이때 signInWithOAuth로
+      // 폴백하면 '다른 계정으로 로그인이 갈아치워지는' 원래 사고가 재발하므로
+      // 폴백하지 않는다.
       return {
         error: `캘린더 연결 실패: ${error.message}\n` +
           'Supabase 대시보드 → Authentication → Sign In / Providers 에서 ' +
@@ -153,11 +180,24 @@ export async function exchangeGoogleCode(
       // 진짜 이유(예: access_denied, redirect_uri_mismatch, 이미 다른
       // 계정에 연결된 identity 등)가 하나도 안 보였다.
       const reason = params.get('error_description') ?? params.get('error')
+      // "이미 연결됨"은 여기(리다이렉트 결과)로 돌아온다 — linkIdentity 호출
+      // 자체는 성공하고 URL까지 받은 뒤, Supabase 콜백에서 server_error로
+      // 떨어지기 때문. 동기 호출 실패만 처리하면 이 경로가 안 잡힌다.
+      if (allowRetryAsSignIn && reason && /already linked/i.test(reason)) {
+        if (alreadyRetried()) {
+          clearRetried()
+          return { error: `${reason} — 자동 재인증도 실패했습니다. 로그아웃 후 다시 로그인해 주세요.` }
+        }
+        markRetried()
+        const retry = await startGoogleOAuth(supabase, { withCalendar: true, forceSignIn: true })
+        return retry.error ? { error: `이미 연결된 계정 재인증 실패: ${retry.error}` } : {}
+      }
       return { error: reason ? `${reason} (${params.get('error') ?? 'no_code'})` : '인증 코드를 받지 못했습니다 (콜백 URL에 code도 error도 없음)' }
     }
     const { data, error } = await supabase.auth.exchangeCodeForSession(code)
     if (error) {
-      if (allowRetryAsSignIn && /already linked/i.test(error.message)) {
+      if (allowRetryAsSignIn && /already linked/i.test(error.message) && !alreadyRetried()) {
+        markRetried()
         const retry = await startGoogleOAuth(supabase, { withCalendar: true, forceSignIn: true })
         // 성공하면 브라우저가 다시 열려 새 딥링크가 온다 — 그 두 번째 호출은
         // allowRetryAsSignIn을 안 넘길 테니(호출부에서 1회만 전달) 무한 재시도는 없다.
@@ -166,6 +206,7 @@ export async function exchangeGoogleCode(
       return { error: error.message }
     }
     const wasCalendarFlow = consumeCalendarFlow()
+    clearRetried()
     if (data.session) {
       if (expectedUserId && data.session.user.id !== expectedUserId) {
         return { error: '계정이 바뀌어서 반영하지 않았습니다(안전장치). 로그인 화면에서 다시 시도해주세요.' }

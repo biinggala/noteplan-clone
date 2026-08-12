@@ -229,11 +229,14 @@ export default function DayTimeline({ date, days = 1 }: DayTimelineProps) {
     fetchCalendarList(googleAccessToken)
       .then(list => {
         setCalendars(list)
-        if (list.length === 0) {
-          // 권한은 있는데 읽을 캘린더가 하나도 없는 경우 — 드물지만
-          // 이때도 화면은 텅 비므로 이유를 남긴다
-          setGoogleAuthError('연결된 구글 계정에 읽을 수 있는 캘린더가 없습니다.')
-        }
+        // 성공했으면 이전 배너는 반드시 치운다.
+        // 지금까지 배너를 지우는 곳이 토큰 갱신 성공 한 군데뿐이라,
+        // 한 번 뜬 배너가 캘린더가 멀쩡히 돌아와도 계속 남아 있었다.
+        setGoogleAuthError(
+          list.length === 0
+            ? '연결된 구글 계정에 읽을 수 있는 캘린더가 없습니다.'
+            : null,
+        )
       })
       .catch(err => {
         // 여기가 조용히 죽으면 calendars가 빈 배열로 남고, MiniCalendar는
