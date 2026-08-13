@@ -115,7 +115,22 @@ export async function getNotesByType(type: NoteType): Promise<Note[]> {
   return (data ?? []).map(rowToNote)
 }
 
+/**
+ * 이번 세션에서 삭제한 노트 id.
+ *
+ * 저장은 upsert라, 삭제 직후에 남아 있던 저장(자동저장 타이머, 페이지
+ * 언마운트 시 저장 등)이 한 번만 돌아도 노트가 그대로 되살아난다.
+ * 사이드바에서 지우면 노트 페이지는 삭제 사실을 모른 채 언마운트되므로
+ * 화면 쪽 가드만으로는 못 막는다 — 저장 경로가 전부 여기를 지나므로
+ * 여기서 한 번에 막는다.
+ */
+const deletedNoteIds = new Set<string>()
+
 export async function upsertNote(note: Note): Promise<Note> {
+  if (deletedNoteIds.has(note.id)) {
+    console.warn('[upsertNote] 삭제된 노트라 저장을 건너뜀:', note.id)
+    return note
+  }
   const supabase = createClient()
   const userId = await getUserId()
   const row = noteToRow({ ...note, updatedAt: Date.now() }, userId)
@@ -246,6 +261,9 @@ export async function getNoteUpdatedAt(id: string): Promise<number | null> {
 
 export async function deleteNote(id: string): Promise<void> {
   const supabase = createClient()
+  // 삭제 표식을 먼저 세운다 — 삭제 요청이 오가는 동안 돌아버린 자동저장이
+  // 노트를 되살리는 걸 막기 위해서.
+  deletedNoteIds.add(id)
   await supabase.from('notes').delete().eq('id', id)
 }
 

@@ -1,6 +1,7 @@
 'use client'
 import { Suspense, useEffect, useRef, useState, useCallback } from 'react'
-import { useSearchParams } from 'next/navigation'
+import { useSearchParams, useRouter } from 'next/navigation'
+import { format } from 'date-fns'
 import { useNoteStore } from '@/lib/stores/noteStore'
 import { getNoteById, upsertNote } from '@/lib/db/noteRepository'
 import { extractTags, extractMentions, extractBacklinks, extractSupersedes } from '@/lib/parser/noteParser'
@@ -28,12 +29,15 @@ export default function NotePage() {
 
 function NoteInner() {
   const searchParams = useSearchParams()
+  const router = useRouter()
   const noteId = searchParams.get('id') ?? 'new'
   const { setActiveNote, updateNote } = useNoteStore()
   const [note, setNote] = useState<Note | null>(null)
   const [showHistory, setShowHistory] = useState(false)
   const noteRef = useRef<Note | null>(null)
   noteRef.current = note
+  // 이 노트가 사라졌다고 확인된 경우 — 언마운트 저장으로 되살리지 않기 위한 표식
+  const deletedRef = useRef(false)
   const { linkTargets, facets, openWikiLink } = useWikiLink()
   const { promote, dialog: promoteDialog } = usePromoteToAtom(note?.title)
 
@@ -74,12 +78,21 @@ function NoteInner() {
       upsertNote(newNote).then(s => markSelfWrite(s.content, s.updatedAt)).catch(console.error)
       return
     }
+    deletedRef.current = false
     getNoteById(noteId).then(n => {
       if (n) {
         setNote(n)
         setActiveNote(n)
         markSelfWrite(n.content, n.updatedAt)  // baseline
+        return
       }
+      // 노트가 없다(삭제됐거나 링크가 죽었다). 예전엔 여기서 아무것도 안 해서
+      // 이전 노트가 화면에 그대로 남았고, 계속 편집되고 자동저장으로 되살아날
+      // 수도 있었다. 상태를 비우고 오늘 데일리로 보낸다.
+      deletedRef.current = true
+      setNote(null)
+      setActiveNote(null)
+      router.replace(`/daily?date=${format(new Date(), 'yyyy-MM-dd')}`)
     })
   }, [noteId])
 
@@ -123,10 +136,11 @@ function NoteInner() {
     }
   }, [save])
 
-  // 언마운트 시 즉시 저장
+  // 언마운트 시 즉시 저장.
+  // 단 삭제된 노트라면 저장하면 안 된다 — upsert라 그대로 되살아난다.
   useEffect(() => {
     return () => {
-      if (noteRef.current) {
+      if (noteRef.current && !deletedRef.current) {
         saveNote(noteRef.current).catch(console.error)
       }
     }

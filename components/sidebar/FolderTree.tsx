@@ -2,6 +2,7 @@
 import { useState, useEffect, useCallback, useRef, useMemo } from 'react'
 import { createPortal } from 'react-dom'
 import { useRouter, useSearchParams } from 'next/navigation'
+import { format } from 'date-fns'
 import { useUIStore } from '@/lib/stores/uiStore'
 import { useNoteStore } from '@/lib/stores/noteStore'
 import {
@@ -456,6 +457,10 @@ export default function FolderTree() {
     if (!ok) return
     await dbDeleteNote(noteId)
     await reloadNotes()
+    // 지금 보고 있던 노트를 지웠으면 그 자리에 머물면 안 된다.
+    // 그대로 두면 삭제된 노트가 계속 편집 가능한 채로 남고, 자동저장이
+    // 돌면서 되살아날 수도 있다.
+    if (activeId === noteId) router.replace(`/daily?date=${format(new Date(), 'yyyy-MM-dd')}`)
   }
 
   // tree(폴더 내) + unfiledNotes 양쪽에서 노트 검색
