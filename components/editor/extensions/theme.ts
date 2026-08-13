@@ -14,7 +14,11 @@ export const noteplanTheme = [
     '.cm-content': {
       padding: '32px 48px 32px 6px',
       maxWidth: '780px',
-      margin: '0 auto',
+      // margin:auto 를 쓰면 flex 컨테이너(.cm-scroller) 안에서 본문이 남는 공간을
+      // 전부 밀어내 gutter(드래그 핸들)가 창 맨 왼쪽에 떨어져 붙는다.
+      // 대신 scroller에 justify-content:center 를 줘서 gutter+본문을 한 덩어리로
+      // 가운데 정렬한다 — 핸들이 텍스트 바로 옆에 온다.
+      margin: '0',
       caretColor: 'var(--accent)',
     },
     '.cm-line': {
@@ -80,7 +84,9 @@ export const noteplanTheme = [
     '.cm-line.cm-setext-header span.cm-tag':      { color: '#60a5fa !important' },
     '.cm-line.cm-setext-header span.cm-mention':  { color: '#a78bfa !important' },
     '.cm-line.cm-setext-header span.cm-wikilink': { color: '#34d399 !important' },
-    '.cm-scroller': { overflow: 'auto' },
+    // gutter(드래그 핸들) + 본문을 한 덩어리로 가운데 정렬.
+    // .cm-content의 margin:auto 대신 이 방식을 써야 핸들이 텍스트 옆에 붙는다.
+    '.cm-scroller': { overflow: 'auto', justifyContent: 'center' },
     '&.cm-focused': { outline: 'none' },
 
     // ── 마크다운 표 ─────────────────────────────────────────────────────
