@@ -1,7 +1,7 @@
 'use client'
 import { useEffect, useState, useMemo, useRef } from 'react'
 import { useRouter, usePathname, useSearchParams } from 'next/navigation'
-import { format, subDays, addDays } from 'date-fns'
+import { format, subDays, addDays, parseISO } from 'date-fns'
 import { useUIStore } from '@/lib/stores/uiStore'
 import { useCalendarStore } from '@/lib/stores/calendarStore'
 import { useNoteStore } from '@/lib/stores/noteStore'
@@ -60,7 +60,7 @@ export default function LeftSidebar() {
   const search = searchParams.toString()
   const currentUrl = search ? `${pathname}?${search}` : pathname
   const { activeTab, setActiveTab, setCommandBarOpen } = useUIStore()
-  const { selectedDate, today } = useCalendarStore()
+  const { selectedDate, today, refreshToday } = useCalendarStore()
   const { notes, setNotes, activeNote } = useNoteStore()
   const [projectNotes, setProjectNotes] = useState<Note[]>([])
   const [importOpen, setImportOpen] = useState(false)
@@ -81,10 +81,29 @@ export default function LeftSidebar() {
     return [...new Set([...fromNotes, ...fromActive])].sort()
   }, [notes, activeNote?.content])
 
-  const todayDate = new Date()
+  // Today/Yesterday/Tomorrow는 같은 기준일에서 파생돼야 한다.
+  // 예전엔 today만 스토어(모듈 로드 시점 고정)에서 오고 나머지는 렌더 시점
+  // new Date()에서 와서, 자정을 넘기면 Today와 Yesterday가 같은 날짜를
+  // 가리켜 둘 다 활성으로 보였다.
+  const todayDate = parseISO(today)
   const yesterdayStr = format(subDays(todayDate, 1), 'yyyy-MM-dd')
   const tomorrowStr  = format(addDays(todayDate, 1), 'yyyy-MM-dd')
   const thisMonthStr = format(todayDate, 'yyyy-MM')   // e.g. "2026-05"
+
+  // 앱을 켜둔 채 날이 바뀌는 경우를 위해 today를 살아있게 유지한다
+  // (탭 복귀 시 + 1분마다 — 값이 그대로면 스토어는 갱신하지 않으므로 리렌더 없음)
+  useEffect(() => {
+    refreshToday()
+    const onFocus = () => refreshToday()
+    document.addEventListener('visibilitychange', onFocus)
+    window.addEventListener('focus', onFocus)
+    const id = setInterval(refreshToday, 60_000)
+    return () => {
+      document.removeEventListener('visibilitychange', onFocus)
+      window.removeEventListener('focus', onFocus)
+      clearInterval(id)
+    }
+  }, [refreshToday])
 
   // Delay active-state highlight until after hydration —
   // usePathname() returns null on the server so the className would mismatch.

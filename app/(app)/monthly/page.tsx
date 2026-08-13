@@ -124,6 +124,10 @@ function MonthlyNoteInner() {
       <SupersededBanner title={note.title} onOpen={openWikiLink} />
       <div className="flex-1 overflow-hidden">
         <NoteEditor
+          // 노트가 바뀌면 에디터를 새로 마운트한다. key 없이 인스턴스를
+          // 재사용하면 날짜를 옮겨도 이전 노트 본문이 그대로 남는 경우가 있다
+          // (8/12 페이지에 8/14 본문이 떠 있던 문제).
+          key={note.id}
           content={note.content}
           onChange={handleChange}
           onSave={handleSave}

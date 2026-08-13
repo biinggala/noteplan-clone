@@ -7,6 +7,13 @@ interface CalendarStore {
   selectedWeek: string | null // YYYY-Wnn — 주간 노트를 보는 중이면 그 주 행 전체를 강조
   today: string
   viewMonthDate: Date         // 미니 캘린더가 현재 보여주는 월
+  /**
+   * 자정을 넘겼으면 today를 오늘로 갱신한다.
+   * today는 모듈 로드 시점에 한 번 계산되므로, 데스크톱 앱을 켜둔 채 날이
+   * 바뀌면 어제 날짜에 고정된다. 실제로 이 때문에 사이드바의 Today와
+   * Yesterday가 같은 날짜를 가리켜 둘 다 활성으로 보였다.
+   */
+  refreshToday: () => void
   /** 특정 날짜 선택 (해당 월로 자동 이동 + 주 선택 해제) */
   setSelectedDate: (date: string) => void
   /** 주간 노트 선택 — 그 주 행 전체 강조 + 해당 월로 이동 */
@@ -19,6 +26,11 @@ export const useCalendarStore = create<CalendarStore>((set) => ({
   selectedWeek: null,
   today: format(new Date(), 'yyyy-MM-dd'),
   viewMonthDate: new Date(),
+
+  refreshToday: () => set((s) => {
+    const now = format(new Date(), 'yyyy-MM-dd')
+    return now === s.today ? {} : { today: now }
+  }),
 
   // 노트로 이동하면 미니 캘린더도 그 달을 보여줘야 한다.
   // (검색으로 옛 노트를 열었는데 캘린더는 원래 달에 머물러 선택일이 안 보이던 문제)
