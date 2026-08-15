@@ -69,17 +69,35 @@ export default function LeftSidebar() {
   // 태그/멘션은 노트 content에서 직접 재파싱한다.
   // (저장된 n.tags/n.mentions는 과거 정규식으로 파싱돼 #a/b 같은 계층 경로가
   //  잘려 있을 수 있으므로, 항상 현재 파서로 content를 다시 읽어 단일 진실원천으로 삼음)
-  const allTags = useMemo(() => {
-    const fromNotes = notes.flatMap(n => extractTags(n.content ?? ''))
-    const fromActive = activeNote?.content ? extractTags(activeNote.content) : []
-    return [...new Set([...fromNotes, ...fromActive])].sort()
-  }, [notes, activeNote?.content])
+  // 목록은 최신순 — 각 태그/멘션이 쓰인 노트 중 가장 최근 updatedAt을 기준으로 삼는다.
+  // (정렬 자체는 buildTagTree가 계층 레벨마다 수행하므로 여기선 순서 대신 기준값을 넘긴다)
+  const collectFacets = (pick: (text: string) => string[]) => {
+    const recency = new Map<string, number>()
+    const bump = (name: string, at: number) => {
+      const prev = recency.get(name)
+      if (prev === undefined || at > prev) recency.set(name, at)
+    }
+    for (const n of notes) {
+      for (const name of pick(n.content ?? '')) bump(name, n.updatedAt ?? 0)
+    }
+    // 열려 있는 노트는 아직 저장 전일 수 있어 store의 notes보다 내용이 앞선다
+    if (activeNote?.content) {
+      for (const name of pick(activeNote.content)) bump(name, activeNote.updatedAt ?? 0)
+    }
+    return { names: [...recency.keys()], recency }
+  }
 
-  const allMentions = useMemo(() => {
-    const fromNotes = notes.flatMap(n => extractMentions(n.content ?? ''))
-    const fromActive = activeNote?.content ? extractMentions(activeNote.content) : []
-    return [...new Set([...fromNotes, ...fromActive])].sort()
-  }, [notes, activeNote?.content])
+  const { names: allTags, recency: tagRecency } = useMemo(
+    () => collectFacets(extractTags),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [notes, activeNote?.content, activeNote?.updatedAt],
+  )
+
+  const { names: allMentions, recency: mentionRecency } = useMemo(
+    () => collectFacets(extractMentions),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [notes, activeNote?.content, activeNote?.updatedAt],
+  )
 
   // Today/Yesterday/Tomorrow는 같은 기준일에서 파생돼야 한다.
   // 예전엔 today만 스토어(모듈 로드 시점 고정)에서 오고 나머지는 렌더 시점
@@ -244,7 +262,8 @@ export default function LeftSidebar() {
         <TagsPanel
           allTags={allTags}
           allMentions={allMentions}
-          notes={notes}
+          tagRecency={tagRecency}
+          mentionRecency={mentionRecency}
         />
       )}
 
@@ -302,34 +321,6 @@ export default function LeftSidebar() {
 // ── TagsPanel (계층 태그/멘션 트리) ──────────────────────────────────────────
 
 // 결과는 노트 단위가 아니라 키워드가 포함된 "라인" 단위 (실제 NotePlan 방식)
-interface LineMatch {
-  noteId: string
-  noteType: string
-  date?: string
-  title: string
-  lineText: string   // 매칭된 라인 (trim)
-}
-
-const KO_RANGE = '가-힣ㄱ-ㅎㅏ-ㅣ'
-function escapeRegExp(s: string) { return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') }
-
-// 라인에서 #tag/@mention 토큰을 강조해 React 노드로 반환
-function highlightLine(line: string, kind: 'tag' | 'mention', value: string): React.ReactNode[] {
-  const sigil = kind === 'tag' ? '#' : '@'
-  const accent = kind === 'tag' ? 'text-blue-400' : 'text-purple-400'
-  // #value 또는 #value/sub ... 토큰 매칭 (한글 포함)
-  const re = new RegExp(`(${sigil}${escapeRegExp(value)}[\\w/${KO_RANGE}]*)`, 'g')
-  const parts: React.ReactNode[] = []
-  let last = 0, m: RegExpExecArray | null, i = 0
-  while ((m = re.exec(line)) !== null) {
-    if (m.index > last) parts.push(line.slice(last, m.index))
-    parts.push(<span key={i++} className={`${accent} font-medium`}>{m[0]}</span>)
-    last = m.index + m[0].length
-  }
-  if (last < line.length) parts.push(line.slice(last))
-  return parts.length ? parts : [line]
-}
-
 interface TagTreeNode {
   name: string       // 마지막 세그먼트 (예: "reflection")
   fullPath: string   // 전체 경로 (예: "journal/reflection")
@@ -338,7 +329,13 @@ interface TagTreeNode {
 }
 
 // "/"로 구분된 태그 경로 목록 → 계층 트리
-function buildTagTree(paths: string[]): TagTreeNode[] {
+/**
+ * `#a/b` 경로들을 트리로 만든다.
+ * recency를 주면 각 레벨을 최신순으로 정렬한다 — 중간 노드는 자기 자신과
+ * 하위 전체 중 가장 최근 값을 쓴다(부모가 자식보다 뒤로 밀리지 않도록).
+ * 값이 같거나 recency가 없으면 이름순으로 떨어진다.
+ */
+function buildTagTree(paths: string[], recency?: Map<string, number>): TagTreeNode[] {
   const realSet = new Set(paths)
   const roots: TagTreeNode[] = []
   const map = new Map<string, TagTreeNode>()
@@ -359,8 +356,21 @@ function buildTagTree(paths: string[]): TagTreeNode[] {
     }
   }
 
+  // 하위 전체를 포함한 최신값 (자식이 최근이면 부모도 위로 올라온다)
+  const subtreeRecency = new Map<string, number>()
+  const walk = (node: TagTreeNode): number => {
+    let newest = recency?.get(node.fullPath) ?? 0
+    for (const c of node.children) newest = Math.max(newest, walk(c))
+    subtreeRecency.set(node.fullPath, newest)
+    return newest
+  }
+  roots.forEach(walk)
+
   const sortNodes = (nodes: TagTreeNode[]) => {
-    nodes.sort((a, b) => a.name.localeCompare(b.name))
+    nodes.sort((a, b) => {
+      const diff = (subtreeRecency.get(b.fullPath) ?? 0) - (subtreeRecency.get(a.fullPath) ?? 0)
+      return diff !== 0 ? diff : a.name.localeCompare(b.name)
+    })
     nodes.forEach(n => sortNodes(n.children))
   }
   sortNodes(roots)
@@ -370,19 +380,30 @@ function buildTagTree(paths: string[]): TagTreeNode[] {
 function TagsPanel({
   allTags,
   allMentions,
-  notes,
+  tagRecency,
+  mentionRecency,
 }: {
   allTags: string[]
   allMentions: string[]
-  notes: Note[]
+  tagRecency: Map<string, number>
+  mentionRecency: Map<string, number>
 }) {
   const router = useRouter()
-  const [selected, setSelected] = useState<{ kind: 'tag' | 'mention'; value: string } | null>(null)
-  const [matches, setMatches] = useState<LineMatch[]>([])
+  const pathname = usePathname()
+  const searchParams = useSearchParams()
   const [expanded, setExpanded] = useState<Set<string>>(new Set())
 
-  const tagTree = useMemo(() => buildTagTree(allTags), [allTags])
-  const mentionTree = useMemo(() => buildTagTree(allMentions), [allMentions])
+  const tagTree = useMemo(() => buildTagTree(allTags, tagRecency), [allTags, tagRecency])
+  const mentionTree = useMemo(() => buildTagTree(allMentions, mentionRecency), [allMentions, mentionRecency])
+
+  // 지금 보고 있는 검색 결과가 어떤 태그인지 (사이드바에서 강조 표시용)
+  const active = pathname === '/search'
+    ? (searchParams.get('tag')
+        ? { kind: 'tag' as const, value: searchParams.get('tag')! }
+        : searchParams.get('mention')
+          ? { kind: 'mention' as const, value: searchParams.get('mention')! }
+          : null)
+    : null
 
   const toggleExpand = (key: string) =>
     setExpanded(prev => {
@@ -391,43 +412,15 @@ function TagsPanel({
       return next
     })
 
-  // 키워드가 포함된 "라인"을 수집 (실제 NotePlan처럼 날짜+내용 발췌 표시)
-  // 계층: value의 하위(value/sub)가 포함된 라인도 매칭
+  // 좁은 사이드바에 접어 넣는 대신 메인 영역의 검색 결과 페이지로 보낸다.
   const handleSelect = (kind: 'tag' | 'mention', value: string) => {
-    if (selected?.kind === kind && selected.value === value) {
-      setSelected(null); setMatches([]); return
-    }
-    setSelected({ kind, value })
-    const found: LineMatch[] = []
-    for (const n of notes) {
-      const lines = (n.content ?? '').split('\n')
-      for (const raw of lines) {
-        const line = raw.trim()
-        if (!line) continue
-        const tokens = kind === 'tag' ? extractTags(line) : extractMentions(line)
-        const hit = tokens.some(t => t === value || t.startsWith(value + '/'))
-        if (hit) {
-          found.push({ noteId: n.id, noteType: n.type, date: n.date, title: n.title, lineText: line })
-        }
-      }
-    }
-    setMatches(found)
+    router.push(`/search?${kind}=${encodeURIComponent(value)}`)
   }
-
-  const noteRef = (m: LineMatch) =>
-    m.noteType === 'daily' && m.date ? m.date :
-    m.noteType === 'weekly' && m.date ? `Week of ${m.date}` :
-    m.noteType === 'monthly' && m.date ? m.date :
-    m.title
-  const noteIcon = (m: LineMatch) =>
-    (m.noteType === 'daily' || m.noteType === 'weekly' || m.noteType === 'monthly') ? '📅' : '📄'
-  const openMatch = (m: LineMatch) =>
-    router.push(routeForNote({ type: m.noteType, id: m.noteId, date: m.date }))
 
   // 한 노드(+하위) 재귀 렌더
   const renderNode = (node: TagTreeNode, kind: 'tag' | 'mention', depth: number): React.ReactNode => {
     const key = `${kind}:${node.fullPath}`
-    const isOpen = selected?.kind === kind && selected.value === node.fullPath
+    const isOpen = active?.kind === kind && active.value === node.fullPath
     const isExpanded = expanded.has(key)
     const hasChildren = node.children.length > 0
     const accent = kind === 'tag' ? 'text-blue-400' : 'text-purple-400'
@@ -458,39 +451,7 @@ function TagsPanel({
           <span className={`truncate ${accent}`}>{node.name}</span>
         </div>
 
-        {/* 선택 시 매칭 라인 목록 (날짜/제목 + 내용 발췌) — 중간 노드도 표시 */}
-        {isOpen && (
-          <div className="mb-1 flex flex-col gap-0.5" style={{ paddingLeft: 6 + (depth + 1) * 14 }}>
-            {matches.length === 0 && (
-              <div className="px-2 py-1 text-xs text-[var(--text-muted)]">결과 없음</div>
-            )}
-            {matches.map((m, i) => (
-              <button
-                key={`${m.noteId}:${i}`}
-                onClick={() => openMatch(m)}
-                className="flex flex-col gap-0.5 px-2 py-1.5 rounded text-left w-full
-                  hover:bg-[var(--hover-bg)] transition-colors"
-              >
-                <span className="flex items-center gap-1 text-[10px] text-[var(--text-muted)]">
-                  <span>{noteIcon(m)}</span>
-                  <span className="truncate">{noteRef(m)}</span>
-                </span>
-                {(() => {
-                  // 헤딩(#, ##, ...)은 마커를 숨기고 bold로 표시
-                  const h = m.lineText.match(/^(#{1,6})\s+(.*)$/)
-                  const text = h ? h[2] : m.lineText
-                  return (
-                    <span className={`text-xs line-clamp-2 leading-snug ${
-                      h ? 'font-semibold text-[var(--text-primary)]' : 'text-[var(--text-secondary)]'
-                    }`}>
-                      {highlightLine(text, kind, node.fullPath)}
-                    </span>
-                  )
-                })()}
-              </button>
-            ))}
-          </div>
-        )}
+        {/* 결과 목록은 메인 영역(/search)에 뜬다 — 여기선 계층만 보여준다 */}
 
         {/* 하위 태그 */}
         {hasChildren && isExpanded && node.children.map(c => renderNode(c, kind, depth + 1))}
