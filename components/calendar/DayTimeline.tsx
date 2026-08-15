@@ -9,6 +9,7 @@ import { formatTimeRange } from '@/lib/parser/timeBlockParser'
 import { useAuthStore } from '@/lib/stores/authStore'
 import { useCalendarEventStore } from '@/lib/stores/calendarEventStore'
 import { useTimelineDragStore } from '@/lib/dnd/timelineDragStore'
+import { openExternal } from '@/lib/openExternal'
 import {
   fetchCalendarList,
   fetchAllCalendarEventsForRange,
@@ -1119,7 +1120,7 @@ export default function DayTimeline({ date, days = 1 }: DayTimelineProps) {
           </button>
           {ev.htmlLink && (
             <button
-              onClick={() => { window.open(ev.htmlLink, '_blank'); setEventPanel(null) }}
+              onClick={() => { void openExternal(ev.htmlLink); setEventPanel(null) }}
               className="flex items-center gap-3 px-4 py-2.5 text-sm text-white/80
                          hover:bg-white/8 transition-colors text-left"
             >

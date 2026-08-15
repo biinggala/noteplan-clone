@@ -21,6 +21,7 @@ import { wikiLinkCompletionSource } from './extensions/wikiLinkComplete'
 import { slashInsertSource } from './extensions/slashInsert'
 import { tagMentionCompletionSource } from './extensions/tagMentionComplete'
 import { mdTableExtension } from './extensions/mdTable'
+import { externalLinkExtension } from './extensions/externalLink'
 import { selectionMenuExtension } from './extensions/selectionMenu'
 import type { LinkTarget, FacetItem } from '@/lib/db/noteRepository'
 
@@ -124,6 +125,7 @@ export default function NoteEditor({ content, onChange, onSave, onOpenWikiLink, 
         hangingIndentExtension(),
         hrRuleExtension(),
         mdTableExtension(title => onOpenWikiLinkRef.current?.(title)),
+        ...externalLinkExtension(),
         ...selectionMenuExtension(text => onPromoteRef.current?.(text) ?? Promise.resolve(null)),
         ...dragHandleExtension(),
         EditorView.lineWrapping,

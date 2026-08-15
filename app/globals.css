@@ -77,6 +77,20 @@ html, body {
   overflow: auto;
 }
 
+/* ── 웹 링크 (⌘+클릭으로 브라우저에서 열기) ──────────────────────────────── */
+/* 색은 마크다운 하이라이팅이 이미 입힌다. 여기선 '누를 수 있다'는 신호만. */
+.cm-ext-link {
+  text-decoration: underline;
+  text-decoration-color: color-mix(in srgb, var(--accent) 45%, transparent);
+  text-underline-offset: 2px;
+}
+/* ⌘(Ctrl)을 누르고 있을 때만 링크처럼 보인다 — 평소엔 커서를 놓는 게 우선 */
+.cm-editor.cm-mod-held .cm-ext-link {
+  cursor: pointer;
+  text-decoration-color: var(--accent);
+  text-decoration-thickness: 2px;
+}
+
 /* ── Drag Handle Gutter ──────────────────────────────────────────────────── */
 .cm-drag-handle-gutter {
   padding: 0 2px;
