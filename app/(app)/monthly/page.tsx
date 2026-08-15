@@ -32,7 +32,7 @@ function MonthlyNoteInner() {
   const [isSaving, setIsSaving] = useState(false)
   const noteRef = useRef<Note | null>(null)
   noteRef.current = note
-  const { linkTargets, facets, openWikiLink } = useWikiLink()
+  const { linkTargets, facets, openWikiLink, openFacet } = useWikiLink()
   const { promote, dialog: promoteDialog } = usePromoteToAtom(note?.title)
 
   // 월 파싱
@@ -132,6 +132,7 @@ function MonthlyNoteInner() {
           onChange={handleChange}
           onSave={handleSave}
           onOpenWikiLink={openWikiLink}
+          onOpenFacet={openFacet}
           linkTargets={linkTargets}
           facets={facets}
           onPromote={promote}
