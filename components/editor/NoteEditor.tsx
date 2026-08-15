@@ -87,6 +87,17 @@ export default function NoteEditor({ content, onChange, onSave, onOpenWikiLink, 
         markdown({
           base: markdownLanguage,
           codeLanguages: languages,
+          // setext 헤딩(윗줄 텍스트 + 아랫줄 --- 를 제목으로 치는 문법)을 끈다.
+          //
+          // 이게 켜져 있으면 "Notes" 아래에 목록을 쓰려고 '-' 를 치는 순간
+          // 마크다운 규칙상 윗줄이 제목이 돼버린다. 스페이스를 눌러 '- ' 가
+          // 되면 다시 목록으로 풀리므로, 타이핑 중에 위아래 줄 서식이
+          // 번쩍거렸다. 지금까지는 CSS로 폰트만 덮어썼는데, 파서는 그대로
+          // 제목을 만들고 있어서 깜빡임이 남았다.
+          //
+          // 이 노트앱에서 제목은 '#' 로만 쓴다. '---' 는 수평선으로 남는다
+          // (HorizontalRule은 별도 파서라 영향 없음).
+          extensions: [{ remove: ['SetextHeading'] }],
         }),
         noteplanTheme,
         taskLineStyleExtension(),

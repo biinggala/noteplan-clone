@@ -70,22 +70,6 @@ export const noteplanTheme = [
 
     '.cm-hr': { color: 'var(--cm-formatting)', letterSpacing: '4px' },
 
-    '.cm-line.cm-setext-header':     { lineHeight: '1.8 !important' },
-    '.cm-line.cm-setext-header span': {
-      fontSize: '1em !important',
-      fontWeight: 'normal !important',
-      color: 'var(--text-primary) !important',
-    },
-    '.cm-line.cm-setext-header *': {
-      fontSize: '1em !important',
-      fontWeight: 'normal !important',
-    },
-    // setext 헤딩(아래 ---)이라도 태그/멘션/위키링크 색은 유지
-    '.cm-line.cm-setext-header span.cm-tag':      { color: '#60a5fa !important' },
-    '.cm-line.cm-setext-header span.cm-mention':  { color: '#a78bfa !important' },
-    '.cm-line.cm-setext-header span.cm-wikilink': { color: '#34d399 !important' },
-    // gutter(드래그 핸들) + 본문을 한 덩어리로 가운데 정렬.
-    // .cm-content의 margin:auto 대신 이 방식을 써야 핸들이 텍스트 옆에 붙는다.
     '.cm-scroller': { overflow: 'auto', justifyContent: 'center' },
     '&.cm-focused': { outline: 'none' },
 

@@ -8,9 +8,7 @@ import {
 import { RangeSetBuilder } from '@codemirror/state'
 
 // Matches lines that are purely a divider: ---, ***, ___, or ===
-// Note: --- and === can also be setext heading marks when text precedes them,
-// but we always render them as visual dividers (markdownWYSIWYG.ts normalises
-// the heading font on the content line via cm-setext-header).
+// setext 헤딩은 파서에서 꺼둬서(NoteEditor.tsx) --- 와 === 는 항상 구분선이다.
 const HR_RE = /^\s*(?:---|\*\*\*|___|={3,})\s*$/
 
 /**

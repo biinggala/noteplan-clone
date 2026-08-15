@@ -6,7 +6,8 @@ import { syntaxTree } from '@codemirror/language'
 // when the cursor is NOT on that line (WYSIWYG / Typora-style).
 // NOTE: HeaderMark is intentionally excluded here — ATX headings are handled
 // via line-text regex below so we can reliably also hide the trailing space.
-// Setext headings are handled separately via line-text scan (Source 3).
+// Setext headings are disabled at the parser level (NoteEditor.tsx),
+// so "Notes" + "-" never becomes a heading — no neutralisation needed.
 const FORMATTING_MARKS = new Set([
   'EmphasisMark',      // * or _ in *italic* / **bold**
   'StrikethroughMark', // ~~ in ~~strikethrough~~
@@ -62,25 +63,6 @@ function buildDecorations(view: EditorView): DecorationSet {
       if (m) {
         // Hide "# " / "## " / "### " etc. (hashes + space = m[0].length chars)
         items.push({ kind: 'replace', from: line.from, to: line.from + m[0].length })
-      }
-    }
-    pos = line.to + 1
-  }
-
-  // ── Source 3: Setext heading content lines ──────────────────────────────
-  // When ANY number of - or = chars (alone on a line) follows a non-empty
-  // line, lezer parses the preceding line as a SetextHeading and applies
-  // large/bold font via HighlightStyle. We add cm-setext-header so CSS can
-  // neutralise the font — even for a single "-" or "=" while the user is
-  // still typing. The mark line is NOT hidden here; hrRule.ts renders 3+
-  // char lines (---, ===, etc.) as compact visual dividers.
-  for (let pos = from; pos <= to;) {
-    const line = view.state.doc.lineAt(pos)
-    if (/^[-=]+\s*$/.test(line.text) && line.number > 1) {
-      const prevLine = view.state.doc.line(line.number - 1)
-      if (prevLine.text.trim().length > 0) {
-        // Always neutralise heading font on the content line
-        items.push({ kind: 'line', at: prevLine.from, cls: 'cm-setext-header' })
       }
     }
     pos = line.to + 1
