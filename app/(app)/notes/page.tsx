@@ -38,7 +38,7 @@ function NoteInner() {
   noteRef.current = note
   // 이 노트가 사라졌다고 확인된 경우 — 언마운트 저장으로 되살리지 않기 위한 표식
   const deletedRef = useRef(false)
-  const { linkTargets, facets, openWikiLink } = useWikiLink()
+  const { linkTargets, facets, openWikiLink, openFacet } = useWikiLink()
   const { promote, dialog: promoteDialog } = usePromoteToAtom(note?.title)
 
   // ── 실시간 동기화: 외부(MCP 등)가 이 노트를 고치면 즉시 반영 + 작성자 표시 ──
@@ -193,6 +193,7 @@ function NoteInner() {
           content={note.content}
           onChange={handleChange}
           onOpenWikiLink={openWikiLink}
+          onOpenFacet={openFacet}
           linkTargets={linkTargets}
           facets={facets}
           onPromote={promote}

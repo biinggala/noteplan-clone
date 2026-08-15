@@ -7,7 +7,7 @@ import { markdown, markdownLanguage } from '@codemirror/lang-markdown'
 import { languages } from '@codemirror/language-data'
 import { noteplanTheme } from './extensions/theme'
 import { taskCheckboxExtension, taskLineStyleExtension } from './extensions/taskCheckbox'
-import { tagMentionExtension } from './extensions/tagMention'
+import { tagMentionExtension, facetClickExtension } from './extensions/tagMention'
 import { wikiLinkExtension } from './extensions/wikiLink'
 import { scheduleDateExtension } from './extensions/scheduleDate'
 import { inputRulesExtension } from './extensions/inputRules'
@@ -35,13 +35,15 @@ interface NoteEditorProps {
   linkTargets?: LinkTarget[]
   /** #태그 / @멘션 자동완성 후보 */
   facets?: { tags: FacetItem[]; mentions: FacetItem[] }
+  /** #태그 / @멘션 ⌘+클릭 → 그 태그의 검색 결과 */
+  onOpenFacet?: (kind: 'tag' | 'mention', value: string) => void
   /** 선택 영역을 독립 노트로 승격. 새 노트 제목을 돌려주면 [[링크]]로 교체된다 */
   onPromote?: (text: string) => Promise<string | null>
 }
 
 const EMPTY_FACETS = { tags: [] as FacetItem[], mentions: [] as FacetItem[] }
 
-export default function NoteEditor({ content, onChange, onSave, onOpenWikiLink, linkTargets, facets, onPromote }: NoteEditorProps) {
+export default function NoteEditor({ content, onChange, onSave, onOpenWikiLink, linkTargets, facets, onOpenFacet, onPromote }: NoteEditorProps) {
   const containerRef = useRef<HTMLDivElement>(null)
   const viewRef = useRef<EditorView | null>(null)
   const onChangeRef = useRef(onChange)
@@ -54,6 +56,8 @@ export default function NoteEditor({ content, onChange, onSave, onOpenWikiLink, 
   linkTargetsRef.current = linkTargets ?? []
   const facetsRef = useRef(facets ?? EMPTY_FACETS)
   facetsRef.current = facets ?? EMPTY_FACETS
+  const onOpenFacetRef = useRef(onOpenFacet)
+  onOpenFacetRef.current = onOpenFacet
   const onPromoteRef = useRef(onPromote)
   onPromoteRef.current = onPromote
 
@@ -104,6 +108,7 @@ export default function NoteEditor({ content, onChange, onSave, onOpenWikiLink, 
         taskLineStyleExtension(),
         taskCheckboxExtension(),
         tagMentionExtension(),
+        facetClickExtension((kind, value) => onOpenFacetRef.current?.(kind, value)),
         ...wikiLinkExtension(title => onOpenWikiLinkRef.current?.(title)),
         // 자동완성은 한 번만 등록하고 소스를 나열한다
         // ([[ 노트링크 + / 요소삽입 + #태그/@멘션).

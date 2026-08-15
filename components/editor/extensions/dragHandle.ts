@@ -87,7 +87,17 @@ class DragHandleMarker extends GutterMarker {
     el.addEventListener('pointerdown', (e) => {
       try {
         const line = view.state.doc.lineAt(this.lineFrom)
-        startLineDrag(e, view, line.number, line.text)
+        // 여러 줄을 선택해 둔 상태에서 그 안의 핸들을 잡으면 선택 전체를 옮긴다.
+        // 선택 밖의 핸들이면 평소대로 그 한 줄만.
+        const sel = view.state.selection.main
+        let fromLine = line.number
+        let toLine = line.number
+        if (!sel.empty) {
+          const a = view.state.doc.lineAt(sel.from).number
+          const b = view.state.doc.lineAt(sel.to).number
+          if (line.number >= a && line.number <= b) { fromLine = a; toLine = b }
+        }
+        startLineDrag(e, view, fromLine, toLine)
       } catch { /* lineFrom may be stale after doc change */ }
     })
 

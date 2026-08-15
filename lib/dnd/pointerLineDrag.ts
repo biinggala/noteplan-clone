@@ -27,8 +27,9 @@ const MARKER_RE = /^(-\s*\[.?\]\s*|-\s+|\*\s+|\+\s+)/
 function snap15(m: number) { return Math.round(m / SNAP) * SNAP }
 
 interface ActiveDrag {
-  lineNumber: number
-  content: string
+  fromLine: number      // 1-based, 포함
+  toLine: number        // 1-based, 포함 (한 줄이면 fromLine과 같음)
+  lines: string[]       // 옮기는 줄들의 원문
   view: EditorView
   ghost: HTMLElement
   moved: boolean
@@ -49,16 +50,21 @@ let active: ActiveDrag | null = null
 export function startLineDrag(
   e: PointerEvent,
   view: EditorView,
-  lineNumber: number,
-  content: string,
+  fromLine: number,
+  toLine: number = fromLine,
 ) {
   if (active) cleanup()
   e.preventDefault()
 
+  const doc = view.state.doc
+  const lines: string[] = []
+  for (let n = fromLine; n <= Math.min(toLine, doc.lines); n++) lines.push(doc.line(n).text)
+
   // 드래그 고스트 — 실제 줄 텍스트를 담은 작은 카드 (6점 그립 + 텍스트)
   const ghost = document.createElement('div')
   ghost.className = 'np-drag-ghost'
-  const label = content.trim().replace(MARKER_RE, '') || '빈 줄'
+  const head = (lines.find(l => l.trim()) ?? '').trim().replace(MARKER_RE, '') || '빈 줄'
+  const label = lines.length > 1 ? `${head} 외 ${lines.length - 1}줄` : head
   ghost.innerHTML =
     `<span class="np-drag-ghost__grip" aria-hidden="true">` +
     `<svg width="8" height="12" viewBox="0 0 8 12" fill="currentColor">` +
@@ -94,7 +100,7 @@ export function startLineDrag(
   const scrollEl = slotEl?.closest<HTMLElement>('[class*="overflow-y-auto"]') ?? null
 
   active = {
-    lineNumber, content, view, ghost, moved: false,
+    fromLine, toLine, lines, view, ghost, moved: false,
     scrollEl, lastX: e.clientX, lastY: e.clientY, rafId: null, onMove, onUp,
   }
   active.rafId = requestAnimationFrame(edgeScrollStep)
@@ -160,7 +166,14 @@ function drop(e: PointerEvent, drag: ActiveDrag) {
   // 1) 타임라인 슬롯에 드롭 → TimeBlock 생성
   const slot = slotInfoAt(e.clientX, e.clientY)
   if (slot) {
-    createTimeBlock(slot.date, slot.hour, slot.minute, drag.content)
+    // 여러 줄이면 떨어뜨린 시각부터 30분씩 연달아 붙인다
+    let total = slot.hour * 60 + slot.minute
+    for (const raw of drag.lines) {
+      if (!raw.trim()) continue                       // 빈 줄은 건너뜀
+      if (total >= 24 * 60) break                     // 자정 넘어가면 중단
+      createTimeBlock(slot.date, Math.floor(total / 60), total % 60, raw)
+      total += DEFAULT_DURATION
+    }
     return
   }
 
@@ -220,23 +233,28 @@ function reorder(e: PointerEvent, drag: ActiveDrag) {
   const dropPos = view.posAtCoords({ x: e.clientX, y: e.clientY })
   if (dropPos == null) return
   const doc = view.state.doc
-  const dragNum = drag.lineNumber
+  const fromLine = drag.fromLine
+  const toLine = Math.min(drag.toLine, doc.lines)
   const dropNum = doc.lineAt(dropPos).number
-  if (dragNum === dropNum || dragNum < 1 || dragNum > doc.lines) return
+  if (fromLine < 1 || fromLine > doc.lines) return
+  // 옮기는 블록 안(또는 바로 아래 경계)에 떨어뜨리면 제자리 — 아무것도 안 한다
+  if (dropNum >= fromLine && dropNum <= toLine + 1) return
 
-  const dragLine = doc.line(dragNum)
+  const first = doc.line(fromLine)
+  const last = doc.line(toLine)
   const dropLine = doc.line(dropNum)
+  const text = drag.lines.join('\n')
 
   // 예전엔 문서 전체를 갈아끼웠다(from:0 ~ to:doc.length). 그러면 커서가 항상
   // 위치 0으로 무너진다(측정 확인) — 교체 범위 안의 위치는 매핑할 곳이 없기 때문.
   // WebKit(Tauri)은 이렇게 바뀐 선택을 DOM에 반영하면서 캐럿을 화면에 보이게
   // 스크롤하므로, 줄을 옮길 때마다 노트 맨 위로 튀었다.
   // 옮기는 줄만 지우고 다시 넣는 최소 변경이면 커서가 제자리에 매핑된다.
-  const del = dragNum < doc.lines
-    ? { from: dragLine.from, to: dragLine.to + 1 }   // 줄 + 뒤따르는 개행
-    : { from: dragLine.from - 1, to: dragLine.to }   // 마지막 줄이면 앞 개행을 대신 제거
+  const del = toLine < doc.lines
+    ? { from: first.from, to: last.to + 1 }    // 블록 + 뒤따르는 개행
+    : { from: first.from - 1, to: last.to }    // 마지막 줄까지면 앞 개행을 대신 제거
   // 드롭 대상 줄 '앞'에 넣는다 (기존 splice 동작과 동일 — 위/아래 방향 무관).
-  const ins = { from: dropLine.from, insert: dragLine.text + '\n' }
+  const ins = { from: dropLine.from, insert: text + '\n' }
 
   // 줄 재정렬은 줄 수가 그대로라 문서 전체 높이도 그대로다. 그래서 스크롤 위치는
   // 원래 값 그대로가 정답 — 엔진이 어떻게 재계산하든 되돌려 놓는다.
@@ -245,7 +263,7 @@ function reorder(e: PointerEvent, drag: ActiveDrag) {
 
   view.dispatch({
     // 변경은 위치 순서대로 넘겨야 한다
-    changes: dragNum < dropNum ? [del, ins] : [ins, del],
+    changes: fromLine < dropNum ? [del, ins] : [ins, del],
     scrollIntoView: false,
   })
 

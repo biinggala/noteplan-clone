@@ -68,5 +68,10 @@ export function useWikiLink() {
     router.push(`/notes?id=${note.id}`)
   }, [router])
 
-  return { linkTargets, facets, openWikiLink }
+  /** #태그 / @멘션 → 검색 결과 페이지 */
+  const openFacet = useCallback((kind: 'tag' | 'mention', value: string) => {
+    router.push(`/search?${kind}=${encodeURIComponent(value)}`)
+  }, [router])
+
+  return { linkTargets, facets, openWikiLink, openFacet }
 }

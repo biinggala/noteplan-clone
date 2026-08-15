@@ -90,6 +90,13 @@ html, body {
   text-decoration-color: var(--accent);
   text-decoration-thickness: 2px;
 }
+/* #태그 / @멘션도 ⌘+클릭으로 검색 결과가 열린다 */
+.cm-editor.cm-mod-held .cm-tag,
+.cm-editor.cm-mod-held .cm-mention {
+  cursor: pointer;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
 
 /* ── Drag Handle Gutter ──────────────────────────────────────────────────── */
 .cm-drag-handle-gutter {

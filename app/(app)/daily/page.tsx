@@ -42,14 +42,14 @@ function DailyNoteInner() {
   const { setActiveNote, updateNote } = useNoteStore()
   const { setSelectedDate } = useCalendarStore()
   const { syncTimeBlocks, timeBlocks, updateTimeBlock } = useTimeBlockStore()
-  const { pendingUpdate, clearUpdate } = useLineUpdateStore()
+  const { pending: pendingUpdates, clearUpdates } = useLineUpdateStore()
   const { setTaskDate } = useTaskDotStore()
 
   const [note, setNote]           = useState<Note | null>(null)
   const [isSaving, setIsSaving]   = useState(false)
   const [saveError, setSaveError] = useState<string | null>(null)
   const [showHistory, setShowHistory] = useState(false)
-  const { linkTargets, facets, openWikiLink } = useWikiLink()
+  const { linkTargets, facets, openWikiLink, openFacet } = useWikiLink()
   const { promote, dialog: promoteDialog } = usePromoteToAtom(note?.title)
 
   // 항상 최신 note를 가리키는 ref — effect cleanup에서 사용
@@ -249,15 +249,23 @@ function DailyNoteInner() {
 
   // ── Timeline → Note 라인 업데이트 ─────────────────────────────────────────
   useEffect(() => {
-    if (!pendingUpdate || !note) return
-    clearUpdate()
+    if (pendingUpdates.length === 0 || !note) return
+    clearUpdates()
+    // 여러 건을 한 번에 적용한다 — 한 건씩 처리하면 여러 줄을 동시에 떨어뜨렸을 때
+    // 뒤엣것이 앞엣것을 덮어써서 마지막 줄만 반영됐다.
     const lines = note.content.split('\n')
-    const idx   = lines.findIndex(l => l.trim() === pendingUpdate.find.trim())
-    if (idx < 0) return
-    const newLines = [...lines]
-    newLines[idx] = pendingUpdate.replace
-    handleChangeRef.current(newLines.join('\n'))
-  }, [pendingUpdate])
+    const used = new Set<number>()
+    let changed = false
+    for (const up of pendingUpdates) {
+      // 같은 내용의 줄이 여러 개일 수 있으므로 이미 쓴 줄은 건너뛴다
+      const idx = lines.findIndex((l, i) => !used.has(i) && l.trim() === up.find.trim())
+      if (idx < 0) continue
+      used.add(idx)
+      lines[idx] = up.replace
+      changed = true
+    }
+    if (changed) handleChangeRef.current(lines.join('\n'))
+  }, [pendingUpdates])
 
   if (!note) {
     return (
@@ -322,6 +330,7 @@ function DailyNoteInner() {
           onChange={handleChange}
           onSave={handleSave}
           onOpenWikiLink={openWikiLink}
+          onOpenFacet={openFacet}
           linkTargets={linkTargets}
           facets={facets}
           onPromote={promote}
