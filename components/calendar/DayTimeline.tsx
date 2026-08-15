@@ -78,12 +78,17 @@ export default function DayTimeline({ date, days = 1 }: DayTimelineProps) {
     date: string; hour: number; minute: number; duration: number
   } | null>(null)
 
+  // ev = 이 블록에 연결된 Google 이벤트. findTimeblockEvent가 '시작시각 + 내용'으로
+  // 찾기 때문에, 시작시각이 바뀌는 조작(위쪽 리사이즈·이동)에서는 변경 전에
+  // 미리 잡아두지 않으면 pointerup 시점엔 더 이상 못 찾는다.
   const [resizing, setResizing] = useState<{
     blockId: string; startY: number; startDuration: number
+    ev: GoogleCalendarEvent | null
   } | null>(null)
 
   const [resizingTop, setResizingTop] = useState<{
     blockId: string; originalEndMins: number
+    ev: GoogleCalendarEvent | null
   } | null>(null)
 
   // ── New-event inline form ─────────────────────────────────────────────────
@@ -452,7 +457,10 @@ export default function DayTimeline({ date, days = 1 }: DayTimelineProps) {
       if (!block) return
       if (block.date === targetDate && block.startHour === tHour && block.startMinute === tMin) return
       const oldLine = block.noteLineText
+      // 시작시각이 바뀌면 더 이상 못 찾으므로 옮기기 전에 연결된 이벤트를 잡아둔다
+      const linkedEv = findTimeblockEvent(block.date, block.startHour, block.startMinute, block.content)
       updateTimeBlock(movingId, { date: targetDate, startHour: tHour, startMinute: tMin })
+      void syncBlockTimesToGcal(linkedEv, block.date, targetDate, tHour, tMin, block.duration)
       if (oldLine !== undefined && block.originalContent !== undefined) {
         const prefix = block.linePrefix ?? ''
         requestUpdate(oldLine, `${prefix}${formatTimeRange(tHour, tMin, block.duration)} ${block.originalContent}`)
@@ -497,12 +505,43 @@ export default function DayTimeline({ date, days = 1 }: DayTimelineProps) {
     return `${dateStr}T${String(h).padStart(2,'0')}:${String(m).padStart(2,'0')}:00`
   }
 
+  /**
+   * 타임블록을 늘리거나 옮겼을 때 연결된 Google 이벤트 시각도 같이 옮긴다.
+   * 예전엔 노트 텍스트와 로컬 스토어만 갱신해서, 구글 캘린더에는 만들 때의
+   * 30분짜리가 그대로 남아 있었다.
+   */
+  async function syncBlockTimesToGcal(
+    ev: GoogleCalendarEvent | null | undefined,
+    fromDate: string, toDate: string,
+    startHour: number, startMinute: number, duration: number,
+  ) {
+    if (!ev || !googleAccessToken) return
+    const startMins = startHour * 60 + startMinute
+    // 24:00 은 잘못된 시각이라 자정까지 꽉 찬 블록은 23:59로 잘라 보낸다
+    const endMins = Math.min(startMins + duration, 24 * 60 - 1)
+    const startISO = toISO(toDate, startHour, startMinute)
+    const endISO   = toISO(toDate, Math.floor(endMins / 60), endMins % 60)
+    patchEvent(fromDate, toDate, ev.id, {
+      start: { dateTime: startISO, date: undefined },
+      end:   { dateTime: endISO,   date: undefined },
+    })
+    try {
+      await updateCalendarEvent(googleAccessToken, ev.calendarId, ev.id, {
+        startDateTime: startISO,
+        endDateTime:   endISO,
+      })
+    } catch (err) { console.error('[timeblock → gcal 시간 동기화]', err) }
+  }
+
   // ── Resize – bottom ───────────────────────────────────────────────────────
 
   function onResizeDn(e: React.PointerEvent, block: TimeBlock) {
     e.preventDefault(); e.stopPropagation()
     ;(e.currentTarget as HTMLElement).setPointerCapture(e.pointerId)
-    setResizing({ blockId: block.id, startY: e.clientY, startDuration: block.duration })
+    setResizing({
+      blockId: block.id, startY: e.clientY, startDuration: block.duration,
+      ev: findTimeblockEvent(block.date, block.startHour, block.startMinute, block.content) ?? null,
+    })
   }
   function onResizeMv(e: React.PointerEvent, block: TimeBlock) {
     if (!resizing || resizing.blockId !== block.id) return
@@ -515,6 +554,7 @@ export default function DayTimeline({ date, days = 1 }: DayTimelineProps) {
       const b = useTimeBlockStore.getState().timeBlocks.find(b => b.id === resizing.blockId)
       if (b?.noteLineText && b.originalContent !== undefined)
         requestUpdate(b.noteLineText, `${b.linePrefix ?? ''}${formatTimeRange(b.startHour, b.startMinute, b.duration)} ${b.originalContent}`)
+      if (b) void syncBlockTimesToGcal(resizing.ev, b.date, b.date, b.startHour, b.startMinute, b.duration)
     }
     setResizing(null)
   }
@@ -524,7 +564,11 @@ export default function DayTimeline({ date, days = 1 }: DayTimelineProps) {
   function onResizeTopDn(e: React.PointerEvent, block: TimeBlock) {
     e.preventDefault(); e.stopPropagation()
     ;(e.currentTarget as HTMLElement).setPointerCapture(e.pointerId)
-    setResizingTop({ blockId: block.id, originalEndMins: block.startHour * 60 + block.startMinute + block.duration })
+    setResizingTop({
+      blockId: block.id,
+      originalEndMins: block.startHour * 60 + block.startMinute + block.duration,
+      ev: findTimeblockEvent(block.date, block.startHour, block.startMinute, block.content) ?? null,
+    })
   }
   function onResizeTopMv(e: React.PointerEvent, block: TimeBlock) {
     if (!resizingTop || resizingTop.blockId !== block.id) return
@@ -540,6 +584,7 @@ export default function DayTimeline({ date, days = 1 }: DayTimelineProps) {
       const b = useTimeBlockStore.getState().timeBlocks.find(b => b.id === resizingTop.blockId)
       if (b?.noteLineText && b.originalContent !== undefined)
         requestUpdate(b.noteLineText, `${b.linePrefix ?? ''}${formatTimeRange(b.startHour, b.startMinute, b.duration)} ${b.originalContent}`)
+      if (b) void syncBlockTimesToGcal(resizingTop.ev, b.date, b.date, b.startHour, b.startMinute, b.duration)
     }
     setResizingTop(null)
   }

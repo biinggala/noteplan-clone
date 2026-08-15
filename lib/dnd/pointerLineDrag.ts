@@ -219,14 +219,40 @@ function reorder(e: PointerEvent, drag: ActiveDrag) {
   const { view } = drag
   const dropPos = view.posAtCoords({ x: e.clientX, y: e.clientY })
   if (dropPos == null) return
-  const dragIdx = drag.lineNumber - 1
-  const dropIdx = view.state.doc.lineAt(dropPos).number - 1
-  if (dragIdx === dropIdx) return
-  const lines = view.state.doc.toString().split('\n')
-  const [removed] = lines.splice(dragIdx, 1)
-  const adjusted = dragIdx < dropIdx ? dropIdx - 1 : dropIdx
-  lines.splice(adjusted, 0, removed)
-  view.dispatch({ changes: { from: 0, to: view.state.doc.length, insert: lines.join('\n') } })
+  const doc = view.state.doc
+  const dragNum = drag.lineNumber
+  const dropNum = doc.lineAt(dropPos).number
+  if (dragNum === dropNum || dragNum < 1 || dragNum > doc.lines) return
+
+  const dragLine = doc.line(dragNum)
+  const dropLine = doc.line(dropNum)
+
+  // 예전엔 문서 전체를 갈아끼웠다(from:0 ~ to:doc.length). 그러면 커서가 항상
+  // 위치 0으로 무너진다(측정 확인) — 교체 범위 안의 위치는 매핑할 곳이 없기 때문.
+  // WebKit(Tauri)은 이렇게 바뀐 선택을 DOM에 반영하면서 캐럿을 화면에 보이게
+  // 스크롤하므로, 줄을 옮길 때마다 노트 맨 위로 튀었다.
+  // 옮기는 줄만 지우고 다시 넣는 최소 변경이면 커서가 제자리에 매핑된다.
+  const del = dragNum < doc.lines
+    ? { from: dragLine.from, to: dragLine.to + 1 }   // 줄 + 뒤따르는 개행
+    : { from: dragLine.from - 1, to: dragLine.to }   // 마지막 줄이면 앞 개행을 대신 제거
+  // 드롭 대상 줄 '앞'에 넣는다 (기존 splice 동작과 동일 — 위/아래 방향 무관).
+  const ins = { from: dropLine.from, insert: dragLine.text + '\n' }
+
+  // 줄 재정렬은 줄 수가 그대로라 문서 전체 높이도 그대로다. 그래서 스크롤 위치는
+  // 원래 값 그대로가 정답 — 엔진이 어떻게 재계산하든 되돌려 놓는다.
+  const scroller = view.scrollDOM
+  const keepTop = scroller.scrollTop
+
+  view.dispatch({
+    // 변경은 위치 순서대로 넘겨야 한다
+    changes: dragNum < dropNum ? [del, ins] : [ins, del],
+    scrollIntoView: false,
+  })
+
+  const restore = () => { if (scroller.scrollTop !== keepTop) scroller.scrollTop = keepTop }
+  restore()
+  // CodeMirror가 다음 프레임에 다시 측정하면서 한 줄 높이만큼 밀 수 있어 한 번 더
+  requestAnimationFrame(restore)
 }
 
 // ── 드롭 대상 하이라이트 ───────────────────────────────────────────────────────
