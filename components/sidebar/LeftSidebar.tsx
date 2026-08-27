@@ -527,7 +527,8 @@ function NewNoteModal({ onClose }: { onClose: () => void }) {
   const [folders, setFolders] = useState<Folder[]>([])
 
   useEffect(() => {
-    getFolders().then(setFolders)
+    // getFolders는 조회 실패 시 throw → 목록 없이 모달을 띄운다 (미분류로 생성 가능)
+    getFolders().then(setFolders).catch((e) => console.error('[NewNoteModal] 폴더 로드 실패', e))
     setTimeout(() => inputRef.current?.focus(), 50)
   }, [])
 

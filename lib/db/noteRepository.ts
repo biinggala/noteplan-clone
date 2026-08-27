@@ -758,10 +758,13 @@ export async function getNoteSummariesByDateRange(
 export async function getFolders(): Promise<Folder[]> {
   const supabase = createClient()
   const userId = await getUserId()
-  const { data } = await supabase
+  const { data, error } = await supabase
     .from('folders')
     .select('*')
     .eq('user_id', userId)
+  // 에러를 조용히 []로 흘리면 호출부가 "폴더 없음"으로 오인한다.
+  // (실제로 이게 PARA 기본 폴더가 실행마다 중복 생성된 원인)
+  if (error) throw error
   return (data ?? []).map(rowToFolder)
 }
 
@@ -950,17 +953,114 @@ export async function getNotesByFolder(folderPath: string): Promise<Note[]> {
 
 // ── PARA 기본 폴더 초기화 ────────────────────────────────────────────────────
 
-export async function initDefaultFolders(): Promise<void> {
+const DEFAULT_FOLDERS = ['Projects', 'Areas', 'Resources', 'Archive'] as const
+const UNIQUE_VIOLATION = '23505'
+
+// 동시 호출(StrictMode 이중 마운트, 빠른 리렌더) 직렬화 — 두 실행이 동시에
+// "폴더 없음"을 보고 각각 seed 하는 경쟁 상태를 막는다.
+let ensureInFlight: Promise<Folder[]> | null = null
+
+/**
+ * PARA 기본 폴더를 보장하고, 같은 path의 중복 행을 정리한 뒤 전체 폴더 목록을 반환한다.
+ *
+ * 규칙:
+ *  - 폴더 조회가 실패하면 throw. 빈 목록으로 간주해 seed 하지 않는다.
+ *  - 폴더가 하나도 없고(=최초 실행) 이 기기에서 seed 한 적이 없을 때만 생성한다.
+ *  - 같은 path 행이 여러 개면 하나만 남긴다.
+ */
+export async function ensureDefaultFolders(): Promise<Folder[]> {
+  if (!ensureInFlight) {
+    ensureInFlight = runEnsureDefaultFolders().finally(() => { ensureInFlight = null })
+  }
+  return ensureInFlight
+}
+
+async function runEnsureDefaultFolders(): Promise<Folder[]> {
+  const userId = await getUserId()
+  let folders = await getFolders()   // 실패 시 throw → seed 로 넘어가지 않음
+
+  const removed = await dedupeFoldersByPath(folders)
+  if (removed > 0) folders = await getFolders()
+
+  if (folders.length === 0 && !hasSeededDefaults(userId)) {
+    for (const name of DEFAULT_FOLDERS) await createFolderIfAbsent(name)
+    markSeededDefaults(userId)
+    folders = await getFolders()
+  } else if (folders.length > 0) {
+    markSeededDefaults(userId)
+  }
+
+  return folders
+}
+
+/** 이미 있으면 조용히 넘어가는 루트 폴더 생성 (unique 인덱스가 있으면 DB가 최종 방어) */
+async function createFolderIfAbsent(name: string): Promise<void> {
   const supabase = createClient()
   const userId = await getUserId()
-  const { data: existing } = await supabase
+  const { error } = await supabase
     .from('folders')
-    .select('path')
-    .eq('user_id', userId)
-  const existingPaths = new Set((existing ?? []).map((f) => f.path as string))
+    .insert({ id: uuidv4(), user_id: userId, name, parent_id: null, path: name })
+  if (error && error.code !== UNIQUE_VIOLATION) throw error
+}
 
-  const defaults = ['Projects', 'Areas', 'Resources', 'Archive']
-  for (const name of defaults) {
-    if (!existingPaths.has(name)) await createFolder(name)
+/**
+ * 같은 path를 가진 폴더 행을 하나로 합친다. 삭제한 행의 수를 반환.
+ * 노트는 folder(path) 문자열로 연결되므로 중복 행 제거로 잃는 노트는 없고,
+ * 하위 폴더만 살아남는 행으로 다시 연결해 주면 된다.
+ */
+async function dedupeFoldersByPath(folders: Folder[]): Promise<number> {
+  const byPath = new Map<string, Folder[]>()
+  for (const f of folders) {
+    const rows = byPath.get(f.path)
+    if (rows) rows.push(f)
+    else byPath.set(f.path, [f])
+  }
+
+  const supabase = createClient()
+  let removed = 0
+
+  for (const [path, rows] of byPath) {
+    if (rows.length < 2) continue
+    // id 정렬로 결정적 선택 — 어느 기기에서 실행해도 같은 행이 살아남는다
+    const sorted = [...rows].sort((a, b) => a.id.localeCompare(b.id))
+    const keep = sorted[0]
+    const dropIds = sorted.slice(1).map((f) => f.id)
+
+    const { error: reparentError } = await supabase
+      .from('folders')
+      .update({ parent_id: keep.id })
+      .in('parent_id', dropIds)
+    if (reparentError) throw reparentError
+
+    const { error: deleteError } = await supabase.from('folders').delete().in('id', dropIds)
+    if (deleteError) throw deleteError
+
+    removed += dropIds.length
+    console.warn(`[folders] '${path}' 중복 ${dropIds.length}건 정리`)
+  }
+
+  return removed
+}
+
+// ── seed 여부 기록 (기기 로컬) ────────────────────────────────────────────────
+// 사용자가 기본 폴더를 일부러 다 지웠을 때 다음 실행에서 되살아나지 않게 한다.
+
+function seedKey(userId: string) {
+  return `noteplan:default-folders-seeded:${userId}`
+}
+
+function hasSeededDefaults(userId: string): boolean {
+  try {
+    return localStorage.getItem(seedKey(userId)) === '1'
+  } catch {
+    return false
+  }
+}
+
+function markSeededDefaults(userId: string): void {
+  try {
+    localStorage.setItem(seedKey(userId), '1')
+  } catch {
+    // private mode 등 — 무시
   }
 }

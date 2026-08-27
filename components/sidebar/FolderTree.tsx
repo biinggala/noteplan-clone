@@ -6,7 +6,7 @@ import { format } from 'date-fns'
 import { useUIStore } from '@/lib/stores/uiStore'
 import { useNoteStore } from '@/lib/stores/noteStore'
 import {
-  getFolders,
+  ensureDefaultFolders,
   createFolder as dbCreateFolder,
   deleteFolder as dbDeleteFolder,
   renameFolder as dbRenameFolder,
@@ -321,19 +321,15 @@ export default function FolderTree() {
   const [dialog, setDialog] = useState<Dialog>(null)
   const [unfiledOpen, setUnfiledOpen] = useState(false)
 
-  // 폴더 목록만 네트워크로 (PARA 기본 폴더 idempotent 초기화). 노트 내용은 store에서 파생.
+  // 폴더 목록만 네트워크로. 기본 폴더 보장 + 중복 정리는 repository가 담당
+  // (동시 호출 직렬화 + 조회 실패 시 seed 금지). 노트 내용은 store에서 파생.
   const loadFolders = useCallback(async () => {
-    let list = await getFolders()
-    const existingPaths = new Set(list.map(f => f.path))
-    let created = false
-    for (const name of ['Projects', 'Areas', 'Resources', 'Archive']) {
-      if (!existingPaths.has(name)) {
-        await dbCreateFolder(name)
-        created = true
-      }
+    try {
+      setFolders(await ensureDefaultFolders())
+    } catch (e) {
+      // 조회 실패를 "폴더 없음"으로 처리하면 안 된다 — 기존 목록을 유지한다
+      console.error('[FolderTree] 폴더 로드 실패', e)
     }
-    if (created) list = await getFolders()
-    setFolders(list)
   }, [])
 
   // 노트 변경(생성/삭제/이름변경) 후 store 갱신 → tree/unfiled 자동 재파생
