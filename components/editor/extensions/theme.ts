@@ -71,6 +71,22 @@ export const noteplanTheme = [
     '.cm-hr': { color: 'var(--cm-formatting)', letterSpacing: '4px' },
 
     '.cm-scroller': { overflow: 'auto', justifyContent: 'center' },
+
+    // ── 모바일 (<768px) ─────────────────────────────────────────────────────
+    // 데스크톱 값(15px, 좌우 6/48px + 드래그 거터)을 좁은 화면에 그대로 쓰면
+    // 글자는 큰데 본문 폭은 좁아 한 줄에 몇 글자 들어가지 않는다.
+    // 애플 '메모'(본문 17px SF Pro, 좌우 여백 ~20px)를 기준으로 글자를 줄이고
+    // 좌우 여백을 20px로 맞춰 본문 폭을 넓힌다.
+    '@media (max-width: 767px)': {
+      '.cm-content': {
+        fontSize: '14px',
+        padding: '16px 20px',
+        maxWidth: 'none',
+      },
+      // 드래그 핸들은 mousemove 로만 나타난다 → 터치에선 끝내 보이지 않는
+      // 죽은 폭(거터 22px + 우측 여백 8px)이라 모바일에선 거터를 통째로 접는다.
+      '.cm-gutters': { display: 'none' },
+    },
     '&.cm-focused': { outline: 'none' },
 
     // ── 마크다운 표 ─────────────────────────────────────────────────────

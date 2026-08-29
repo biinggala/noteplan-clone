@@ -68,7 +68,7 @@ function SearchInner() {
     <div className="flex flex-col h-full">
       {/* ── 헤더 ── */}
       <div data-tauri-drag-region
-        className="electron-drag px-12 py-3 border-b border-[var(--border)] flex-shrink-0
+        className="electron-drag px-5 md:px-12 py-3 border-b border-[var(--border)] flex-shrink-0
                    flex items-center justify-between gap-4">
         <h1 className="text-lg font-semibold text-[var(--text-primary)] flex items-baseline gap-1.5 min-w-0">
           {isFolderView ? (
@@ -104,7 +104,7 @@ function SearchInner() {
       </div>
 
       {/* ── 결과 ── */}
-      <div className="flex-1 overflow-y-auto px-12 py-4">
+      <div className="flex-1 overflow-y-auto px-5 md:px-12 py-4">
         {!kind && !isFolderView && (
           <Empty>사이드바에서 태그를 누르거나, 노트 상단 경로에서 폴더를 선택하세요.</Empty>
         )}
