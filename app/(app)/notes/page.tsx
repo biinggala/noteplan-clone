@@ -165,7 +165,7 @@ function NoteInner() {
 
   return (
     <div className="flex flex-col h-full">
-      <div data-tauri-drag-region className="electron-drag px-12 py-3 border-b border-[var(--border)] flex-shrink-0 flex items-center justify-between">
+      <div data-tauri-drag-region className="electron-drag px-5 md:px-12 py-3 border-b border-[var(--border)] flex-shrink-0 flex items-center justify-between">
         <NoteBreadcrumb title={note.title} folder={note.folder} />
         <div className="flex items-center gap-2">
           {typingAuthor && (

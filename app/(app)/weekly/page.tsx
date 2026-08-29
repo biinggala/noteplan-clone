@@ -129,7 +129,7 @@ function WeeklyNoteInner() {
   return (
     <div className="flex flex-col h-full">
       {/* Header */}
-      <div data-tauri-drag-region className="electron-drag flex items-center justify-between px-12 py-3 border-b border-[var(--border)] flex-shrink-0">
+      <div data-tauri-drag-region className="electron-drag flex items-center justify-between px-5 md:px-12 py-3 border-b border-[var(--border)] flex-shrink-0">
         <div>
           <div className="flex items-center gap-2">
             <span className="text-xs font-semibold text-amber-500/80 tracking-wider uppercase">
