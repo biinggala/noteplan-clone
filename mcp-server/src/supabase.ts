@@ -10,9 +10,17 @@ import { createClient, type SupabaseClient } from '@supabase/supabase-js'
  * 그래서 소스에 그대로 박아둬도 된다(친구가 이 저장소를 그대로 clone해서
  * 자기 계정으로 로그인만 하면 되도록 하려는 목적).
  */
-const SUPABASE_URL = 'https://wkixhqeifuxxttkcpwty.supabase.co'
-const SUPABASE_ANON_KEY =
+const DEFAULT_SUPABASE_URL = 'https://wkixhqeifuxxttkcpwty.supabase.co'
+const DEFAULT_SUPABASE_ANON_KEY =
   'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6IndraXhocWVpZnV4eHR0a2Nwd3R5Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzcxODEwNDYsImV4cCI6MjA5Mjc1NzA0Nn0.FHyRSJzCqJPWrHBaw7RPgM5skLOm34yeUgYk0I4vtOM'
+
+/**
+ * 테스트에서 가짜 Supabase를 붙이기 위한 오버라이드. 비밀이 아닌 값들이고,
+ * 환경변수를 세팅할 수 있는 사람은 이미 이 프로세스를 통제하므로 권한 상승은
+ * 아니다. (다만 남이 준 env를 그대로 쓰면 토큰이 그쪽으로 간다 — SECURITY.md)
+ */
+const SUPABASE_URL = process.env.SUPABASE_URL ?? DEFAULT_SUPABASE_URL
+const SUPABASE_ANON_KEY = process.env.SUPABASE_ANON_KEY ?? DEFAULT_SUPABASE_ANON_KEY
 
 const SESSION_DIR = join(homedir(), '.noteplan-mcp')
 const SESSION_PATH = join(SESSION_DIR, 'session.json')
@@ -38,6 +46,10 @@ export function saveSession(
     JSON.stringify({ refresh_token, access_token, expires_at, email } satisfies StoredSession, null, 2),
   )
   chmodSync(SESSION_PATH, 0o600)
+}
+
+export function readStoredSession(): StoredSession | null {
+  return loadSession()
 }
 
 function loadSession(): StoredSession | null {
