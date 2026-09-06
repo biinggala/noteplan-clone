@@ -31,7 +31,9 @@ npm run login
 친구도 자기 계정으로 이 저장소를 그대로 clone해서 `npm run login`만 하면
 자기 노트만 보는 자기 전용 서버가 된다 — 별도 설정 필요 없음.
 
-## Claude Code에 등록
+## Claude Code에 등록 — ① 로컬 (stdio)
+
+같은 컴퓨터에서만 쓸 때. URL이 없고, Claude가 이 프로세스를 직접 실행한다.
 
 ```bash
 claude mcp add noteplan -- node /Users/biinggala/Documents/Noteplan-clone/mcp-server/dist/index.js
@@ -39,6 +41,55 @@ claude mcp add noteplan -- node /Users/biinggala/Documents/Noteplan-clone/mcp-se
 
 등록 후 Claude에게 "내 최근 노트 보여줘", "#journal 태그 노트 찾아줘",
 "오늘 데일리 노트에 이거 추가해줘" 처럼 요청하면 도구를 사용합니다.
+
+## Claude Code에 등록 — ② URL (원격 HTTP)
+
+폰·다른 컴퓨터·웹 Claude에서도 쓰고 싶을 때. 서버를 한 번 띄워두고 URL로 붙는다.
+**먼저 [SECURITY.md](./SECURITY.md) 를 읽으세요** — 자격증명 보관 위치가
+내 디스크에서 서버로 옮겨가고, 그에 따른 위험과 필수 설정이 정리돼 있다.
+
+### 서버 띄우기
+
+```bash
+# 1) DB 준비: Supabase SQL Editor 에서
+#    supabase/migrations/20260901_mcp_tokens.sql 실행
+
+# 2) 서버 환경변수 (호스팅 플랫폼에 설정)
+MCP_SESSION_KEY=$(openssl rand -base64 32)     # 저장 세션 암호화 키 — 필수
+MCP_ALLOWED_HOSTS=mcp.example.com              # Host 검사 (없으면 검사 비활성)
+MCP_ALLOWED_EMAILS=me@example.com              # 등록 허용 계정 (비우면 누구나)
+
+# 3) 실행 (HTTPS 종단 뒤에)
+npm run build && npm run serve                 # 기본 :8787
+```
+
+엔드포인트는 `POST /mcp` (MCP), `POST /enroll` (등록), `GET /healthz` 뿐이다.
+
+### 내 계정 등록 + 토큰 받기
+
+```bash
+npm run login                                   # 아직 안 했다면
+npm run enroll -- --server https://mcp.example.com --label "맥북"
+```
+
+출력된 명령을 그대로 실행하면 등록된다:
+
+```bash
+claude mcp add --transport http noteplan https://mcp.example.com/mcp \
+  --header "Authorization: Bearer npmcp_..."
+```
+
+토큰은 발급 시 **한 번만** 보인다(서버에는 해시만 남는다). 유출이 의심되면
+`mcp_tokens` 의 해당 행 `revoked_at` 을 채우면 즉시 막힌다.
+
+### 로컬과 원격의 차이
+
+| | stdio | URL |
+|---|---|---|
+| 접속 | 프로세스 실행 | `https://…/mcp` + PAT 헤더 |
+| 세션 위치 | `~/.noteplan-mcp/session.json` | 서버 DB(암호화) + 서버 키 |
+| 사용자 격리 | 프로세스 = 1명 | 요청마다 인증·클라이언트 분리 (RLS가 최종 방어) |
+| 폰에서 사용 | 불가 | 가능 |
 
 ## 보안
 
@@ -60,9 +111,25 @@ claude mcp add noteplan -- node /Users/biinggala/Documents/Noteplan-clone/mcp-se
   더 이상 안 쓴다. 파일을 지워도 되고, 찜찜하면 Supabase 대시보드에서
   키를 재발급(rotate)해도 된다.
 
+- 원격(URL) 모드의 위협 모델·완화·남은 위험은 [SECURITY.md](./SECURITY.md) 에
+  따로 정리했다. 요약: 남의 노트가 보이는 사고(요청 간 세션 혼입)는 구조적으로
+  막고 테스트로 지키지만, "서버가 refresh token을 보관한다"는 새 위험은
+  완화만 가능하다.
+
+## 테스트
+
+```bash
+npm test    # 타입 검사 + 원격 격리 테스트 18개
+```
+
+가짜 Supabase(실제 RLS처럼 JWT의 sub로만 행을 노출)를 띄워 놓고, 다른 사용자의
+노트가 절대 섞이지 않는지 확인한다.
+
 ## 다음 단계 (로드맵)
-1. ✅ 읽기+쓰기+수정 도구 (지금)
-2. ✅ 자기 계정 로그인 기반 인증 — 지인 공유 가능 (지금)
-3. pgvector 의미검색 — 저장 시 임베딩 생성, 유사도 검색 도구 추가
-4. 활성도(salience) 모델 — 최근성·링크수·열람 기반 중요도 가중 → 검색 랭킹에 블렌딩
-5. 정체성 프로필 자동 증류 — ambient personalization
+1. ✅ 읽기+쓰기+수정 도구
+2. ✅ 자기 계정 로그인 기반 인증 — 지인 공유 가능
+3. ✅ URL(원격 HTTP) 접속 — 폰·웹에서도 사용 (지금)
+4. 읽기 전용 PAT · 만료 (SECURITY.md 12항)
+5. pgvector 의미검색 — 저장 시 임베딩 생성, 유사도 검색 도구 추가
+6. 활성도(salience) 모델 — 최근성·링크수·열람 기반 중요도 가중 → 검색 랭킹에 블렌딩
+7. 정체성 프로필 자동 증류 — ambient personalization
