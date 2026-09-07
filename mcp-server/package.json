@@ -15,7 +15,8 @@
     "serve": "node dist/serve.js",
     "serve:dev": "tsx src/serve.ts",
     "enroll": "tsx src/enroll.ts",
-    "test": "tsc -p tsconfig.test.json && tsx test/remote-isolation.test.ts"
+    "test": "tsc -p tsconfig.test.json && tsx test/remote-isolation.test.ts",
+    "smoke": "tsx src/smoke.ts"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.0.0",
