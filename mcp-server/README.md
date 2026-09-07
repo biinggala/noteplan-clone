@@ -64,6 +64,35 @@ npm run build && npm run serve                 # 기본 :8787
 ```
 
 엔드포인트는 `POST /mcp` (MCP), `POST /enroll` (등록), `GET /healthz` 뿐이다.
+`/healthz` 는 값은 감추고 **무엇이 빠졌는지**만 알려준다 (`MCP_SESSION_KEY` 가
+없으면 503):
+
+```json
+{ "ok": true, "checks": { "session_key": true, "allowed_hosts": false, ... },
+  "warnings": ["MCP_ALLOWED_HOSTS 없음 — Host 검사 비활성"] }
+```
+
+### 어디에 올릴까
+
+| 방법 | 필요한 것 |
+|---|---|
+| **Render** | 리포 연결 → `render.yaml` 그대로. Docker 불필요. 환경변수 3개만 채우면 끝 |
+| **Fly / Railway / Cloud Run** | 저장소의 `Dockerfile` 사용 (`rootDir` = `mcp-server`) |
+| **맥 + 터널** (임시) | `npm run serve` + `cloudflared tunnel --url http://localhost:8787` |
+
+서버리스(Vercel Functions 등)에도 올라가지만 권하지 않는다 — 인스턴스가 계속
+바뀌어서 레이트리밋과 refresh 직렬화(single-flight)가 인스턴스별로 쪼개진다.
+상주 프로세스 쪽이 이 용도에 맞다.
+
+### 배포 직후 점검
+
+```bash
+npm run smoke -- --server https://mcp.example.com
+npm run smoke -- --server https://mcp.example.com --token npmcp_...   # 토큰까지 확인
+```
+
+설정 경고, 무인증 401, 엉터리 토큰 401, `GET /mcp` 405, (토큰이 있으면)
+`initialize` 핸드셰이크와 도구 9개까지 확인한다. 노트 내용은 출력하지 않는다.
 
 ### 내 계정 등록 + 토큰 받기
 

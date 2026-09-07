@@ -60,6 +60,19 @@ function rpcError(res: ServerResponse, status: number, message: string, headers?
 }
 
 async function readBody(req: IncomingMessage): Promise<unknown> {
+  // 앞단(서버리스 런타임, express.json 등)이 이미 본문을 파싱했으면 스트림은
+  // 비어 있다. 그걸 모르고 스트림만 읽으면 body가 undefined 로 넘어가
+  // "요청 본문이 없다"는 엉뚱한 오류가 난다.
+  const preparsed = (req as IncomingMessage & { body?: unknown }).body
+  if (preparsed !== undefined && preparsed !== null && preparsed !== '') {
+    if (typeof preparsed !== 'string') return preparsed
+    try {
+      return JSON.parse(preparsed)
+    } catch {
+      throw new AuthError('본문이 올바른 JSON이 아닙니다', 400)
+    }
+  }
+
   const chunks: Buffer[] = []
   let size = 0
   for await (const chunk of req) {
@@ -132,7 +145,22 @@ export async function handleRequest(req: IncomingMessage, res: ServerResponse): 
 
   try {
     if (url.pathname === '/healthz') {
-      return json(res, 200, { ok: true })
+      // 배포 직후 "무엇이 빠졌는지"를 바로 보기 위한 자기 점검.
+      // 값은 절대 내보내지 않는다 — 설정됐는지 여부만.
+      const checks = {
+        session_key: Boolean(process.env.MCP_SESSION_KEY),
+        allowed_hosts: Boolean(process.env.MCP_ALLOWED_HOSTS),
+        allowed_emails: Boolean(process.env.MCP_ALLOWED_EMAILS),
+        tls_enforced: !allowInsecure(),
+      }
+      // session_key 가 없으면 등록·접속이 아예 안 된다 → 준비 안 된 상태로 표시
+      const ready = checks.session_key
+      const warnings: string[] = []
+      if (!checks.session_key) warnings.push('MCP_SESSION_KEY 없음 — 등록/접속 불가')
+      if (!checks.allowed_hosts) warnings.push('MCP_ALLOWED_HOSTS 없음 — Host 검사 비활성')
+      if (!checks.allowed_emails) warnings.push('MCP_ALLOWED_EMAILS 없음 — 계정 있는 누구나 등록 가능')
+      if (allowInsecure()) warnings.push('MCP_ALLOW_INSECURE=1 — 평문 HTTP 허용 중')
+      return json(res, ready ? 200 : 503, { ok: ready, checks, warnings })
     }
 
     if (url.pathname === ENROLL_PATH) {
