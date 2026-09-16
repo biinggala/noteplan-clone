@@ -97,9 +97,17 @@ npm run smoke -- --server https://mcp.example.com --token npmcp_...   # 토큰�
 ### 내 계정 등록 + 토큰 받기
 
 ```bash
-npm run login                                   # 아직 안 했다면
 npm run enroll -- --server https://mcp.example.com --label "맥북"
 ```
+
+`enroll` 은 **이 등록만을 위한 새 로그인**을 브라우저로 진행한다. 로컬 stdio
+서버가 쓰는 `~/.noteplan-mcp/session.json` 은 건드리지 않는다.
+
+> **왜 세션을 따로 쓰나.** Supabase는 refresh 할 때마다 refresh_token 을 새로
+> 발급하고 옛것을 죽인다(로테이션). 로컬 서버와 원격 서버가 같은 토큰을 나눠
+> 쓰면 먼저 쓴 쪽이 다른 쪽을 죽여서 양쪽 다
+> `Invalid Refresh Token: Already Used` 로 실패한다. 굳이 공유하려면
+> `--use-saved-session` 이 있지만 권하지 않는다.
 
 출력된 명령을 그대로 실행하면 등록된다:
 
