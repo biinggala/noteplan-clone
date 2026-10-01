@@ -39,6 +39,27 @@ async function main() {
     checks.push({ name: '서버 응답 + 설정', ok: false, detail: `연결 실패: ${e instanceof Error ? e.message : e}` })
   }
 
+  // ①-b OAuth 메타데이터 (claude.ai·앱 커넥터용). 가장 흔한 실수는 MCP_PUBLIC_URL 을
+  //      실제 주소와 다르게 넣는 것 — 그러면 커넥터가 엉뚱한 곳으로 로그인하러 간다
+  try {
+    const res = await fetch(`${base}/.well-known/oauth-protected-resource`)
+    if (res.status === 503) {
+      checks.push({ name: 'OAuth 메타데이터', ok: true, detail: '비활성 (MCP_PUBLIC_URL 미설정 — 헤더 토큰만 가능)' })
+    } else {
+      const prm = await res.json() as { resource?: string; authorization_servers?: string[] }
+      const expected = `${base}/mcp`
+      const ok = res.status === 200 && prm.resource === expected && prm.authorization_servers?.[0] === base
+      checks.push({
+        name: 'OAuth 메타데이터',
+        ok,
+        detail: ok ? `활성 — claude.ai 커넥터에 ${expected} 만 넣으면 됩니다`
+          : `MCP_PUBLIC_URL 이 실제 주소와 다릅니다: 서버는 ${prm.resource ?? '?'} 라고 알림 (기대: ${expected})`,
+      })
+    }
+  } catch (e) {
+    checks.push({ name: 'OAuth 메타데이터', ok: false, detail: `${e instanceof Error ? e.message : e}` })
+  }
+
   // ② 인증 없이 접근하면 막혀야 한다
   try {
     const res = await fetch(`${base}/mcp`, {

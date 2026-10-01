@@ -8,6 +8,7 @@
  * 테스트가 그걸 잡아낼 수 있다.
  */
 import { createServer, type Server } from 'node:http'
+import { createHash, randomUUID } from 'node:crypto'
 
 export interface FakeNote {
   id: string; user_id: string; type: string; title: string; content: string
@@ -16,7 +17,16 @@ export interface FakeNote {
   created_at: number; updated_at: number
 }
 
-export interface FakeTokenRow { user_id: string; session_cipher: string; revoked?: boolean }
+export interface FakeTokenRow {
+  user_id: string; session_cipher: string; revoked?: boolean
+  label?: string | null
+  token_expires_at?: number | null
+  client_id_hash?: string | null; redirect_uri?: string | null
+  code_challenge?: string | null; oauth_state?: string | null
+  consent_hash?: string | null; consent_expires_at?: number | null
+  code_hash?: string | null; code_expires_at?: number | null
+  refresh_hash?: string | null
+}
 
 export interface FakeState {
   users: Map<string, { id: string; email: string }>
@@ -29,6 +39,10 @@ export interface FakeState {
   /** 감사용: notes 를 어떤 사용자로 읽었는지 순서대로 기록 */
   queryLog: Array<{ table: string; method: string; asUser: string | null }>
   rotations: number
+  /** 다음 "구글 로그인"에서 로그인할 사용자 (없으면 로그인 실패를 흉내) */
+  nextLoginUser?: string
+  /** Supabase PKCE: auth_code → { challenge, userId } */
+  supabaseCodes: Map<string, { challenge: string; userId: string }>
 }
 
 const b64 = (o: unknown) => Buffer.from(JSON.stringify(o)).toString('base64url')
@@ -98,6 +112,42 @@ export async function startFakeSupabase(state: FakeState): Promise<{ url: string
     }
 
     // ── GoTrue ────────────────────────────────────────────────────────────
+    // 구글 로그인 흉내: 사용자가 로그인을 마쳤다고 치고 redirect_to 로 code 를 들려 보낸다
+    if (url.pathname === '/auth/v1/authorize') {
+      const back = new URL(url.searchParams.get('redirect_to')!)
+      const userId = state.nextLoginUser
+      if (!userId) {
+        back.searchParams.set('error', 'access_denied')
+        back.searchParams.set('error_description', 'user cancelled')
+      } else {
+        const code = randomUUID()
+        state.supabaseCodes.set(code, { challenge: url.searchParams.get('code_challenge') ?? '', userId })
+        back.searchParams.set('code', code)
+      }
+      res.writeHead(302, { Location: back.toString() })
+      return res.end()
+    }
+
+    if (url.pathname === '/auth/v1/token' && url.searchParams.get('grant_type') === 'pkce') {
+      const entry = state.supabaseCodes.get(body?.auth_code)
+      state.supabaseCodes.delete(body?.auth_code)          // 1회용
+      const challenge = createHash('sha256').update(String(body?.code_verifier ?? '')).digest('base64url')
+      if (!entry || entry.challenge !== challenge) {
+        return send(400, { error: 'invalid_grant', error_description: 'code verifier mismatch' })
+      }
+      const user = state.users.get(entry.userId)!
+      state.rotations += 1
+      const refresh = `refresh-${entry.userId}-pkce-${state.rotations}`
+      state.refreshTokens.set(refresh, entry.userId)
+      return send(200, {
+        access_token: fakeJwt(entry.userId, user.email), token_type: 'bearer', expires_in: 3600,
+        expires_at: Math.floor(Date.now() / 1000) + 3600, refresh_token: refresh,
+        user: { id: entry.userId, email: user.email, aud: 'authenticated', role: 'authenticated' },
+      })
+    }
+
+    if (url.pathname === '/auth/v1/logout') return send(204, undefined)
+
     if (url.pathname === '/auth/v1/token' && url.searchParams.get('grant_type') === 'refresh_token') {
       const userId = state.refreshTokens.get(body?.refresh_token)
       if (!userId) return send(400, { error: 'invalid_grant', error_description: 'Invalid Refresh Token' })
@@ -126,8 +176,54 @@ export async function startFakeSupabase(state: FakeState): Promise<{ url: string
     // ── PostgREST: RPC ────────────────────────────────────────────────────
     if (url.pathname === '/rest/v1/rpc/mcp_redeem_token') {
       const row = state.tokens.get(body?.p_hash)
-      if (!row || row.revoked) return send(200, [])
+      const expired = row?.token_expires_at != null && row.token_expires_at <= Date.now()
+      if (!row || row.revoked || row.consent_hash || row.code_hash || expired) return send(200, [])
       return send(200, [{ t_user_id: row.user_id, t_session_cipher: row.session_cipher }])
+    }
+
+    if (url.pathname === '/rest/v1/rpc/mcp_oauth_consent') {
+      const now = Date.now()
+      const row = [...state.tokens.values()].find(r =>
+        r.consent_hash === body?.p_consent_hash && (r.consent_expires_at ?? 0) > now && !r.revoked)
+      if (!row) return send(200, [])
+      row.consent_hash = null
+      row.consent_expires_at = null
+      if (body.p_allow) {
+        row.code_hash = body.p_code_hash
+        row.code_expires_at = now + body.p_code_ttl_seconds * 1000
+      } else {
+        row.revoked = true
+      }
+      return send(200, [{ t_redirect_uri: row.redirect_uri, t_state: row.oauth_state }])
+    }
+
+    if (url.pathname === '/rest/v1/rpc/mcp_oauth_redeem_code') {
+      const now = Date.now()
+      const entry = [...state.tokens.entries()].find(([, r]) =>
+        r.code_hash === body?.p_code_hash && (r.code_expires_at ?? 0) > now &&
+        r.client_id_hash === body.p_client_id_hash && r.redirect_uri === body.p_redirect_uri &&
+        r.code_challenge === body.p_challenge && !r.revoked)
+      if (!entry) return send(200, [])
+      const [oldHash, row] = entry
+      state.tokens.delete(oldHash)
+      row.code_hash = null
+      row.code_expires_at = null
+      row.refresh_hash = body.p_refresh_hash
+      row.token_expires_at = now + body.p_token_ttl_seconds * 1000
+      state.tokens.set(body.p_token_hash, row)
+      return send(200, [{ t_user_id: row.user_id }])
+    }
+
+    if (url.pathname === '/rest/v1/rpc/mcp_oauth_refresh') {
+      const entry = [...state.tokens.entries()].find(([, r]) =>
+        r.refresh_hash === body?.p_refresh_hash && r.client_id_hash === body.p_client_id_hash && !r.revoked)
+      if (!entry) return send(200, [])
+      const [oldHash, row] = entry
+      state.tokens.delete(oldHash)
+      row.refresh_hash = body.p_new_refresh_hash
+      row.token_expires_at = Date.now() + body.p_token_ttl_seconds * 1000
+      state.tokens.set(body.p_new_token_hash, row)
+      return send(200, [{ t_user_id: row.user_id }])
     }
 
     if (url.pathname === '/rest/v1/rpc/mcp_store_session') {
@@ -176,11 +272,15 @@ export async function startFakeSupabase(state: FakeState): Promise<{ url: string
     }
 
     if (url.pathname === '/rest/v1/mcp_tokens' && req.method === 'POST') {
-      const row = body as { user_id: string; token_hash: string; session_cipher: string }
+      const row = body as FakeTokenRow & { token_hash: string; consent_expires_at?: string | number | null }
       if (!asUser || row.user_id !== asUser) {
         return send(403, { code: '42501', message: 'row-level security' })
       }
-      state.tokens.set(row.token_hash, { user_id: row.user_id, session_cipher: row.session_cipher })
+      const { token_hash: tokenHash, ...rest } = row
+      state.tokens.set(tokenHash, {
+        ...rest,
+        consent_expires_at: row.consent_expires_at ? Date.parse(String(row.consent_expires_at)) : null,
+      })
       return send(201, [row])
     }
 
@@ -200,6 +300,6 @@ export async function startFakeSupabase(state: FakeState): Promise<{ url: string
 export function emptyState(): FakeState {
   return {
     users: new Map(), refreshTokens: new Map(), notes: [], folders: [],
-    tokens: new Map(), queryLog: [], rotations: 0,
+    tokens: new Map(), queryLog: [], rotations: 0, supabaseCodes: new Map(),
   }
 }

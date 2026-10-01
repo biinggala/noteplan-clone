@@ -119,11 +119,41 @@ claude mcp add --transport http noteplan https://mcp.example.com/mcp \
 토큰은 발급 시 **한 번만** 보인다(서버에는 해시만 남는다). 유출이 의심되면
 `mcp_tokens` 의 해당 행 `revoked_at` 을 채우면 즉시 막힌다.
 
+### claude.ai · 폰 앱에서 쓰기 — URL만 (OAuth)
+
+claude.ai 커스텀 커넥터는 URL 만 받는다(헤더 칸이 없다). 이 서버는 OAuth 를
+지원하므로 **URL 하나만 넣으면 구글 로그인 → 승인 화면이 뜨고 연결된다.**
+토큰을 복사할 필요가 없다. 설정은 한 번만:
+
+1. **DB** — Supabase SQL Editor 에서 `supabase/migrations/20261001_mcp_oauth.sql` 실행
+2. **Supabase 리다이렉트 허용** — Dashboard → Authentication → URL Configuration
+   → Redirect URLs 에 `https://내-주소/oauth/callback` 추가.
+   **빠뜨리면 구글 로그인 후 NotePlan 앱 화면으로 튕긴다.**
+3. **서버 환경변수** — 바깥에서 보이는 정확한 주소:
+   ```bash
+   export MCP_PUBLIC_URL=https://내-주소       # 끝에 / 없이, /mcp 없이
+   npm run serve
+   ```
+4. **확인** — `npm run smoke -- --server https://내-주소` 에서
+   `✓ OAuth 메타데이터 — 활성` 이 떠야 한다 (주소가 틀리면 여기서 잡힌다)
+5. **연결** — claude.ai → 설정 → 커넥터 → 커스텀 커넥터 추가 → URL 에
+   `https://내-주소/mcp` → 구글 로그인 → 승인 화면에서 [허용]
+
+승인 화면은 어떤 앱이 어느 계정의 노트를 읽고 쓰려는지 보여준다.
+**직접 시작한 연결이 아니면 거부하세요** — 남이 보낸 링크로 승인하면 그 사람의
+Claude 에 내 노트가 연결된다 (SECURITY.md 13.4).
+
+| 환경변수 | 뜻 |
+|---|---|
+| `MCP_PUBLIC_URL` | 바깥 주소. 없으면 OAuth 비활성 (헤더 토큰만) |
+| `MCP_OAUTH_REDIRECT_HOSTS` | 돌아갈 수 있는 호스트. 기본 `claude.ai,claude.com,localhost,127.0.0.1` |
+| `MCP_ALLOWED_EMAILS` | 승인할 수 있는 계정 (헤더 등록·OAuth 공통) |
+
 ### 로컬과 원격의 차이
 
 | | stdio | URL |
 |---|---|---|
-| 접속 | 프로세스 실행 | `https://…/mcp` + PAT 헤더 |
+| 접속 | 프로세스 실행 | `https://…/mcp` + PAT 헤더, 또는 URL만 (OAuth) |
 | 세션 위치 | `~/.noteplan-mcp/session.json` | 서버 DB(암호화) + 서버 키 |
 | 사용자 격리 | 프로세스 = 1명 | 요청마다 인증·클라이언트 분리 (RLS가 최종 방어) |
 | 폰에서 사용 | 불가 | 가능 |
@@ -156,7 +186,7 @@ claude mcp add --transport http noteplan https://mcp.example.com/mcp \
 ## 테스트
 
 ```bash
-npm test    # 타입 검사 + 원격 격리 테스트 18개
+npm test    # 타입 검사 + 격리 18개 + OAuth 23개 + 공식 SDK 클라이언트 3개
 ```
 
 가짜 Supabase(실제 RLS처럼 JWT의 sub로만 행을 노출)를 띄워 놓고, 다른 사용자의
@@ -165,8 +195,9 @@ npm test    # 타입 검사 + 원격 격리 테스트 18개
 ## 다음 단계 (로드맵)
 1. ✅ 읽기+쓰기+수정 도구
 2. ✅ 자기 계정 로그인 기반 인증 — 지인 공유 가능
-3. ✅ URL(원격 HTTP) 접속 — 폰·웹에서도 사용 (지금)
-4. 읽기 전용 PAT · 만료 (SECURITY.md 12항)
-5. pgvector 의미검색 — 저장 시 임베딩 생성, 유사도 검색 도구 추가
-6. 활성도(salience) 모델 — 최근성·링크수·열람 기반 중요도 가중 → 검색 랭킹에 블렌딩
-7. 정체성 프로필 자동 증류 — ambient personalization
+3. ✅ URL(원격 HTTP) 접속 — 폰·웹에서도 사용
+4. ✅ OAuth — claude.ai·앱 커넥터에 URL만 넣고 연결 (지금)
+5. 리프레시 재사용 감지 · 읽기 전용 토큰 (SECURITY.md 12항)
+6. pgvector 의미검색 — 저장 시 임베딩 생성, 유사도 검색 도구 추가
+7. 활성도(salience) 모델 — 최근성·링크수·열람 기반 중요도 가중 → 검색 랭킹에 블렌딩
+8. 정체성 프로필 자동 증류 — ambient personalization
