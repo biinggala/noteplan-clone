@@ -76,7 +76,7 @@ npm run build && npm run serve                 # 기본 :8787
 
 | 방법 | 필요한 것 |
 |---|---|
-| **Render** | 리포 연결 → `render.yaml` 그대로. Docker 불필요. 환경변수 3개만 채우면 끝 |
+| **Render** (권장) | 대시보드 → New → Blueprint → 이 저장소(브랜치 `main`). 루트의 `render.yaml` 을 읽는다. 입력할 값은 `MCP_ALLOWED_EMAILS` 하나 — 키는 Render 가 만들고, 공개 주소·허용 Host 는 Render 가 넣어 주는 `RENDER_EXTERNAL_URL` 을 서버가 그대로 쓴다 |
 | **Fly / Railway / Cloud Run** | 저장소의 `Dockerfile` 사용 (`rootDir` = `mcp-server`) |
 | **맥 + 터널** (임시) | `npm run serve` + `cloudflared tunnel --url http://localhost:8787` |
 

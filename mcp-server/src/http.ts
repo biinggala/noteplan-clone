@@ -34,8 +34,9 @@ function allowedEmails(): string[] | undefined {
   return raw ? raw.split(',').map(s => s.trim().toLowerCase()).filter(Boolean) : undefined
 }
 
-function allowedHosts(): string[] | undefined {
-  const raw = process.env.MCP_ALLOWED_HOSTS
+export function allowedHosts(): string[] | undefined {
+  // Render 에서는 서비스 호스트명이 RENDER_EXTERNAL_HOSTNAME 으로 들어온다
+  const raw = process.env.MCP_ALLOWED_HOSTS || process.env.RENDER_EXTERNAL_HOSTNAME
   return raw ? raw.split(',').map(s => s.trim()).filter(Boolean) : undefined
 }
 
@@ -83,7 +84,7 @@ export async function handleRequest(req: IncomingMessage, res: ServerResponse): 
       // 값은 절대 내보내지 않는다 — 설정됐는지 여부만.
       const checks = {
         session_key: Boolean(process.env.MCP_SESSION_KEY),
-        allowed_hosts: Boolean(process.env.MCP_ALLOWED_HOSTS),
+        allowed_hosts: Boolean(allowedHosts()?.length),
         allowed_emails: Boolean(process.env.MCP_ALLOWED_EMAILS),
         tls_enforced: !allowInsecure(),
         oauth: Boolean(publicUrl()),

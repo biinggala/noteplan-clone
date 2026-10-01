@@ -23,18 +23,20 @@ export function hashPat(pat: string): string {
 }
 
 function sessionKey(): Buffer {
-  const raw = process.env[KEY_ENV]
+  const raw = process.env[KEY_ENV]?.trim()
   if (!raw) {
     throw new Error(
       `${KEY_ENV} 환경변수가 필요합니다. ` +
       `openssl rand -base64 32 로 만들어 서버 환경에만 두세요.`,
     )
   }
-  const key = Buffer.from(raw, 'base64')
-  if (key.length !== 32) {
-    throw new Error(`${KEY_ENV} 는 base64로 인코딩된 32바이트여야 합니다 (지금 ${key.length}바이트)`)
-  }
-  return key
+  const decoded = Buffer.from(raw, 'base64')
+  if (decoded.length === 32) return decoded
+  // 호스팅 플랫폼이 만들어 준 값(예: Render 의 generateValue)이 정확히 "32바이트 base64"
+  // 형식이 아닐 수 있다. 충분히 긴 무작위 문자열이면 SHA-256 으로 32바이트 키를 유도한다.
+  // (openssl rand -base64 32 로 만든 기존 키는 위에서 그대로 쓰이므로 영향이 없다)
+  if (raw.length >= 32) return createHash('sha256').update(`noteplan-mcp-session-key:${raw}`).digest()
+  throw new Error(`${KEY_ENV} 가 너무 짧습니다 (${raw.length}자) — openssl rand -base64 32 로 만드세요`)
 }
 
 export function seal(plaintext: string): string {
@@ -96,8 +98,7 @@ export function unsealTyped<T extends Record<string, unknown>>(typ: string, seal
  * 매번 다시 계산한다 — 클라이언트 등록 정보를 DB에 두지 않기 위해서다.
  */
 export function clientSecretFor(clientId: string): string {
-  const raw = process.env.MCP_SESSION_KEY ?? ''
-  return createHmac('sha256', Buffer.from(raw, 'base64')).update(`client-secret:${clientId}`).digest('base64url')
+  return createHmac('sha256', sessionKey()).update(`client-secret:${clientId}`).digest('base64url')
 }
 
 /** 길이가 달라도 시간차로 새지 않는 비교 */
