@@ -16,13 +16,13 @@ import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/
 import { AuthError, clientForPat, enroll } from './remote-auth.js'
 import { generatePat, hashPat, PAT_PREFIX } from './crypto.js'
 import { registerTools } from './tools.js'
+import { readJsonBody } from './body.js'
+import { allowInsecure, clientKey, rateLimit, requireTls } from './guard.js'
+import { handleOAuth, publicUrl, wwwAuthenticate } from './oauth-server.js'
 
-const MAX_BODY_BYTES = 1024 * 1024        // 1MB — 메모리 고갈 방어
 const MCP_PATH = '/mcp'
 const ENROLL_PATH = '/enroll'
 
-/** 로컬/테스트에서만 평문 HTTP 허용 */
-const allowInsecure = () => process.env.MCP_ALLOW_INSECURE === '1'
 
 /**
  * 등록 허용 이메일. 이 서버는 인터넷에 열려 있고, 계정만 있으면 누구나
@@ -59,80 +59,11 @@ function rpcError(res: ServerResponse, status: number, message: string, headers?
   json(res, status, { jsonrpc: '2.0', error: { code: -32000, message }, id: null }, headers)
 }
 
-async function readBody(req: IncomingMessage): Promise<unknown> {
-  // 앞단(서버리스 런타임, express.json 등)이 이미 본문을 파싱했으면 스트림은
-  // 비어 있다. 그걸 모르고 스트림만 읽으면 body가 undefined 로 넘어가
-  // "요청 본문이 없다"는 엉뚱한 오류가 난다.
-  const preparsed = (req as IncomingMessage & { body?: unknown }).body
-  if (preparsed !== undefined && preparsed !== null && preparsed !== '') {
-    if (typeof preparsed !== 'string') return preparsed
-    try {
-      return JSON.parse(preparsed)
-    } catch {
-      throw new AuthError('본문이 올바른 JSON이 아닙니다', 400)
-    }
-  }
-
-  const chunks: Buffer[] = []
-  let size = 0
-  for await (const chunk of req) {
-    size += (chunk as Buffer).length
-    if (size > MAX_BODY_BYTES) throw new AuthError('요청 본문이 너무 큽니다', 413)
-    chunks.push(chunk as Buffer)
-  }
-  if (!chunks.length) return undefined
-  try {
-    return JSON.parse(Buffer.concat(chunks).toString('utf8'))
-  } catch {
-    // 깨진 JSON은 서버 오류가 아니라 잘못된 요청이다
-    throw new AuthError('본문이 올바른 JSON이 아닙니다', 400)
-  }
-}
-
 function bearer(req: IncomingMessage): string | undefined {
   const header = req.headers.authorization
   if (!header) return undefined
   const match = /^Bearer\s+(.+)$/i.exec(header.trim())
   return match?.[1]?.trim() || undefined
-}
-
-/**
- * TLS 확인. 원격 서버에 PAT와 (등록 시) refresh token이 평문으로 흐르면
- * 중간에서 가져가는 순간 노트 전체를 읽고 쓸 수 있다.
- */
-function requireTls(req: IncomingMessage): void {
-  // 주의: x-forwarded-proto 는 앞단 프록시가 정직하게 세팅해 줄 때만 의미가 있다.
-  // 프록시 없이 직접 노출하면 공격자가 이 헤더를 위조해 우회할 수 있다 —
-  // 이 검사는 "TLS 종단 뒤에 둔다"는 배포 전제의 보조 장치다 (SECURITY.md 7항).
-  if (allowInsecure()) return
-  const proto = String(req.headers['x-forwarded-proto'] ?? '').split(',')[0].trim()
-  const encrypted = (req.socket as { encrypted?: boolean }).encrypted === true
-  if (proto === 'https' || encrypted) return
-  throw new AuthError('HTTPS로만 접속할 수 있습니다', 400)
-}
-
-// ── 아주 단순한 요청 제한 ────────────────────────────────────────────────────
-// 목적은 PAT 대량 추측·RPC 남용 속도를 떨어뜨리는 것. 인스턴스 메모리 기준이라
-// 여러 인스턴스로 뜨면 그만큼 느슨해진다 — 앞단(Cloudflare 등)에 두는 게 정석.
-const RATE_WINDOW_MS = 60_000
-const RATE_MAX = Number(process.env.MCP_RATE_LIMIT ?? 120)
-const hits = new Map<string, { count: number; resetAt: number }>()
-
-function rateLimit(key: string): void {
-  const now = Date.now()
-  const entry = hits.get(key)
-  if (!entry || entry.resetAt <= now) {
-    hits.set(key, { count: 1, resetAt: now + RATE_WINDOW_MS })
-    if (hits.size > 10_000) for (const [k, v] of hits) if (v.resetAt <= now) hits.delete(k)
-    return
-  }
-  entry.count += 1
-  if (entry.count > RATE_MAX) throw new AuthError('요청이 너무 많습니다', 429)
-}
-
-function clientKey(req: IncomingMessage): string {
-  const fwd = String(req.headers['x-forwarded-for'] ?? '').split(',')[0].trim()
-  return fwd || req.socket.remoteAddress || 'unknown'
 }
 
 /** 로그에 토큰 원문을 남기지 않는다 — 로그가 곧 열쇠가 되지 않도록. */
@@ -143,6 +74,9 @@ function tokenLabel(pat: string): string {
 export async function handleRequest(req: IncomingMessage, res: ServerResponse): Promise<void> {
   const url = new URL(req.url ?? '/', 'http://localhost')
 
+  // OAuth 엔드포인트(메타데이터·등록·인가·토큰)는 별도 모듈이 맡는다
+  if (await handleOAuth(req, res, url)) return
+
   try {
     if (url.pathname === '/healthz') {
       // 배포 직후 "무엇이 빠졌는지"를 바로 보기 위한 자기 점검.
@@ -152,6 +86,7 @@ export async function handleRequest(req: IncomingMessage, res: ServerResponse): 
         allowed_hosts: Boolean(process.env.MCP_ALLOWED_HOSTS),
         allowed_emails: Boolean(process.env.MCP_ALLOWED_EMAILS),
         tls_enforced: !allowInsecure(),
+        oauth: Boolean(publicUrl()),
       }
       // session_key 가 없으면 등록·접속이 아예 안 된다 → 준비 안 된 상태로 표시
       const ready = checks.session_key
@@ -160,6 +95,7 @@ export async function handleRequest(req: IncomingMessage, res: ServerResponse): 
       if (!checks.allowed_hosts) warnings.push('MCP_ALLOWED_HOSTS 없음 — Host 검사 비활성')
       if (!checks.allowed_emails) warnings.push('MCP_ALLOWED_EMAILS 없음 — 계정 있는 누구나 등록 가능')
       if (allowInsecure()) warnings.push('MCP_ALLOW_INSECURE=1 — 평문 HTTP 허용 중')
+      if (!publicUrl()) warnings.push('MCP_PUBLIC_URL 없음 — OAuth(claude.ai·앱 커넥터) 비활성, 헤더 토큰만 가능')
       return json(res, ready ? 200 : 503, { ok: ready, checks, warnings })
     }
 
@@ -172,7 +108,7 @@ export async function handleRequest(req: IncomingMessage, res: ServerResponse): 
       if (!accessToken) {
         return json(res, 401, { error: 'Authorization: Bearer <supabase access token> 필요' })
       }
-      const body = (await readBody(req)) as { refresh_token?: string; label?: string } | undefined
+      const body = (await readJsonBody(req)) as { refresh_token?: string; label?: string } | undefined
       if (!body?.refresh_token) return json(res, 400, { error: 'refresh_token 필요' })
 
       const pat = generatePat()
@@ -192,14 +128,14 @@ export async function handleRequest(req: IncomingMessage, res: ServerResponse): 
 
       const pat = bearer(req)
       if (!pat) {
-        return rpcError(res, 401, 'Authorization: Bearer <PAT> 필요', {
-          'WWW-Authenticate': 'Bearer realm="noteplan-mcp"',
+        return rpcError(res, 401, 'Authorization: Bearer <토큰> 필요', {
+          'WWW-Authenticate': wwwAuthenticate(false),
         })
       }
       // 토큰 원문 조각을 키로 쓰지 않는다 (메모리 덤프·디버거에 남지 않게)
       rateLimit(`pat:${hashPat(pat).slice(0, 16)}`)
 
-      const body = await readBody(req)
+      const body = await readJsonBody(req)
       // ① 이 요청의 사용자로만 스코프된 클라이언트
       const ctx = await clientForPat(pat)
 
@@ -228,7 +164,7 @@ export async function handleRequest(req: IncomingMessage, res: ServerResponse): 
     if (res.headersSent) { res.end(); return }
     if (url.pathname === MCP_PATH) {
       rpcError(res, status, message, status === 401
-        ? { 'WWW-Authenticate': 'Bearer realm="noteplan-mcp"' }
+        ? { 'WWW-Authenticate': wwwAuthenticate(Boolean(bearer(req))) }
         : undefined)
     } else {
       json(res, status, { error: message })

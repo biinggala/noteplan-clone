@@ -23,10 +23,13 @@ if (!process.env.MCP_ALLOWED_HOSTS) {
 if (process.env.MCP_ALLOW_INSECURE === '1') {
   console.warn('[noteplan-mcp] 경고: MCP_ALLOW_INSECURE=1 — 평문 HTTP 허용. 로컬 테스트에서만 쓰세요.')
 }
+if (!process.env.MCP_PUBLIC_URL) {
+  console.warn('[noteplan-mcp] 안내: MCP_PUBLIC_URL 미설정 — OAuth(claude.ai·앱 커넥터) 비활성, 헤더 토큰만 가능합니다.')
+}
 if (!process.env.MCP_ALLOWED_EMAILS) {
   console.warn('[noteplan-mcp] 안내: MCP_ALLOWED_EMAILS 미설정 — 계정이 있는 누구나 등록할 수 있습니다(각자 자기 노트만).')
 }
 
 createServer((req, res) => { void handleRequest(req, res) }).listen(port, host, () => {
-  console.log(`[noteplan-mcp] listening on http://${host}:${port}  (MCP: POST /mcp, 등록: POST /enroll)`)
+  console.log(`[noteplan-mcp] listening on http://${host}:${port}  (MCP: POST /mcp, 등록: POST /enroll, OAuth: /.well-known/oauth-authorization-server)`)
 })
