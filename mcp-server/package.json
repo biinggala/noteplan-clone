@@ -16,7 +16,8 @@
     "serve:dev": "tsx src/serve.ts",
     "enroll": "tsx src/enroll.ts",
     "test": "tsc -p tsconfig.test.json && tsx test/remote-isolation.test.ts && tsx test/oauth.test.ts && tsx test/sdk-client.test.ts && tsx test/render-defaults.test.ts",
-    "smoke": "tsx src/smoke.ts"
+    "smoke": "tsx src/smoke.ts",
+    "deploy:cloudrun": "bash deploy-cloudrun.sh"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.0.0",
