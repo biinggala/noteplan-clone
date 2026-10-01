@@ -238,6 +238,12 @@ async function register(req: IncomingMessage, res: ServerResponse): Promise<void
   }
   const bad = (uris as string[]).find(u => !isAllowedRedirect(u))
   if (bad) {
+    // 새 클라이언트(예: Claude 외의 앱)를 붙일 때 무엇을 허용해야 하는지 운영자가
+    // 바로 알 수 있게 남긴다. redirect_uri 는 비밀이 아니다.
+    let host = bad
+    try { host = new URL(bad).hostname } catch { /* 그대로 */ }
+    console.warn(`[noteplan-mcp] 등록 거부: 허용되지 않은 redirect_uri ${bad}` +
+      ` — 이 앱을 믿는다면 MCP_OAUTH_REDIRECT_HOSTS 에 ${host} 를 추가하세요`)
     return oauthError(res, 400, 'invalid_redirect_uri',
       `허용되지 않은 redirect_uri 입니다: ${bad} (MCP_OAUTH_REDIRECT_HOSTS 로 허용 호스트를 정합니다)`)
   }
