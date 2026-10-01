@@ -1,5 +1,5 @@
 # 원격 MCP 서버 이미지. Fly.io / Railway / Cloud Run 등 Docker를 받는 곳 공용.
-# (Render 는 Docker 없이 render.yaml 로도 배포된다)
+# (Render 는 Docker 없이 저장소 루트의 render.yaml 로 배포된다)
 FROM node:22-alpine
 
 WORKDIR /app

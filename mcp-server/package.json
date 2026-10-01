@@ -15,7 +15,7 @@
     "serve": "node dist/serve.js",
     "serve:dev": "tsx src/serve.ts",
     "enroll": "tsx src/enroll.ts",
-    "test": "tsc -p tsconfig.test.json && tsx test/remote-isolation.test.ts && tsx test/oauth.test.ts && tsx test/sdk-client.test.ts",
+    "test": "tsc -p tsconfig.test.json && tsx test/remote-isolation.test.ts && tsx test/oauth.test.ts && tsx test/sdk-client.test.ts && tsx test/render-defaults.test.ts",
     "smoke": "tsx src/smoke.ts"
   },
   "dependencies": {

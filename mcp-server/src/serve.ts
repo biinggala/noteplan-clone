@@ -4,7 +4,8 @@
  * TLS는 앞단 플랫폼이 담당한다 — 직접 노출할 거면 리버스 프록시를 두세요.
  */
 import { createServer } from 'node:http'
-import { handleRequest } from './http.js'
+import { allowedHosts, handleRequest } from './http.js'
+import { publicUrl } from './oauth-server.js'
 
 const port = Number(process.env.PORT ?? 8787)
 const host = process.env.HOST ?? '0.0.0.0'
@@ -17,13 +18,13 @@ if (!process.env.MCP_SESSION_KEY) {
 
 // SDK의 DNS rebinding 보호는 허용목록이 있을 때만 실제로 검사한다
 // (enableDnsRebindingProtection 만 켜고 목록이 비면 아무것도 막지 않는다).
-if (!process.env.MCP_ALLOWED_HOSTS) {
+if (!allowedHosts()?.length) {
   console.warn('[noteplan-mcp] 경고: MCP_ALLOWED_HOSTS 가 없어 Host 검사가 비활성입니다 (예: mcp.example.com)')
 }
 if (process.env.MCP_ALLOW_INSECURE === '1') {
   console.warn('[noteplan-mcp] 경고: MCP_ALLOW_INSECURE=1 — 평문 HTTP 허용. 로컬 테스트에서만 쓰세요.')
 }
-if (!process.env.MCP_PUBLIC_URL) {
+if (!publicUrl()) {
   console.warn('[noteplan-mcp] 안내: MCP_PUBLIC_URL 미설정 — OAuth(claude.ai·앱 커넥터) 비활성, 헤더 토큰만 가능합니다.')
 }
 if (!process.env.MCP_ALLOWED_EMAILS) {

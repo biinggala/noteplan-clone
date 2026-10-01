@@ -65,7 +65,9 @@ interface Pending extends Record<string, unknown> {
  * 메타데이터를 엉뚱한 주소로 오염시킬 수 있다.
  */
 export function publicUrl(): string | undefined {
-  const raw = process.env.MCP_PUBLIC_URL?.trim()
+  // Render 는 서비스 주소를 RENDER_EXTERNAL_URL 로 직접 넣어 준다 — 요청 헤더가 아니라
+  // 플랫폼이 정한 값이라 믿을 수 있다. 직접 지정(MCP_PUBLIC_URL)이 있으면 그게 우선.
+  const raw = (process.env.MCP_PUBLIC_URL || process.env.RENDER_EXTERNAL_URL)?.trim()
   return raw ? raw.replace(/\/+$/, '') : undefined
 }
 

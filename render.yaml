@@ -1,0 +1,32 @@
+# Render Blueprint — NotePlan 원격 MCP 서버 (mcp-server/)
+#
+# Render 대시보드 → New → Blueprint → 이 저장소 → 브랜치 main.
+# 입력하라고 뜨는 값은 MCP_ALLOWED_EMAILS 하나뿐이다:
+#   • MCP_SESSION_KEY  — Render 가 무작위로 만들어 준다 (generateValue)
+#   • 공개 주소·허용 Host — Render 가 RENDER_EXTERNAL_URL / _HOSTNAME 으로 넣어 주고
+#                          서버가 그걸 그대로 쓴다 (MCP_PUBLIC_URL·MCP_ALLOWED_HOSTS 불필요)
+#
+# 배포 뒤 한 가지는 손으로 해야 한다 (Render 가 대신 못 하는 Supabase 쪽 설정):
+#   Supabase → Authentication → URL Configuration → Redirect URLs 에
+#   https://<서비스 주소>/oauth/callback 추가
+services:
+  - type: web
+    name: noteplan-mcp
+    runtime: node
+    plan: free
+    branch: main
+    rootDir: mcp-server
+    buildCommand: npm ci && npm run build
+    startCommand: npm run serve
+    healthCheckPath: /healthz
+    envVars:
+      - key: NODE_VERSION
+        value: "22"
+      - key: MCP_SESSION_KEY
+        generateValue: true
+      - key: MCP_ALLOWED_EMAILS
+        sync: false
+      # 인가 코드를 받아갈 수 있는 앱의 콜백 호스트 (SECURITY.md 13.1).
+      # agent.meta.ai = Meta 에이전트(muse). 믿는 앱만 추가할 것.
+      - key: MCP_OAUTH_REDIRECT_HOSTS
+        value: claude.ai,claude.com,localhost,127.0.0.1,agent.meta.ai
