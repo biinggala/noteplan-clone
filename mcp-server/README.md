@@ -76,13 +76,37 @@ npm run build && npm run serve                 # 기본 :8787
 
 | 방법 | 필요한 것 |
 |---|---|
-| **Render** (권장) | 대시보드 → New → Blueprint → 이 저장소(브랜치 `main`). 루트의 `render.yaml` 을 읽는다. 입력할 값은 `MCP_ALLOWED_EMAILS` 하나 — 키는 Render 가 만들고, 공개 주소·허용 Host 는 Render 가 넣어 주는 `RENDER_EXTERNAL_URL` 을 서버가 그대로 쓴다 |
+| **Google Cloud Run** (권장) | `npm run deploy:cloudrun` 한 번. 키는 Secret Manager 에 만들고, 배정된 주소를 `MCP_PUBLIC_URL`·`MCP_ALLOWED_HOSTS` 로 자동으로 넣는다. 쉬다가 다시 켜질 때 1~2초라 커넥터가 끊기지 않는다 (아래) |
+| **Render** | 대시보드 → New → Blueprint → 이 저장소(브랜치 `main`). 루트의 `render.yaml` 을 읽는다. 입력할 값은 `MCP_ALLOWED_EMAILS` 하나 — 키는 Render 가 만들고, 공개 주소·허용 Host 는 Render 가 넣어 주는 `RENDER_EXTERNAL_URL` 을 서버가 그대로 쓴다 |
 | **Fly / Railway / Cloud Run** | 저장소의 `Dockerfile` 사용 (`rootDir` = `mcp-server`) |
 | **맥 + 터널** (임시) | `npm run serve` + `cloudflared tunnel --url http://localhost:8787` |
 
 서버리스(Vercel Functions 등)에도 올라가지만 권하지 않는다 — 인스턴스가 계속
 바뀌어서 레이트리밋과 refresh 직렬화(single-flight)가 인스턴스별로 쪼개진다.
 상주 프로세스 쪽이 이 용도에 맞다.
+
+### Cloud Run 에 올리기
+
+맥에 `gcloud` 가 있고 로그인돼 있으면 (`brew install --cask google-cloud-sdk` → `gcloud auth login`):
+
+```bash
+cd mcp-server
+GCP_PROJECT=프로젝트ID MCP_ALLOWED_EMAILS=me@example.com npm run deploy:cloudrun
+```
+
+스크립트가 하는 일:
+
+1. 필요한 API(Run·Cloud Build·Artifact Registry·Secret Manager)를 켠다
+2. 세션 키를 **Secret Manager** 에 처음 한 번만 만든다 — 화면에도 파일에도 남지 않고,
+   다른 컴퓨터에서 다시 배포해도 같은 키를 쓰므로 기존 연결이 끊기지 않는다
+3. `Dockerfile` 로 빌드·배포 (`--allow-unauthenticated` — 인증은 서버가 직접 한다)
+4. 첫 배포면 배정된 주소를 `MCP_PUBLIC_URL`·`MCP_ALLOWED_HOSTS` 로 넣는다
+
+끝나면 커넥터에 넣을 MCP 주소와 Supabase Redirect URL 에 넣을 콜백 주소를 출력한다.
+코드를 고친 뒤에는 같은 명령을 다시 실행하면 된다 (키·주소 유지).
+
+Render 무료 플랜은 15분 쉬면 내려가고 다시 켜는 데 30초~1분 걸려 커넥터가 시간
+초과를 낸다. Cloud Run 도 쉬면 내려가지만 다시 켜는 데 1~2초라 이 문제가 없다.
 
 ### 배포 직후 점검
 
