@@ -29,7 +29,12 @@ gcloud auth list --filter=status:ACTIVE --format='value(account)' 2>/dev/null | 
   || fail "gcloud 에 로그인돼 있지 않습니다. gcloud auth login 을 먼저 실행하세요."
 
 PROJECT="${GCP_PROJECT:-$(gcloud config get-value project 2>/dev/null || true)}"
-[ -n "$PROJECT" ] || fail "GCP 프로젝트를 모릅니다. GCP_PROJECT=프로젝트ID npm run deploy:cloudrun 으로 지정하세요 (목록: gcloud projects list)"
+[ -n "$PROJECT" ] || fail "GCP 프로젝트를 모릅니다. GCP_PROJECT=<프로젝트 ID> npm run deploy:cloudrun 으로 지정하세요 (목록: gcloud projects list)"
+# 확인 질문 전에 걸러낸다 — 예시 문구를 그대로 넣거나 오타가 나면 여기서 멈춘다
+[[ "$PROJECT" =~ ^[a-z][a-z0-9-]{4,28}[a-z0-9]$ ]] \
+  || fail "'$PROJECT' 는 GCP 프로젝트 ID 형식이 아닙니다. gcloud projects list 의 PROJECT_ID 열 값을 넣으세요."
+gcloud projects describe "$PROJECT" --format='value(projectId)' >/dev/null 2>&1 \
+  || fail "프로젝트 '$PROJECT' 를 찾을 수 없거나 권한이 없습니다. gcloud projects list 로 확인하세요."
 
 EMAILS="${MCP_ALLOWED_EMAILS:-}"
 if [ -z "$EMAILS" ]; then
