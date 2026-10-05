@@ -180,7 +180,7 @@ export default function LeftSidebar() {
       <button
         onClick={() => router.push(path)}
         aria-current={isActive ? 'page' : undefined}
-        className={`group flex items-center gap-2.5 w-full h-8 px-2.5 rounded-md text-[13px] transition-colors
+        className={`group flex items-center gap-2.5 w-full h-10 md:h-8 px-2.5 rounded-md text-[15px] md:text-[13px] transition-colors
           ${isActive
             ? 'bg-[var(--accent-soft)] text-[var(--accent)] font-medium'
             : 'text-[var(--text-secondary)] hover:bg-[var(--hover-bg)] hover:text-[var(--text-primary)]'
@@ -243,7 +243,7 @@ export default function LeftSidebar() {
             d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
         </svg>
         <span>Search</span>
-        <kbd className="ml-auto text-[10px] font-sans px-1.5 py-0.5 rounded border border-[var(--border)] opacity-70">⌘J</kbd>
+        <kbd className="ml-auto inline-flex items-center gap-px text-[10px] leading-none px-1.5 h-[18px] rounded border border-[var(--border)] opacity-70 whitespace-nowrap" style={{ fontFamily: 'inherit' }}>⌘J</kbd>
       </button>
 
       {/* Calendar Section */}
@@ -289,7 +289,9 @@ export default function LeftSidebar() {
         />
       )}
 
-      {activeTab === 'review' && <ReviewPanel />}
+      {activeTab === 'review' && (
+        <div className="flex-1 min-h-0 flex flex-col"><ReviewPanel /></div>
+      )}
 
       {/* Bottom: 가져오기 · 테마 · 사용자 */}
       <div className="border-t border-[var(--border)] pt-1.5 mt-1 flex-shrink-0">
