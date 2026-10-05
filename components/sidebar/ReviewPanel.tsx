@@ -4,6 +4,7 @@ import { useRouter } from 'next/navigation'
 import { format, parseISO, subDays, differenceInCalendarDays } from 'date-fns'
 import { getNoteSummariesByDateRange, getOrCreateDailyNote, updateNoteContentSafely } from '@/lib/db/noteRepository'
 import { useCalendarStore } from '@/lib/stores/calendarStore'
+import { insertUnderTasks } from '@/lib/parser/insertTask'
 
 /**
  * Review — 지난 30일 데일리 노트에 남아 있는 '안 끝낸 할 일'을 한곳에 모은다.
@@ -69,18 +70,7 @@ export default function ReviewPanel() {
     try {
       await editLine(t, raw => `${raw.replace(/^(\s*)(?:- \[ \]|\*) /, '$1- [>] ')} >${today}`)
       const todayNote = await getOrCreateDailyNote(today)
-      await updateNoteContentSafely(todayNote.id, c => {
-        const lines = c.split('\n')
-        const h = lines.findIndex(l => /^##\s+Tasks\s*$/i.test(l))
-        const item = `- [ ] ${t.text}`
-        if (h < 0) return `${c.replace(/\s+$/, '')}\n${item}\n`
-        // ## Tasks 아래, 다음 머리말 앞의 마지막 줄 다음에 넣는다
-        let at = h + 1
-        while (at < lines.length && !/^#{1,6}\s/.test(lines[at])) at++
-        while (at > h + 1 && lines[at - 1].trim() === '') at--
-        lines.splice(at, 0, item)
-        return lines.join('\n')
-      })
+      await updateNoteContentSafely(todayNote.id, c => insertUnderTasks(c, `- [ ] ${t.text}`))
       setTasks(prev => prev?.filter(x => x !== t) ?? null)
     } finally { setBusy(null) }
   }

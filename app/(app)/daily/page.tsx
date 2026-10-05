@@ -1,11 +1,12 @@
 'use client'
-import { Suspense, useEffect, useState, useCallback } from 'react'
+import { Suspense, useEffect, useRef, useState, useCallback } from 'react'
 import { useSearchParams, useRouter } from 'next/navigation'
 import { format, parseISO, isValid, getWeek, getWeekYear, addDays, differenceInCalendarDays } from 'date-fns'
 import { useCalendarStore } from '@/lib/stores/calendarStore'
 import { getOrCreateDailyNote, getOrCreateWeeklyNote, updateNoteContentSafely } from '@/lib/db/noteRepository'
 import { parseTimeBlockLines } from '@/lib/parser/timeBlockParser'
 import { toggleTaskLine, type TaskOutlineTask } from '@/lib/parser/taskOutline'
+import { insertUnderTasks, APPEND_TASK_EVENT, type AppendTaskDetail } from '@/lib/parser/insertTask'
 import { useTimeBlockStore } from '@/lib/stores/timeBlockStore'
 import { useLineUpdateStore } from '@/lib/stores/lineUpdateStore'
 import { useTaskDotStore, hasOpenTask } from '@/lib/stores/taskDotStore'
@@ -137,6 +138,22 @@ function DailyNoteInner() {
     doc.setContent(revision.content)
     setShowHistory(false)
   }, [doc])
+
+  // ── 타임라인에서 만든 '할 일' → 지금 열린 이 노트에 넣기 ────────────────────
+  // DB 에 직접 쓰면 편집 중인 내용과 충돌하므로, 열려 있으면 편집 세션으로 넣는다
+  const noteContentRef = useRef<string | null>(null)
+  useEffect(() => { noteContentRef.current = note?.date === dateStr ? note.content : null })
+  useEffect(() => {
+    const onAppend = (e: Event) => {
+      const d = (e as CustomEvent<AppendTaskDetail>).detail
+      const cur = noteContentRef.current
+      if (d.date !== dateStr || cur == null) return
+      doc.setContent(insertUnderTasks(cur, d.line))
+      d.handled = true
+    }
+    window.addEventListener(APPEND_TASK_EVENT, onAppend)
+    return () => window.removeEventListener(APPEND_TASK_EVENT, onAppend)
+  }, [dateStr, doc.setContent])  // eslint-disable-line react-hooks/exhaustive-deps
 
   // ── Timeline → Note 라인 업데이트 ─────────────────────────────────────────
   const setDocContent = doc.setContent   // useCallback 으로 고정된 함수

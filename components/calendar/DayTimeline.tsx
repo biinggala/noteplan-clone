@@ -15,8 +15,10 @@ import {
 } from '@/lib/google/withToken'
 import {
   linkTimeblocks, desiredSummary, moveTimeblockEvent, syncTimeblockSummary,
-  deleteTimeblockEvent, blockStartMins,
+  deleteTimeblockEvent, blockStartMins, createTimeblockEvent,
 } from '@/lib/google/timeblockLink'
+import { getOrCreateDailyNote, updateNoteContentSafely } from '@/lib/db/noteRepository'
+import { insertUnderTasks, APPEND_TASK_EVENT, type AppendTaskDetail } from '@/lib/parser/insertTask'
 import {
   fetchCalendarList,
   fetchAllCalendarEventsForRange,
@@ -160,6 +162,16 @@ export default function DayTimeline({ date, days = 1 }: DayTimelineProps) {
     date: string; startHour: number; startMinute: number
   } | null>(null)
   const [newEventTitle, setNewEventTitle] = useState('')
+  // 빈 칸을 눌러 만드는 것: 'event' = 구글 일정, 'task' = 노트의 할 일(타임블록).
+  // 할 일은 그 날 데일리 노트의 ## Tasks 에 시간과 함께 들어간다 — 줄을 끌어다 놓을 수
+  // 없는 모바일에서도 타임블록을 만들 수 있게 (마지막 선택을 기억)
+  const [newEventKind, setNewEventKindState] = useState<'event' | 'task'>(() => {
+    try { return localStorage.getItem('np-new-slot-kind') === 'task' ? 'task' : 'event' } catch { return 'event' }
+  })
+  const setNewEventKind = (k: 'event' | 'task') => {
+    setNewEventKindState(k)
+    try { localStorage.setItem('np-new-slot-kind', k) } catch { /* 무시 */ }
+  }
   // 종일(all-day) 새 이벤트 입력 (date + 제목)
   const [newAllDayDate, setNewAllDayDate] = useState<string | null>(null)
   const [newAllDayTitle, setNewAllDayTitle] = useState('')
@@ -607,7 +619,40 @@ export default function DayTimeline({ date, days = 1 }: DayTimelineProps) {
 
   // ── Create Google Calendar event ─────────────────────────────────────────
 
+  /** 할 일(타임블록) 만들기 — 노트에 '- [ ] 9:00 AM - 9:30 AM 제목' 줄을 넣는다 */
+  async function handleCreateTask() {
+    if (creatingRef.current || !newEventSlot || !newEventTitle.trim()) return
+    creatingRef.current = true
+    setSavingEvent(true)
+    setCreateError(null)
+    const { date: d, startHour, startMinute } = newEventSlot
+    const title = newEventTitle.trim()
+    const line = `- [ ] ${formatTimeRange(startHour, startMinute, DEFAULT_DURATION)} ${title}`
+    try {
+      // 그 날 노트가 지금 열려 있으면 편집 세션으로 (편집 중인 내용과 충돌하지 않게)
+      const detail: AppendTaskDetail = { date: d, line, handled: false }
+      window.dispatchEvent(new CustomEvent(APPEND_TASK_EVENT, { detail }))
+      if (!detail.handled) {
+        const day = await getOrCreateDailyNote(d)
+        await updateNoteContentSafely(day.id, c => insertUnderTasks(c, line))
+        // 열려 있지 않은 날이라도 지금 타임라인에 바로 보이게
+        useTimeBlockStore.getState().addTimeBlock({
+          date: d, startHour, startMinute, duration: DEFAULT_DURATION, content: title,
+        })
+      }
+      void createTimeblockEvent(d, startHour * 60 + startMinute, DEFAULT_DURATION, title)
+      closeNewEventForm()
+    } catch (err) {
+      console.error('[createTask]', err)
+      setCreateError(`할 일을 넣지 못했습니다: ${err instanceof Error ? err.message : String(err)}`)
+    } finally {
+      creatingRef.current = false
+      setSavingEvent(false)
+    }
+  }
+
   async function handleCreateEvent() {
+    if (newEventKind === 'task') return handleCreateTask()
     if (creatingRef.current) return
     if (!newEventSlot || !newEventTitle.trim()) return
     creatingRef.current = true
@@ -822,7 +867,7 @@ export default function DayTimeline({ date, days = 1 }: DayTimelineProps) {
         onPointerMove={e => onBlockMove(e, block)}
         onPointerUp={() => finishBlockDrag(true)}
         onPointerCancel={() => finishBlockDrag(false)}
-        className="absolute rounded px-2 py-1 text-xs text-white
+        className="group absolute rounded-md px-2 py-1 text-xs text-white shadow-sm
                    pointer-events-auto select-none flex flex-col overflow-hidden"
         style={{
           top, height, ...laneStyle(lane),
@@ -845,7 +890,7 @@ export default function DayTimeline({ date, days = 1 }: DayTimelineProps) {
             onPointerUp={() => onResizeTopUp(true)}
             onPointerCancel={() => onResizeTopUp(false)}
           >
-            <div className="w-8 h-[2px] rounded-full bg-white/30" />
+            <div className="w-8 h-[2px] rounded-full bg-current opacity-0 group-hover:opacity-50 transition-opacity" />
           </div>
         )}
 
@@ -897,7 +942,7 @@ export default function DayTimeline({ date, days = 1 }: DayTimelineProps) {
             onPointerUp={() => onResizeUp(true)}
             onPointerCancel={() => onResizeUp(false)}
           >
-            <div className="w-8 h-[2px] rounded-full bg-white/30" />
+            <div className="w-8 h-[2px] rounded-full bg-current opacity-0 group-hover:opacity-50 transition-opacity" />
           </div>
         )}
       </div>
@@ -959,7 +1004,7 @@ export default function DayTimeline({ date, days = 1 }: DayTimelineProps) {
             style={{ height: 8, cursor: 'ns-resize', zIndex: 5 }}
             onPointerDown={e => onGcalDown(e, ev, colDate, 'resizeTop')}
           >
-            <div className="w-8 h-[2px] rounded-full bg-white/20 group-hover:bg-white/40 transition-opacity" />
+            <div className="w-8 h-[2px] rounded-full bg-current opacity-0 group-hover:opacity-40 transition-opacity" />
           </div>
         )}
 
@@ -991,7 +1036,7 @@ export default function DayTimeline({ date, days = 1 }: DayTimelineProps) {
             style={{ height: 8, cursor: 'ns-resize', zIndex: 5 }}
             onPointerDown={e => onGcalDown(e, ev, colDate, 'resize')}
           >
-            <div className="w-8 h-[2px] rounded-full bg-white/20 group-hover:bg-white/40 transition-opacity" />
+            <div className="w-8 h-[2px] rounded-full bg-current opacity-0 group-hover:opacity-40 transition-opacity" />
           </div>
         )}
       </div>
@@ -1438,13 +1483,27 @@ export default function DayTimeline({ date, days = 1 }: DayTimelineProps) {
                           if (e.nativeEvent.isComposing || e.keyCode === 229) return
                           if (e.key === 'Enter') handleCreateEvent()
                         }}
-                        placeholder="Event title..."
-                        aria-label="새 일정 제목"
+                        placeholder={newEventKind === 'task' ? '할 일…' : '일정 제목…'}
+                        aria-label={newEventKind === 'task' ? '새 할 일' : '새 일정 제목'}
                         className="w-full bg-transparent text-[11px] font-medium outline-none placeholder-white/40"
                         style={{ color: formColor }}
                       />
                       <div className="flex items-center gap-1">
-                        <select
+                        {/* 일정 / 할 일 */}
+                        <div role="radiogroup" aria-label="만들 종류" className="flex rounded overflow-hidden flex-shrink-0"
+                          style={{ boxShadow: `inset 0 0 0 1px ${formColor}55` }}>
+                          {(['event', 'task'] as const).map(k => (
+                            <button key={k} role="radio" aria-checked={newEventKind === k}
+                              onPointerDown={e => e.stopPropagation()}
+                              onClick={() => { setNewEventKind(k); newEventInputRef.current?.focus() }}
+                              className="text-[10px] px-1.5 py-0.5 font-medium"
+                              style={newEventKind === k ? { backgroundColor: formColor + '40', color: formColor } : { color: formColor + 'aa' }}
+                            >
+                              {k === 'event' ? '일정' : '할 일'}
+                            </button>
+                          ))}
+                        </div>
+                        {newEventKind === 'event' ? <select
                           value={newEventCalId}
                           onChange={e => setNewEventCalId(e.target.value)}
                           className="flex-1 text-[10px] bg-transparent outline-none truncate"
@@ -1456,11 +1515,12 @@ export default function DayTimeline({ date, days = 1 }: DayTimelineProps) {
                               {c.summary}{c.primary ? ' ★' : ''}
                             </option>
                           ))}
-                        </select>
+                        </select> : <span className="flex-1 text-[10px] truncate" style={{ color: formColor + 'aa' }}>노트 Tasks 에 추가</span>}
                         <button
                           onPointerDown={e => e.stopPropagation()}
                           onClick={handleCreateEvent}
                           disabled={savingEvent || !newEventTitle.trim()}
+                          aria-label="추가"
                           className="text-[10px] px-1.5 py-0.5 rounded font-medium transition-opacity disabled:opacity-40"
                           style={{ backgroundColor: formColor + '40', color: formColor }}
                         >
