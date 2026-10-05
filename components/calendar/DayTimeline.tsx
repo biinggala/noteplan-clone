@@ -160,7 +160,17 @@ export default function DayTimeline({ date, days = 1 }: DayTimelineProps) {
   // ── New-event inline form ─────────────────────────────────────────────────
   const [newEventSlot, setNewEventSlot] = useState<{
     date: string; startHour: number; startMinute: number
+    /** 분 — 빈 칸을 끌어서 고른 길이 (없으면 30분) */
+    duration?: number
   } | null>(null)
+  const slotDuration = newEventSlot?.duration ?? DEFAULT_DURATION
+
+  // 빈 칸을 위아래로 끌어 시간 범위 고르기 (구글 캘린더처럼) — 놓으면 그 길이로 입력 카드
+  const [rangeDrag, setRangeDrag] = useState<{ date: string; anchor: number; cur: number } | null>(null)
+  const justRangeDragged = useRef(false)
+  // 실제 판단은 ref 로 — WebKit 은 마지막 pointermove 가 화면에 반영되기 전에 pointerup 을
+  // 보내서, state 만 보면 '안 움직였음'으로 읽혀 카드가 안 열렸다
+  const rangeRef = useRef<{ date: string; anchor: number; pointerId: number } | null>(null)
   const [newEventTitle, setNewEventTitle] = useState('')
   // 빈 칸을 눌러 만드는 것: 'event' = 구글 일정, 'task' = 노트의 할 일(타임블록).
   // 할 일은 그 날 데일리 노트의 ## Tasks 에 시간과 함께 들어간다 — 줄을 끌어다 놓을 수
@@ -494,6 +504,12 @@ export default function DayTimeline({ date, days = 1 }: DayTimelineProps) {
     return snapTo15((offsetY / SLOT_H) * 60) % 60
   }
 
+  /** 그리드 기준 분 (스냅 전) */
+  function minsAtY(clientY: number): number {
+    return Math.max(0, Math.min(24 * 60 - SNAP, (clientY - gridTop()) / PX_PER_MIN))
+  }
+  const floor15 = (m: number) => Math.floor(m / SNAP) * SNAP
+
   function minsFromClientY(clientY: number): number {
     return Math.min(23 * 60 + 45, snapTo15(Math.max(0, (clientY - gridTop()) / PX_PER_MIN)))
   }
@@ -627,7 +643,7 @@ export default function DayTimeline({ date, days = 1 }: DayTimelineProps) {
     setCreateError(null)
     const { date: d, startHour, startMinute } = newEventSlot
     const title = newEventTitle.trim()
-    const line = `- [ ] ${formatTimeRange(startHour, startMinute, DEFAULT_DURATION)} ${title}`
+    const line = `- [ ] ${formatTimeRange(startHour, startMinute, slotDuration)} ${title}`
     try {
       // 그 날 노트가 지금 열려 있으면 편집 세션으로 (편집 중인 내용과 충돌하지 않게)
       const detail: AppendTaskDetail = { date: d, line, handled: false }
@@ -637,10 +653,10 @@ export default function DayTimeline({ date, days = 1 }: DayTimelineProps) {
         await updateNoteContentSafely(day.id, c => insertUnderTasks(c, line))
         // 열려 있지 않은 날이라도 지금 타임라인에 바로 보이게
         useTimeBlockStore.getState().addTimeBlock({
-          date: d, startHour, startMinute, duration: DEFAULT_DURATION, content: title,
+          date: d, startHour, startMinute, duration: slotDuration, content: title,
         })
       }
-      void createTimeblockEvent(d, startHour * 60 + startMinute, DEFAULT_DURATION, title)
+      void createTimeblockEvent(d, startHour * 60 + startMinute, slotDuration, title)
       closeNewEventForm()
     } catch (err) {
       console.error('[createTask]', err)
@@ -663,7 +679,7 @@ export default function DayTimeline({ date, days = 1 }: DayTimelineProps) {
     const { date: evDate, startHour, startMinute } = newEventSlot
     // 끝은 Date 로 계산 — 23:30 에 만들면 다음날 00:00 (예전엔 "T24:00:00" 으로 거절됐다)
     const start = dateAtMinutes(evDate, startHour * 60 + startMinute)
-    const end = addMinutes(start, DEFAULT_DURATION)
+    const end = addMinutes(start, slotDuration)
     const cal = calendars.find(c => c.id === calId)
     try {
       const created = await withGoogleToken(token => createCalendarEvent(token, {
@@ -1391,7 +1407,40 @@ export default function DayTimeline({ date, days = 1 }: DayTimelineProps) {
                   className="absolute left-0 right-0 border-t border-[var(--border)]
                              focus:outline-none focus-visible:bg-blue-500/10"
                   style={{ top: hour * SLOT_H, height: SLOT_H, zIndex: 1 }}
+                  onPointerDown={e => {
+                    // 마우스로 빈 칸을 누르면 범위 고르기 시작 (터치는 스크롤이라 탭만)
+                    if (e.button !== 0 || e.pointerType === 'touch') return
+                    if ((e.target as HTMLElement) !== e.currentTarget || gcalOp || blockDrag) return
+                    e.preventDefault()   // 끄는 동안 글자 선택 안 되게
+                    ;(e.currentTarget as HTMLElement).setPointerCapture(e.pointerId)
+                    const m = floor15(minsAtY(e.clientY))
+                    rangeRef.current = { date: d, anchor: m, pointerId: e.pointerId }
+                    setRangeDrag({ date: d, anchor: m, cur: m })
+                  }}
+                  onPointerMove={e => {
+                    const r = rangeRef.current
+                    if (!r || r.date !== d || r.pointerId !== e.pointerId) return
+                    const m = floor15(minsAtY(e.clientY))
+                    setRangeDrag(prev => (prev && prev.cur === m ? prev : { date: d, anchor: r.anchor, cur: m }))
+                  }}
+                  onPointerUp={e => {
+                    const r = rangeRef.current
+                    if (!r || r.date !== d) return
+                    rangeRef.current = null
+                    const cur = floor15(minsAtY(e.clientY))   // 놓은 자리에서 바로 계산
+                    const start = Math.min(r.anchor, cur)
+                    const end = Math.max(r.anchor, cur) + SNAP
+                    setRangeDrag(null)
+                    if (cur === r.anchor) return   // 그냥 클릭 → onClick 이 30분짜리로
+                    justRangeDragged.current = true
+                    setNewEventSlot({ date: d, startHour: Math.floor(start / 60), startMinute: start % 60, duration: end - start })
+                    setNewEventTitle('')
+                    setCreateError(null)
+                  }}
+                  onPointerCancel={() => { rangeRef.current = null; setRangeDrag(null) }}
                   onClick={e => {
+                    // 방금 끌어서 범위를 골랐으면 클릭으로 다시 열지 않는다
+                    if (justRangeDragged.current) { justRangeDragged.current = false; return }
                     // Don't open form if a GCal drag just ended
                     if (gcalOp || blockDrag) return
                     // Only open if clicking directly on the row (not a block)
@@ -1456,23 +1505,39 @@ export default function DayTimeline({ date, days = 1 }: DayTimelineProps) {
               {/* Google Calendar 이벤트 */}
               {evs.map(item => renderCalendarEvent(item, d, lanes.get(`e:${item.ev.id}`)))}
 
+              {/* 빈 칸을 끄는 중: 고른 범위 */}
+              {rangeDrag?.date === d && (() => {
+                const start = Math.min(rangeDrag.anchor, rangeDrag.cur)
+                const end = Math.max(rangeDrag.anchor, rangeDrag.cur) + SNAP
+                return (
+                  <div
+                    className="absolute left-1 right-1 rounded-md pointer-events-none px-2 pt-0.5 text-[10px] font-semibold tabular"
+                    style={{ top: start * PX_PER_MIN, height: (end - start) * PX_PER_MIN, zIndex: 39,
+                      background: 'color-mix(in srgb, var(--accent) 28%, transparent)', color: 'var(--accent)',
+                      boxShadow: 'inset 0 0 0 1px var(--accent)' }}
+                  >
+                    {formatTimeRange(Math.floor(start / 60), start % 60, end - start)}
+                  </div>
+                )
+              })()}
+
               {/* New-event ghost + 입력 카드 */}
               {newEventSlot?.date === d && (() => {
                 const { startHour, startMinute } = newEventSlot
                 const top = startHour * SLOT_H + startMinute * PX_PER_MIN
-                const ghostH = DEFAULT_DURATION * PX_PER_MIN
+                const ghostH = slotDuration * PX_PER_MIN
                 const primaryCal = calendars.find(c => c.id === newEventCalId)
                 const calColor = primaryCal?.backgroundColor ?? '#4285f4'
                 // 예전엔 30분 칸(30px) 안에 입력창·캘린더 선택·버튼을 다 우겨 넣어 잘렸다.
                 // 이제 칸에는 자리 표시만 두고, 입력은 그 아래(밤 시간대면 위)에 뜨는 카드에서.
-                const below = startHour < 19
+                const below = startHour * 60 + startMinute + slotDuration < 21 * 60
                 return (
                   <>
                     <div
                       className="absolute left-1 right-1 rounded-md border border-dashed pointer-events-none px-2 pt-0.5 text-[10px] font-medium tabular"
                       style={{ top, height: ghostH, zIndex: 39, borderColor: 'var(--accent)', background: 'var(--accent-soft)', color: 'var(--accent)' }}
                     >
-                      {formatTimeRange(startHour, startMinute, DEFAULT_DURATION)}
+                      {formatTimeRange(startHour, startMinute, slotDuration)}
                     </div>
                     <div
                       ref={newEventFormRef}
@@ -1498,6 +1563,22 @@ export default function DayTimeline({ date, days = 1 }: DayTimelineProps) {
                             {k === 'event' ? '구글 일정' : '할 일 (노트)'}
                           </button>
                         ))}
+                      </div>
+                      {/* 시간 · 길이 (끌어서 고른 길이를 여기서 바꿀 수도 — 모바일은 탭으로 열고 여기서) */}
+                      <div className="flex items-center gap-1.5 text-[11px] text-[var(--text-muted)] tabular">
+                        <span className="flex-1 truncate">{formatTimeRange(startHour, startMinute, slotDuration)}</span>
+                        <select
+                          aria-label="길이"
+                          value={slotDuration}
+                          onPointerDown={e => e.stopPropagation()}
+                          onChange={e => setNewEventSlot({ ...newEventSlot, duration: Number(e.target.value) })}
+                          className="h-6 rounded bg-[var(--hover-bg)] px-1 outline-none text-[var(--text-secondary)]"
+                        >
+                          {[...new Set([15, 30, 45, 60, 90, 120, 180, 240, slotDuration])]
+                            .filter(m => startHour * 60 + startMinute + m <= 24 * 60)
+                            .sort((x, y) => x - y)
+                            .map(m => <option key={m} value={m}>{m < 60 ? `${m}분` : m % 60 ? `${Math.floor(m / 60)}시간 ${m % 60}분` : `${m / 60}시간`}</option>)}
+                        </select>
                       </div>
                       <input
                         ref={newEventInputRef}
