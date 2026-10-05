@@ -48,6 +48,16 @@ interface Doc {
   inflightContent: string | null
   timer: ReturnType<typeof setTimeout> | null
   retryDelay: number
+  /** tags/backlinks 등 파생 열이 계산된 본문 (매 타자마다 계산하지 않으려고) */
+  derivedFor: string
+}
+
+/** 파생 열이 낡았으면 지금 계산 */
+function ensureDerived(doc: Doc) {
+  if (doc.derivedFor !== doc.note.content) {
+    doc.note = withContent(doc.note, doc.note.content)
+    doc.derivedFor = doc.note.content
+  }
 }
 
 const AUTOSAVE_MS = 1200
@@ -127,6 +137,7 @@ export function useNoteDocument(
     if (doc.timer) { clearTimeout(doc.timer); doc.timer = null }
     const run = async () => {
       for (let attempt = 0; attempt < 4; attempt++) {
+        ensureDerived(doc)
         const n = doc.note
         if (n.content === doc.base.content && doc.base.updatedAt != null) {
           clearDraft(doc.id)
@@ -225,6 +236,7 @@ export function useNoteDocument(
         inflightContent: null,
         timer: null,
         retryDelay: 2000,
+        derivedFor: loaded.content,
       }
       // 저장되지 못한 채 남아 있던 draft 되살리기
       const draft = readDraft(loaded.id)
@@ -272,10 +284,19 @@ export function useNoteDocument(
 
   // ── 편집 ──────────────────────────────────────────────────────────────────
   const draftTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const deriveTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
   const setContent = useCallback((content: string) => {
     const doc = docRef.current
     if (!doc || content === doc.note.content) return
-    doc.note = withContent(doc.note, content)
+    // 태그·링크 같은 파생 값은 타자가 잠깐 멈췄을 때 계산한다 — 아주 긴 노트에서
+    // 매 글자마다 전체를 다시 훑느라 입력이 무거워지던 것
+    doc.note = { ...doc.note, content }
+    if (deriveTimer.current) clearTimeout(deriveTimer.current)
+    deriveTimer.current = setTimeout(() => {
+      if (docRef.current !== doc) return
+      ensureDerived(doc)
+      publish(doc)
+    }, 250)
     publish(doc)
     setStatus('dirty')
     setError(null)
