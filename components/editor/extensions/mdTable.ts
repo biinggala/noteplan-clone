@@ -3,6 +3,7 @@ import type { DecorationSet } from '@codemirror/view'
 import { StateField, RangeSetBuilder, Annotation } from '@codemirror/state'
 import type { EditorState, Text, Transaction } from '@codemirror/state'
 import { openExternal, isSafeHttpUrl } from '@/lib/openExternal'
+import { isFacetValue } from '@/lib/parser/noteParser'
 
 /**
  * 마크다운 표를 실제 <table>로 렌더링하고, 셀을 클릭해 그 자리에서 바로
@@ -131,8 +132,9 @@ const INLINE = new RegExp(
   '|~~([^~]+)~~' +                     // 6 취소선
   '|\\*([^*]+)\\*' +                   // 7 기울임 *
   '|_([^_]+)_' +                       // 8 기울임 _
-  `|#([\\w${KO}/]+)` +                 // 9 태그
-  `|@([\\w${KO}]+)`,                   // 10 멘션
+  // 태그·멘션: 줄 맨 앞/공백/여는 괄호 뒤만 (본문·색인과 같은 규칙)
+  `|(?<![^\\s(\\[{"'])#([\\w${KO}/]+)` +   // 9 태그
+  `|(?<![^\\s(\\[{"'])@([\\w${KO}]+)`,     // 10 멘션
   'g'
 )
 
@@ -195,8 +197,12 @@ function renderInline(text: string, onOpenWikiLink?: (title: string) => void): D
     else if (strike !== undefined) frag.appendChild(el('s', '', strike))
     else if (emA !== undefined) frag.appendChild(el('em', '', emA))
     else if (emB !== undefined) frag.appendChild(el('em', '', emB))
-    else if (tag !== undefined) frag.appendChild(el('span', 'cm-tag', '#' + tag))
-    else if (mention !== undefined) frag.appendChild(el('span', 'cm-mention', '@' + mention))
+    else if (tag !== undefined) {
+      frag.appendChild(isFacetValue(tag, 'tag') ? el('span', 'cm-tag', '#' + tag) : document.createTextNode('#' + tag))
+    }
+    else if (mention !== undefined) {
+      frag.appendChild(isFacetValue(mention, 'mention') ? el('span', 'cm-mention', '@' + mention) : document.createTextNode('@' + mention))
+    }
   }
   if (last < text.length) frag.appendChild(document.createTextNode(text.slice(last)))
   return frag

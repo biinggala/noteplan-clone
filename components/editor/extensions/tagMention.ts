@@ -1,11 +1,30 @@
 import { Decoration, DecorationSet, EditorView, ViewPlugin, ViewUpdate } from '@codemirror/view'
 import { RangeSetBuilder } from '@codemirror/state'
-import { maskLinks } from '@/lib/parser/noteParser'
+import type { EditorState } from '@codemirror/state'
+import { syntaxTree } from '@codemirror/language'
+import { maskLinks, maskCode, matchFacets } from '@/lib/parser/noteParser'
 
-// Korean syllable range added so #한글태그 / @한글멘션 are highlighted
-const KO = '\uAC00-\uD7A3\u3131-\u314E\u314F-\u3163'
-const TAG_RE = new RegExp(`#([\\w${KO}/]+)`, 'g')
-const MENTION_RE = new RegExp(`@([\\w${KO}/]+)`, 'g')
+// 태그·멘션 규칙(시길 앞 글자, 숫자뿐/색상 제외, 한글 포함)은 색인과 같아야 하므로
+// noteParser.matchFacets 하나만 쓴다.
+
+/** 코드 노드 — 이 안의 #, @ 는 태그·멘션이 아니다 (`#include`, `#fff` …) */
+const CODE_NODES = new Set(['InlineCode', 'FencedCode', 'CodeBlock'])
+
+/** [from, to) 안의 코드 범위들 (문서 기준, 정렬됨) */
+function codeRanges(state: EditorState, from: number, to: number): { from: number; to: number }[] {
+  const out: { from: number; to: number }[] = []
+  syntaxTree(state).iterate({
+    from, to,
+    enter(node) {
+      if (CODE_NODES.has(node.name)) { out.push({ from: node.from, to: node.to }); return false }
+    },
+  })
+  return out
+}
+
+function inCode(state: EditorState, pos: number): boolean {
+  return codeRanges(state, pos, pos).some(r => r.from <= pos && pos < r.to)
+}
 
 export interface FacetHit {
   kind: 'tag' | 'mention'
@@ -14,23 +33,14 @@ export interface FacetHit {
   to: number
 }
 
-/** 한 줄에서 #태그 / @멘션 위치들을 찾는다 (문서 기준 절대 위치) */
+/** 한 줄에서 #태그 / @멘션 위치들을 찾는다 (문서 기준 절대 위치). 인라인 코드는 제외 */
 export function findFacetsInLine(text: string, lineStart: number): FacetHit[] {
   // URL 안의 #, @ 는 태그가 아니다 — 하이라이팅과 같은 마스킹을 쓴다
-  const masked = maskLinks(text)
-  const hits: FacetHit[] = []
-  for (const [re, kind] of [[TAG_RE, 'tag'], [MENTION_RE, 'mention']] as const) {
-    re.lastIndex = 0
-    let m: RegExpExecArray | null
-    while ((m = re.exec(masked)) !== null) {
-      hits.push({
-        kind, value: m[1],
-        from: lineStart + m.index,
-        to: lineStart + m.index + m[0].length,
-      })
-    }
-  }
-  return hits.sort((a, b) => a.from - b.from)
+  return matchFacets(maskLinks(maskCode(text))).map(f => ({
+    kind: f.kind, value: f.value,
+    from: lineStart + f.index,
+    to: lineStart + f.index + f.length,
+  }))
 }
 
 /**
@@ -45,7 +55,7 @@ export function facetClickExtension(onOpenFacet: (kind: 'tag' | 'mention', value
       if (pos == null) return false
       const line = view.state.doc.lineAt(pos)
       const hit = findFacetsInLine(line.text, line.from).find(h => pos >= h.from && pos <= h.to)
-      if (!hit) return false
+      if (!hit || inCode(view.state, hit.from)) return false
       // mousedown에서 막아야 커서가 옮겨가지 않는다
       e.preventDefault()
       e.stopPropagation()
@@ -65,7 +75,9 @@ export function tagMentionExtension() {
       }
 
       update(update: ViewUpdate) {
-        if (update.docChanged || update.viewportChanged) {
+        // 구문 트리는 뒤늦게(백그라운드로) 완성되기도 한다 — 그때도 코드 범위를 다시 거른다
+        if (update.docChanged || update.viewportChanged
+            || syntaxTree(update.startState) !== syntaxTree(update.state)) {
           this.decorations = this.buildDecorations(update.view)
         }
       }
@@ -75,36 +87,16 @@ export function tagMentionExtension() {
         const { from, to } = view.viewport
         // 링크/URL/이메일 영역은 공백으로 마스킹(길이 보존) → 그 안의 #,@ 는 매칭 안 됨
         const text = maskLinks(view.state.doc.sliceString(from, to))
+        // 코드 스팬·코드 블록은 구문 트리로 거른다 (뷰포트가 펜스 중간에서 시작해도 정확)
+        const code = codeRanges(view.state, from, to)
+        let ci = 0
 
-        const addMatches = (regex: RegExp, className: string) => {
-          regex.lastIndex = 0
-          let match: RegExpExecArray | null
-          while ((match = regex.exec(text)) !== null) {
-            const start = from + match.index
-            const end = start + match[0].length
-            builder.add(start, end, Decoration.mark({ class: className }))
-          }
-        }
-
-        // Note: ranges must be added in order
-        const ranges: { start: number; end: number; class: string }[] = []
-
-        for (const regex of [TAG_RE, MENTION_RE]) {
-          regex.lastIndex = 0
-          let match: RegExpExecArray | null
-          const cls = regex === TAG_RE ? 'cm-tag' : 'cm-mention'
-          while ((match = regex.exec(text)) !== null) {
-            ranges.push({
-              start: from + match.index,
-              end: from + match.index + match[0].length,
-              class: cls,
-            })
-          }
-        }
-
-        ranges.sort((a, b) => a.start - b.start)
-        for (const r of ranges) {
-          builder.add(r.start, r.end, Decoration.mark({ class: r.class }))
+        for (const f of matchFacets(text)) {       // index 순으로 정렬돼 있다
+          const start = from + f.index
+          const end = start + f.length
+          while (ci < code.length && code[ci].to <= start) ci++
+          if (ci < code.length && code[ci].from < end) continue
+          builder.add(start, end, Decoration.mark({ class: f.kind === 'tag' ? 'cm-tag' : 'cm-mention' }))
         }
 
         return builder.finish()
