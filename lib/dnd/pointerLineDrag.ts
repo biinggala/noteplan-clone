@@ -211,8 +211,17 @@ function canDropOn(date: string): boolean {
 
 /** elementFromPoint → 타임라인 슬롯의 date/hour/minute (없으면 null) */
 function slotInfoAt(clientX: number, clientY: number) {
+  // 포인터 아래 '맨 위 요소'로 칸을 찾으면, 그 자리에 구글 일정·다른 타임블록이 있을 때
+  // 그 일정이 잡혀 칸을 못 찾고 드롭이 그냥 무시됐다 (일정이 빽빽한 날엔 거의 항상).
+  // 타임라인 영역 안이기만 하면 좌표로 칸을 고른다.
   const el = document.elementFromPoint(clientX, clientY) as HTMLElement | null
-  const slot = el?.closest('[data-tl-slot]') as HTMLElement | null
+  const root = el?.closest('[data-tl-root]') as HTMLElement | null
+  if (!root) return null
+  let slot: HTMLElement | null = null
+  for (const s of root.querySelectorAll<HTMLElement>('[data-tl-slot]')) {
+    const r = s.getBoundingClientRect()
+    if (clientX >= r.left && clientX < r.right && clientY >= r.top && clientY < r.bottom) { slot = s; break }
+  }
   if (!slot) return null
   const date = slot.getAttribute('data-tl-date') ?? ''
   const baseHour = parseInt(slot.getAttribute('data-tl-hour') ?? '0', 10)

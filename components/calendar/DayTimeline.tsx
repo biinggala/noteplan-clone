@@ -1345,7 +1345,7 @@ export default function DayTimeline({ date, days = 1 }: DayTimelineProps) {
       </div>
 
       {/* Grid: time gutter + day columns */}
-      <div className="flex" ref={gridRef}>
+      <div className="flex" ref={gridRef} data-tl-root="">
 
         {/* Time gutter */}
         <div className="flex-shrink-0" style={{ width: 40 }}>
