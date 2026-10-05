@@ -71,24 +71,46 @@ export function selectionMenuExtension(
   ]
 
   let menuEl: HTMLElement | null = null
-  const closeMenu = () => { menuEl?.remove(); menuEl = null }
+  let menuView: EditorView | null = null
+  let cleanup: (() => void) | null = null
+  const closeMenu = () => {
+    cleanup?.()
+    cleanup = null
+    // 포커스가 메뉴 안에 있었으면 에디터로 돌려준다 (안 하면 body로 떨어짐)
+    const hadFocus = !!menuEl && menuEl.contains(document.activeElement)
+    menuEl?.remove()
+    menuEl = null
+    if (hadFocus) menuView?.focus()
+    menuView = null
+  }
 
   function openMenu(view: EditorView, x: number, y: number) {
     closeMenu()
     const menu = document.createElement('div')
     menu.className = 'cm-sel-menu'
+    menu.setAttribute('role', 'menu')
+    menu.setAttribute('aria-label', '선택 영역 서식')
     menu.style.left = `${x}px`
     menu.style.top = `${y}px`
+
+    const buttons: HTMLButtonElement[] = []
+    const runItem = (it: MenuItem) => {
+      closeMenu()
+      it.run(view)
+    }
 
     for (const it of ITEMS) {
       if (it.divider) {
         const hr = document.createElement('div')
         hr.className = 'cm-sel-divider'
+        hr.setAttribute('role', 'separator')
         menu.appendChild(hr)
       }
       const btn = document.createElement('button')
       btn.type = 'button'
       btn.className = 'cm-sel-item'
+      btn.setAttribute('role', 'menuitem')
+      btn.tabIndex = -1   // 화살표로 이동하는 roving focus
 
       const label = document.createElement('span')
       label.textContent = it.label
@@ -98,28 +120,77 @@ export function selectionMenuExtension(
         const hint = document.createElement('span')
         hint.className = 'cm-sel-hint'
         hint.textContent = it.hint
+        hint.setAttribute('aria-hidden', 'true')
         btn.appendChild(hint)
+        btn.setAttribute('aria-keyshortcuts', it.hint)
       }
 
       // mousedown에서 preventDefault — 안 하면 선택이 풀린 뒤 명령이 돈다
       btn.addEventListener('mousedown', (e) => {
         e.preventDefault()
-        closeMenu()
-        it.run(view)
+        runItem(it)
       })
       menu.appendChild(btn)
+      buttons.push(btn)
     }
+
+    // ── 키보드: ↑↓/Home/End 이동, Enter/Space 실행, Esc/Tab 닫기(에디터로 복귀) ──
+    menu.addEventListener('keydown', (e) => {
+      const i = buttons.indexOf(document.activeElement as HTMLButtonElement)
+      const move = (to: number) => {
+        e.preventDefault()
+        buttons[(to + buttons.length) % buttons.length].focus()
+      }
+      if (e.key === 'ArrowDown') return move(i + 1)
+      if (e.key === 'ArrowUp') return move(i < 0 ? buttons.length - 1 : i - 1)
+      if (e.key === 'Home') return move(0)
+      if (e.key === 'End') return move(buttons.length - 1)
+      if (e.key === 'Enter' || e.key === ' ') {
+        e.preventDefault()
+        if (i >= 0) runItem(ITEMS[i])
+        return
+      }
+      if (e.key === 'Escape' || e.key === 'Tab') {
+        e.preventDefault()
+        closeMenu()
+        view.focus()
+      }
+    })
 
     document.body.appendChild(menu)
     menuEl = menu
+    menuView = view
 
     // 화면 밖으로 나가면 끌어당긴다
     const r = menu.getBoundingClientRect()
     if (r.right > window.innerWidth) menu.style.left = `${window.innerWidth - r.width - 8}px`
     if (r.bottom > window.innerHeight) menu.style.top = `${window.innerHeight - r.height - 8}px`
 
-    const onAway = () => { closeMenu(); document.removeEventListener('mousedown', onAway) }
-    setTimeout(() => document.addEventListener('mousedown', onAway), 0)
+    // 열리면 첫 항목에 포커스 — 키보드로 바로 고를 수 있게
+    buttons[0]?.focus({ preventScroll: true })
+
+    // 바깥 클릭 / 스크롤(에디터 스크롤 포함, capture) / 창 크기 변경 / 포커스가
+    // 메뉴 밖으로 나감 → 닫는다. 위치가 고정이라 스크롤하면 엉뚱한 곳에 떠 있게 됨.
+    const onAway = (e: Event) => { if (!menu.contains(e.target as Node)) closeMenu() }
+    const onScroll = (e: Event) => { if (!menu.contains(e.target as Node)) closeMenu() }
+    const onEsc = (e: KeyboardEvent) => { if (e.key === 'Escape') { closeMenu(); view.focus() } }
+    const onFocusOut = (e: FocusEvent) => {
+      const next = e.relatedTarget as Node | null
+      if (next && !menu.contains(next)) closeMenu()
+    }
+    const t = setTimeout(() => document.addEventListener('mousedown', onAway, true), 0)
+    window.addEventListener('scroll', onScroll, true)
+    window.addEventListener('resize', closeMenu)
+    document.addEventListener('keydown', onEsc)
+    menu.addEventListener('focusout', onFocusOut)
+    cleanup = () => {
+      clearTimeout(t)
+      document.removeEventListener('mousedown', onAway, true)
+      window.removeEventListener('scroll', onScroll, true)
+      window.removeEventListener('resize', closeMenu)
+      document.removeEventListener('keydown', onEsc)
+      menu.removeEventListener('focusout', onFocusOut)
+    }
   }
 
   return [
