@@ -1,16 +1,15 @@
 'use client'
-import { Suspense, useEffect, useRef, useState, useCallback } from 'react'
+import { Suspense, useEffect, useCallback } from 'react'
 import { useSearchParams } from 'next/navigation'
 import { format, getDaysInMonth } from 'date-fns'
-import { useNoteStore } from '@/lib/stores/noteStore'
 import { useCalendarStore } from '@/lib/stores/calendarStore'
-import { getOrCreateMonthlyNote, upsertNote } from '@/lib/db/noteRepository'
-import { extractTags, extractMentions, extractBacklinks, extractSupersedes } from '@/lib/parser/noteParser'
+import { getOrCreateMonthlyNote } from '@/lib/db/noteRepository'
+import { useNoteDocument } from '@/lib/hooks/useNoteDocument'
+import SaveStatusBadge, { NoticeBar } from '@/components/editor/SaveStatusBadge'
 import { usePromoteToAtom } from '@/lib/hooks/usePromoteToAtom'
 import { useWikiLink } from '@/lib/hooks/useWikiLink'
 import BacklinksPanel from '@/components/editor/BacklinksPanel'
 import SupersededBanner from '@/components/editor/SupersededBanner'
-import type { Note } from '@/types/note'
 import dynamic from 'next/dynamic'
 
 const NoteEditor = dynamic(() => import('@/components/editor/NoteEditor'), { ssr: false })
@@ -26,14 +25,8 @@ export default function MonthlyNotePage() {
 function MonthlyNoteInner() {
   const searchParams = useSearchParams()
   const month = searchParams.get('month') ?? format(new Date(), 'yyyy-MM')
-  const { setActiveNote, updateNote } = useNoteStore()
   const { setSelectedDate } = useCalendarStore()
-  const [note, setNote]       = useState<Note | null>(null)
-  const [isSaving, setIsSaving] = useState(false)
-  const noteRef = useRef<Note | null>(null)
-  noteRef.current = note
   const { linkTargets, facets, openWikiLink, openFacet } = useWikiLink()
-  const { promote, dialog: promoteDialog } = usePromoteToAtom(note?.title)
 
   // 월 파싱
   const [yearStr, monthStr] = month.split('-')
@@ -43,57 +36,18 @@ function MonthlyNoteInner() {
   const monthLabel = format(firstDay, 'MMMM yyyy')
   const daysLabel  = `${getDaysInMonth(firstDay)} days`
 
-  useEffect(() => {
-    // 미니 캘린더를 해당 월 1일로 이동
-    setSelectedDate(`${yearStr}-${monthStr}-01`)
-    getOrCreateMonthlyNote(month).then(n => {
-      setNote(n)
-      setActiveNote(n)
-    })
-  }, [month, setSelectedDate, setActiveNote])
+  // 미니 캘린더를 해당 월 1일로 이동
+  useEffect(() => { setSelectedDate(`${yearStr}-${monthStr}-01`) }, [yearStr, monthStr, setSelectedDate])
 
-  const handleChange = useCallback((content: string) => {
-    if (!note) return
-    const tags      = extractTags(content)
-    const mentions  = extractMentions(content)
-    const backlinks = extractBacklinks(content)
-    const supersedes = extractSupersedes(content)
-    const updated   = { ...note, content, tags, mentions, backlinks, supersedes }
-    setNote(updated)
-    setActiveNote(updated)
-    updateNote(note.id, { content, tags, mentions, backlinks, supersedes })
-  }, [note, setActiveNote, updateNote])
-
-  const handleSave = useCallback(async () => {
-    if (!note) return
-    setIsSaving(true)
-    await upsertNote(note)
-    setTimeout(() => setIsSaving(false), 800)
-  }, [note])
-
-  // 언마운트 시 즉시 저장
-  useEffect(() => {
-    return () => {
-      if (noteRef.current) upsertNote(noteRef.current).catch(console.error)
-    }
-  }, []) // eslint-disable-line react-hooks/exhaustive-deps
-
-  // Auto-save 2초
-  useEffect(() => {
-    if (!note) return
-    const timer = setTimeout(() => {
-      setIsSaving(true)
-      upsertNote(note)
-        .then(() => setTimeout(() => setIsSaving(false), 600))
-        .catch(console.error)
-    }, 2000)
-    return () => clearTimeout(timer)
-  }, [note?.content])
+  const loadMonthly = useCallback(async (m: string) => ({ note: await getOrCreateMonthlyNote(m) }), [])
+  const doc = useNoteDocument(month, loadMonthly)
+  const note = doc.note
+  const { promote, dialog: promoteDialog } = usePromoteToAtom(note?.title)
 
   if (!note) {
     return (
       <div className="flex h-full items-center justify-center text-[var(--text-muted)]">
-        Loading...
+        {doc.error ?? 'Loading...'}
       </div>
     )
   }
@@ -114,11 +68,11 @@ function MonthlyNoteInner() {
           <div className="text-sm text-[var(--text-muted)]">{daysLabel}</div>
         </div>
         <div className="flex items-center gap-2">
-          {isSaving && (
-            <span className="text-xs text-[var(--text-muted)]">Saving...</span>
-          )}
+          <SaveStatusBadge status={doc.status} error={doc.error} typingAuthor={doc.typingAuthor} />
         </div>
       </div>
+
+      {doc.notice && <NoticeBar text={doc.notice} onClose={doc.dismissNotice} />}
 
       {/* Editor */}
       <SupersededBanner title={note.title} onOpen={openWikiLink} />
@@ -129,8 +83,8 @@ function MonthlyNoteInner() {
           // (8/12 페이지에 8/14 본문이 떠 있던 문제).
           key={note.id}
           content={note.content}
-          onChange={handleChange}
-          onSave={handleSave}
+          onChange={doc.setContent}
+          onSave={doc.saveNow}
           onOpenWikiLink={openWikiLink}
           onOpenFacet={openFacet}
           linkTargets={linkTargets}

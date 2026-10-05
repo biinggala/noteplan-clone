@@ -1,7 +1,7 @@
 'use client'
 import { useEffect, useRef, useCallback } from 'react'
 import { EditorView, keymap, drawSelection, highlightActiveLine } from '@codemirror/view'
-import { EditorState } from '@codemirror/state'
+import { EditorState, Transaction } from '@codemirror/state'
 import { defaultKeymap, history, historyKeymap, indentWithTab } from '@codemirror/commands'
 import { markdown, markdownLanguage } from '@codemirror/lang-markdown'
 import { languages } from '@codemirror/language-data'
@@ -60,13 +60,22 @@ export default function NoteEditor({ content, onChange, onSave, onOpenWikiLink, 
   onOpenFacetRef.current = onOpenFacet
   const onPromoteRef = useRef(onPromote)
   onPromoteRef.current = onPromote
+  // ⌘S 도 ref 로 — 에디터는 한 번만 만들어지므로, 그때 받은 onSave 를 그대로
+  // 쓰면 '처음 연 시점의 노트'를 저장해 그 뒤 고친 내용이 사라졌다.
+  const onSaveRef = useRef(onSave)
+  onSaveRef.current = onSave
+  // 이 에디터가 마지막으로 onChange 로 내보낸 내용 — content prop 이 이 값이면
+  // 내 입력의 메아리라 되돌려 적용하지 않는다.
+  const lastEmittedRef = useRef<string | null>(null)
 
   useEffect(() => {
     if (!containerRef.current) return
 
     const updateListener = EditorView.updateListener.of((update) => {
       if (update.docChanged) {
-        onChangeRef.current(update.state.doc.toString())
+        const text = update.state.doc.toString()
+        lastEmittedRef.current = text
+        onChangeRef.current(text)
       }
     })
 
@@ -84,7 +93,7 @@ export default function NoteEditor({ content, onChange, onSave, onOpenWikiLink, 
           {
             key: 'Mod-s',
             run: () => {
-              onSave?.()
+              onSaveRef.current?.()
               return true
             },
           },
@@ -147,17 +156,35 @@ export default function NoteEditor({ content, onChange, onSave, onOpenWikiLink, 
     return () => view.destroy()
   }, []) // 의도적으로 content 제외 — 외부 변경시만 업데이트
 
-  // 외부에서 content가 바뀔 때만 동기화 (예: 노트 전환)
-  const lastContentRef = useRef(content)
+  // 바깥에서 content 가 바뀌면(다른 기기·실시간 합치기·타임라인·버전 복원) 반영한다.
+  //  - 문서 전체를 갈아끼우지 않고 달라진 가운데만 바꾼다 → 커서가 제자리에 남는다
+  //    (예전엔 전체 교체라 커서가 맨 위로 튀고 WebKit 은 화면까지 맨 위로 스크롤했다).
+  //  - 실행 취소 기록에 넣지 않는다 → ⌘Z 가 다른 기기의 수정을 되돌리지 않는다.
+  //  - 한글 조합 중이면 조합이 끝난 뒤에 적용한다 (조합 중인 글자가 깨지지 않게).
   useEffect(() => {
-    if (!viewRef.current) return
-    const currentDoc = viewRef.current.state.doc.toString()
-    if (content !== currentDoc && content !== lastContentRef.current) {
-      viewRef.current.dispatch({
-        changes: { from: 0, to: currentDoc.length, insert: content },
+    const view = viewRef.current
+    if (!view) return
+    if (content === lastEmittedRef.current) return   // 내 입력의 메아리
+    const apply = () => {
+      const cur = view.state.doc.toString()
+      if (content === cur) return
+      const max = Math.min(cur.length, content.length)
+      let a = 0
+      while (a < max && cur.charCodeAt(a) === content.charCodeAt(a)) a++
+      let b = 0
+      while (b < max - a && cur.charCodeAt(cur.length - 1 - b) === content.charCodeAt(content.length - 1 - b)) b++
+      lastEmittedRef.current = content
+      view.dispatch({
+        changes: { from: a, to: cur.length - b, insert: content.slice(a, content.length - b) },
+        annotations: [Transaction.addToHistory.of(false), Transaction.remote.of(true)],
+        scrollIntoView: false,
       })
     }
-    lastContentRef.current = content
+    if (!view.composing) { apply(); return }
+    const dom = view.contentDOM
+    const onEnd = () => setTimeout(apply, 0)
+    dom.addEventListener('compositionend', onEnd, { once: true })
+    return () => dom.removeEventListener('compositionend', onEnd)
   }, [content])
 
   return (

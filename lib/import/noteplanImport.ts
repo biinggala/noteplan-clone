@@ -1,11 +1,11 @@
-import { startOfISOWeek, addDays, format } from 'date-fns'
+import { format } from 'date-fns'
 import { v4 as uuidv4 } from 'uuid'
 import type { Note, NoteType } from '@/types/note'
 import { extractTags, extractMentions, extractBacklinks, extractSupersedes } from '@/lib/parser/noteParser'
 
 export interface ImportFileMeta {
   type: NoteType
-  date: string         // YYYY-MM-DD
+  date: string         // 앱의 날짜 키: daily YYYY-MM-DD / weekly YYYY-WNN / monthly YYYY-MM / yearly YYYY
   filePath: string     // Calendar/YYYYMMDD.md 등
   title: string
 }
@@ -33,32 +33,29 @@ export function parseBackupFilename(filename: string): ImportFileMeta | null {
   }
 
   // ── Weekly: YYYY-WNN ─────────────────────────────────────────────────────
+  // 앱이 주간 노트를 찾는 키('YYYY-WNN', 두 자리)와 같게 저장한다. 예전엔 그 주
+  // 월요일 날짜(YYYY-MM-DD)로 저장해서, 가져온 주간 노트가 주간 화면에 안 뜨고
+  // 대신 그 월요일 '데일리' 화면에서 열려 거기에 적히는 문제가 있었다.
+  // 주 번호는 NotePlan 파일 이름 그대로 쓴다 (앱의 CW 번호 규칙과 같은 번호).
   const weekMatch = base.match(/^(\d{4})-W(\d{1,2})$/)
   if (weekMatch) {
-    const year = parseInt(weekMatch[1])
+    const year = weekMatch[1]
     const week = parseInt(weekMatch[2])
-    // ISO 주: 1월 4일이 항상 1주차 → 1주차 월요일 + (N-1)*7일
-    const startOfWeek1 = startOfISOWeek(new Date(year, 0, 4))
-    const weekStart = addDays(startOfWeek1, (week - 1) * 7)
-    const date = format(weekStart, 'yyyy-MM-dd')
-    return { type: 'weekly', date, filePath: `Calendar/${base}.md`, title: base }
+    const key = `${year}-W${String(week).padStart(2, '0')}`
+    return { type: 'weekly', date: key, filePath: `Calendar/${key}.md`, title: `Week ${week}, ${year}` }
   }
 
   // ── Monthly: YYYY-MM ─────────────────────────────────────────────────────
   const monthMatch = base.match(/^(\d{4})-(\d{2})$/)
   if (monthMatch) {
-    const date = `${monthMatch[1]}-${monthMatch[2]}-01`
-    return { type: 'monthly', date, filePath: `Calendar/${base}.md`, title: base }
+    const key = `${monthMatch[1]}-${monthMatch[2]}`
+    const title = format(new Date(parseInt(monthMatch[1]), parseInt(monthMatch[2]) - 1, 1), 'MMMM yyyy')
+    return { type: 'monthly', date: key, filePath: `Calendar/${key}.md`, title }
   }
 
   // ── Yearly: YYYY ─────────────────────────────────────────────────────────
   if (/^\d{4}$/.test(base)) {
-    return {
-      type: 'yearly',
-      date: `${base}-01-01`,
-      filePath: `Calendar/${base}.md`,
-      title: base,
-    }
+    return { type: 'yearly', date: base, filePath: `Calendar/${base}.md`, title: base }
   }
 
   return null
@@ -142,8 +139,10 @@ export async function readFilesAsNotes(
     files.map(async file => {
       const content = await file.text()
       const rel = (file as unknown as { webkitRelativePath?: string }).webkitRelativePath || file.name
-      // 1) Calendar (파일명) → 2) PARA 프로젝트 (폴더경로)
-      const note = parseBackupFile(file.name, content) ?? parseProjectFile(rel, content)
+      // 1) PARA 프로젝트 (폴더 경로) → 2) Calendar (파일명)
+      // 프로젝트 폴더 안의 '2024.md' 같은 파일을 연간 노트로 오인하지 않도록
+      // 폴더 경로가 PARA 면 먼저 프로젝트로 본다.
+      const note = parseProjectFile(rel, content) ?? parseBackupFile(file.name, content)
       if (note) {
         notes.push(note)
         if (note.type === 'project' && note.folder) {

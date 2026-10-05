@@ -1,16 +1,15 @@
 'use client'
-import { Suspense, useEffect, useRef, useState, useCallback } from 'react'
+import { Suspense, useEffect, useRef, useCallback } from 'react'
 import { useSearchParams } from 'next/navigation'
 import { format, addDays, startOfWeek, endOfWeek, getWeek, getWeekYear } from 'date-fns'
-import { useNoteStore } from '@/lib/stores/noteStore'
 import { useCalendarStore } from '@/lib/stores/calendarStore'
-import { getOrCreateWeeklyNote, upsertNote } from '@/lib/db/noteRepository'
-import { extractTags, extractMentions, extractBacklinks, extractSupersedes } from '@/lib/parser/noteParser'
+import { getOrCreateWeeklyNote } from '@/lib/db/noteRepository'
+import { useNoteDocument } from '@/lib/hooks/useNoteDocument'
+import SaveStatusBadge, { NoticeBar } from '@/components/editor/SaveStatusBadge'
 import { usePromoteToAtom } from '@/lib/hooks/usePromoteToAtom'
 import { useWikiLink } from '@/lib/hooks/useWikiLink'
 import BacklinksPanel from '@/components/editor/BacklinksPanel'
 import SupersededBanner from '@/components/editor/SupersededBanner'
-import type { Note } from '@/types/note'
 import dynamic from 'next/dynamic'
 
 const NoteEditor = dynamic(() => import('@/components/editor/NoteEditor'), { ssr: false })
@@ -39,14 +38,8 @@ function WeeklyNoteInner() {
   const searchParams = useSearchParams()
   const week = searchParams.get('week')
     ?? `${getWeekYear(new Date(), WK)}-W${getWeek(new Date(), WK).toString().padStart(2, '0')}`
-  const { setActiveNote, updateNote } = useNoteStore()
   const { setSelectedWeek } = useCalendarStore()
-  const [note, setNote] = useState<Note | null>(null)
-  const [isSaving, setIsSaving] = useState(false)
-  const noteRef = useRef<Note | null>(null)
-  noteRef.current = note
   const { linkTargets, facets, openWikiLink, openFacet } = useWikiLink()
-  const { promote, dialog: promoteDialog } = usePromoteToAtom(note?.title)
 
   // Compute week range (일요일 시작)
   const weekStart = weekKeyToWeekStart(week)   // 일요일
@@ -60,68 +53,35 @@ function WeeklyNoteInner() {
 
   useEffect(() => {
     // 미니 캘린더에서 이 주 '행 전체'를 강조 (예전엔 시작일 하루만 찍혀 헷갈렸음)
-    setSelectedWeek(week, weekStart)
-    getOrCreateWeeklyNote(week).then(n => {
-      // 예전 규칙(월~일)으로 자동 생성된 본문의 날짜 범위 줄을 교정.
-      // "# Week N, YYYY" 바로 아래의 날짜 범위 형식 줄만 교체 (사용자 텍스트는 보존)
-      const lines = n.content.split('\n')
-      const DATE_RANGE = /^[A-Za-z]{3} \d{1,2}(, \d{4})? [–—-] [A-Za-z]{3} \d{1,2}, \d{4}\s*$/
-      if (lines[0]?.startsWith('# Week ') && DATE_RANGE.test(lines[1] ?? '') && lines[1] !== rangeLabel) {
-        lines[1] = rangeLabel
-        n = { ...n, content: lines.join('\n') }
-        upsertNote(n).catch(err => console.error('[weekly 날짜줄 교정]', err))
-      }
-      setNote(n)
-      setActiveNote(n)
-    })
-  // weekStart/rangeLabel은 week에서 파생되므로 week만 의존 (weekStart는 매 렌더 새 객체라 넣으면 무한 루프)
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [week, setSelectedWeek, setActiveNote])
+    setSelectedWeek(week, weekKeyToWeekStart(week))
+  }, [week, setSelectedWeek])
 
-  const handleChange = useCallback((content: string) => {
-    if (!note) return
-    const tags      = extractTags(content)
-    const mentions  = extractMentions(content)
-    const backlinks = extractBacklinks(content)
-    const supersedes = extractSupersedes(content)
-    const updated   = { ...note, content, tags, mentions, backlinks, supersedes }
-    setNote(updated)
-    setActiveNote(updated)
-    updateNote(note.id, { content, tags, mentions, backlinks, supersedes })
-  }, [note, setActiveNote, updateNote])
+  // 예전 규칙(월~일)으로 자동 생성된 본문의 날짜 범위 줄을 교정.
+  // "# Week N, YYYY" 바로 아래의 날짜 범위 형식 줄만 교체 (사용자 텍스트는 보존)
+  const loadWeekly = useCallback(async (w: string) => {
+    const n = await getOrCreateWeeklyNote(w)
+    return { note: n }
+  }, [])
+  const doc = useNoteDocument(week, loadWeekly)
+  const note = doc.note
+  const { promote, dialog: promoteDialog } = usePromoteToAtom(note?.title)
 
-  const handleSave = useCallback(async () => {
-    if (!note) return
-    setIsSaving(true)
-    await upsertNote(note)
-    setTimeout(() => setIsSaving(false), 800)
-  }, [note])
-
-  // 언마운트 시 즉시 저장
+  const fixedFor = useRef<string | null>(null)
   useEffect(() => {
-    return () => {
-      if (noteRef.current) {
-        upsertNote(noteRef.current).catch(console.error)
-      }
+    if (!note || note.date !== week || fixedFor.current === note.id) return
+    fixedFor.current = note.id
+    const lines = note.content.split('\n')
+    const DATE_RANGE = /^[A-Za-z]{3} \d{1,2}(, \d{4})? [–—-] [A-Za-z]{3} \d{1,2}, \d{4}\s*$/
+    if (lines[0]?.startsWith('# Week ') && DATE_RANGE.test(lines[1] ?? '') && lines[1] !== rangeLabel) {
+      lines[1] = rangeLabel
+      doc.setContent(lines.join('\n'))
     }
-  }, []) // eslint-disable-line react-hooks/exhaustive-deps
-
-  // Auto-save every 2s
-  useEffect(() => {
-    if (!note) return
-    const timer = setTimeout(() => {
-      setIsSaving(true)
-      upsertNote(note)
-        .then(() => setTimeout(() => setIsSaving(false), 600))
-        .catch(console.error)
-    }, 2000)
-    return () => clearTimeout(timer)
-  }, [note?.content])
+  }, [note, week, rangeLabel, doc])
 
   if (!note) {
     return (
       <div className="flex h-full items-center justify-center text-[var(--text-muted)]">
-        Loading...
+        {doc.error ?? 'Loading...'}
       </div>
     )
   }
@@ -142,11 +102,11 @@ function WeeklyNoteInner() {
           <div className="text-sm text-[var(--text-muted)]">{rangeLabel}</div>
         </div>
         <div className="flex items-center gap-2">
-          {isSaving && (
-            <span className="text-xs text-[var(--text-muted)]">Saving...</span>
-          )}
+          <SaveStatusBadge status={doc.status} error={doc.error} typingAuthor={doc.typingAuthor} />
         </div>
       </div>
+
+      {doc.notice && <NoticeBar text={doc.notice} onClose={doc.dismissNotice} />}
 
       {/* Editor */}
       <SupersededBanner title={note.title} onOpen={openWikiLink} />
@@ -157,8 +117,8 @@ function WeeklyNoteInner() {
           // (8/12 페이지에 8/14 본문이 떠 있던 문제).
           key={note.id}
           content={note.content}
-          onChange={handleChange}
-          onSave={handleSave}
+          onChange={doc.setContent}
+          onSave={doc.saveNow}
           onOpenWikiLink={openWikiLink}
           onOpenFacet={openFacet}
           linkTargets={linkTargets}
