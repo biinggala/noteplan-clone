@@ -11,6 +11,7 @@ import { getAllNotes } from '@/lib/db/noteRepository'
 import { createClient } from '@/lib/supabase/client'
 import type { Note } from '@/types/note'
 import FolderTree from './FolderTree'
+import Portal from '@/components/ui/Portal'
 import ReviewPanel from './ReviewPanel'
 import { IconButton, SidebarIcon } from '@/components/layout/PageHeader'
 import { useIsMobile } from '@/lib/hooks/useIsMobile'
@@ -584,6 +585,7 @@ function NewNoteModal({ onClose }: { onClose: () => void }) {
   }
 
   return (
+    <Portal>
     <div className="fixed inset-0 z-[200] flex items-center justify-center">
       <div className="absolute inset-0 bg-black/60 backdrop-blur-sm" onClick={onClose} />
       <div className="relative z-10 w-80 rounded-xl bg-[var(--bg-secondary)] border border-[var(--border)] shadow-2xl p-4 flex flex-col gap-3">
@@ -636,5 +638,6 @@ function NewNoteModal({ onClose }: { onClose: () => void }) {
         </div>
       </div>
     </div>
+    </Portal>
   )
 }

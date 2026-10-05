@@ -39,7 +39,11 @@ interface ActiveDrag {
   rafId: number | null
   onMove: (e: PointerEvent) => void
   onUp: (e: PointerEvent) => void
-  onCancel: () => void
+  onCancel: (e: PointerEvent) => void
+  onMouseMove: (e: MouseEvent) => void
+  onMouseUp: (e: MouseEvent) => void
+  /** WebKit 이 pointer 를 끊어 mouse 이벤트로 이어 받는 중 */
+  mouseFallback: boolean
   /** 미리보기 길이 — 이미 시간이 붙은 줄이면 그 길이 */
   duration: number
 }
@@ -48,6 +52,17 @@ const EDGE_ZONE = 90      // 컨테이너 상/하단 90px 이내면 자동 스�
 const EDGE_MAX_SPEED = 14 // px/frame
 
 let active: ActiveDrag | null = null
+
+/** 줄 드래그 중인지 — 에디터가 드래그 동안 hover 표시를 바꾸지 않게 (dragHandle.ts) */
+export function isLineDragActive(): boolean { return active != null }
+
+// ── WebKit(맥 앱) 대비 ──────────────────────────────────────────────────────
+// Chromium 에선 멀쩡하지만 WebKit 은 (1) 드래그 도중 네이티브 드래그(dragstart)를
+// 시작하며 pointercancel 을 보내거나 (2) 잡은 핸들 DOM 이 다시 그려지면 pointer
+// 이벤트를 끊을 수 있다. 그러면 '끌고 가서 놓았는데 아무 일도 없음'이 된다.
+//  - 드래그 동안 네이티브 dragstart 와 텍스트 선택을 막고
+//  - pointer 가 끊기면(마우스·펜) mouse 이벤트로 이어서 따라간다
+const blockNative = (e: Event) => { if (active) e.preventDefault() }
 
 /** 거터 핸들 pointerdown에서 호출 — 라인 드래그 시작 */
 export function startLineDrag(
@@ -98,12 +113,24 @@ export function startLineDrag(
     drop(ev, drag)
   }
 
-  // pointercancel(시스템 제스처·포커스 이탈 등)은 정리만 한다 — 예전엔 onUp 과 같아서
-  // 취소된 자리에 그대로 드롭됐다.
-  const onCancel = () => {
+  // pointercancel: 터치(스크롤 제스처 등)는 정리만 한다 — 예전엔 onUp 과 같아서
+  // 취소된 자리에 그대로 드롭됐다. 마우스·펜은 WebKit 이 중간에 pointer 를 끊은
+  // 것이라 mouse 이벤트로 이어서 따라가고, 버튼을 놓을 때(mouseup) 드롭한다.
+  const onCancel = (ev: PointerEvent) => {
     if (!active) return
+    if (ev.pointerType === 'mouse' || ev.pointerType === 'pen') { active.mouseFallback = true; return }
     cleanup()
     clearReorder(view)
+  }
+  const onMouseMove = (ev: MouseEvent) => {
+    if (!active?.mouseFallback) return
+    onMove(ev as unknown as PointerEvent)
+  }
+  const onMouseUp = (ev: MouseEvent) => {
+    if (!active) return
+    // pointerup 이 정상으로 오면 그쪽이 먼저 처리한다 — 여긴 pointer 가 끊겼을 때만
+    if (!active.mouseFallback) return
+    onUp(ev as unknown as PointerEvent)
   }
 
   // 타임라인 스크롤 컨테이너 탐색 (드래그 동안 상/하단 엣지 자동 스크롤)
@@ -114,12 +141,18 @@ export function startLineDrag(
   active = {
     fromLine, toLine, lines, view, ghost, moved: false,
     scrollEl, lastX: e.clientX, lastY: e.clientY, rafId: null, onMove, onUp, onCancel,
+    onMouseMove, onMouseUp, mouseFallback: false,
     duration: firstTimed?.duration ?? DEFAULT_DURATION,
   }
   active.rafId = requestAnimationFrame(edgeScrollStep)
   window.addEventListener('pointermove', onMove)
   window.addEventListener('pointerup', onUp)
   window.addEventListener('pointercancel', onCancel)
+  window.addEventListener('mousemove', onMouseMove)
+  window.addEventListener('mouseup', onMouseUp)
+  document.addEventListener('dragstart', blockNative, true)
+  document.addEventListener('selectstart', blockNative, true)
+  document.body.classList.add('np-line-dragging')
 }
 
 function cleanup() {
@@ -127,6 +160,11 @@ function cleanup() {
   window.removeEventListener('pointermove', active.onMove)
   window.removeEventListener('pointerup', active.onUp)
   window.removeEventListener('pointercancel', active.onCancel)
+  window.removeEventListener('mousemove', active.onMouseMove)
+  window.removeEventListener('mouseup', active.onMouseUp)
+  document.removeEventListener('dragstart', blockNative, true)
+  document.removeEventListener('selectstart', blockNative, true)
+  document.body.classList.remove('np-line-dragging')
   if (active.rafId != null) cancelAnimationFrame(active.rafId)
   active.ghost.remove()
   active = null

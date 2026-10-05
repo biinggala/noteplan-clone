@@ -8,7 +8,7 @@ import {
   GutterMarker,
 } from '@codemirror/view'
 import { StateField, StateEffect, RangeSetBuilder } from '@codemirror/state'
-import { startLineDrag, wireReorderIndicator } from '@/lib/dnd/pointerLineDrag'
+import { startLineDrag, wireReorderIndicator, isLineDragActive } from '@/lib/dnd/pointerLineDrag'
 
 // ─── Drag payload ─────────────────────────────────────────────────────────────
 
@@ -75,6 +75,7 @@ class DragHandleMarker extends GutterMarker {
     // mouseenter on the element itself is reliable even in the gutter area
     // where posAtCoords() can return null (bypasses the mousemove snapping issue)
     el.addEventListener('mouseenter', () => {
+      if (isLineDragActive()) return
       try {
         const line = view.state.doc.lineAt(this.lineFrom)
         if (line.number !== view.state.field(hoverLineField)) {
@@ -84,6 +85,9 @@ class DragHandleMarker extends GutterMarker {
     })
 
     // pointer 기반 드래그 (HTML5 DnD는 WKWebView에서 동작 안 함)
+    // 핸들 위 mousedown 은 CodeMirror 의 '드래그로 글자 선택'을 시작하지 않게 막는다
+    el.addEventListener('mousedown', (e) => { e.preventDefault(); e.stopPropagation() })
+    el.setAttribute('draggable', 'false')
     el.addEventListener('pointerdown', (e) => {
       try {
         const line = view.state.doc.lineAt(this.lineFrom)
@@ -146,6 +150,9 @@ const dropIndicatorPlugin = ViewPlugin.fromClass(
 function mouseTrackingHandlers() {
   return EditorView.domEventHandlers({
     mousemove(e, view) {
+      // 줄을 끄는 동안엔 hover 를 바꾸지 않는다 — 바꾸면 잡고 있는 핸들 DOM 이 다시
+      // 그려지고, WebKit(맥 앱)은 그때 pointer 이벤트를 끊어 드롭이 안 됐다
+      if (isLineDragActive()) return false
       const contentLeft = view.contentDOM.getBoundingClientRect().left + 4
       const x = Math.max(e.clientX, contentLeft)
       const pos = view.posAtCoords({ x, y: e.clientY })
@@ -156,6 +163,7 @@ function mouseTrackingHandlers() {
       return false
     },
     mouseleave(_e, view) {
+      if (isLineDragActive()) return false
       if (view.state.field(hoverLineField) !== -1) {
         view.dispatch({ effects: setHoverLine.of(-1) })
       }

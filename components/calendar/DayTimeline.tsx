@@ -1456,24 +1456,49 @@ export default function DayTimeline({ date, days = 1 }: DayTimelineProps) {
               {/* Google Calendar 이벤트 */}
               {evs.map(item => renderCalendarEvent(item, d, lanes.get(`e:${item.ev.id}`)))}
 
-              {/* New-event ghost + inline form */}
+              {/* New-event ghost + 입력 카드 */}
               {newEventSlot?.date === d && (() => {
                 const { startHour, startMinute } = newEventSlot
                 const top = startHour * SLOT_H + startMinute * PX_PER_MIN
+                const ghostH = DEFAULT_DURATION * PX_PER_MIN
                 const primaryCal = calendars.find(c => c.id === newEventCalId)
-                const formColor  = primaryCal?.backgroundColor ?? '#4285f4'
+                const calColor = primaryCal?.backgroundColor ?? '#4285f4'
+                // 예전엔 30분 칸(30px) 안에 입력창·캘린더 선택·버튼을 다 우겨 넣어 잘렸다.
+                // 이제 칸에는 자리 표시만 두고, 입력은 그 아래(밤 시간대면 위)에 뜨는 카드에서.
+                const below = startHour < 19
                 return (
-                  <div
-                    ref={newEventFormRef}
-                    className="absolute left-1 right-1 rounded overflow-hidden pointer-events-auto"
-                    // 실패 사유가 있으면 그만큼 늘어난다
-                    style={{ top, height: createError ? undefined : DEFAULT_DURATION * PX_PER_MIN, minHeight: DEFAULT_DURATION * PX_PER_MIN, zIndex: 40 }}
-                    onKeyDown={e => { if (e.key === 'Escape') closeNewEventForm() }}
-                  >
-                    {/* colored left bar */}
-                    <div className="absolute left-0 top-0 bottom-0 w-[3px] rounded-l" style={{ backgroundColor: formColor }} />
-                    <div className="absolute inset-0 rounded" style={{ backgroundColor: formColor, opacity: 0.15 }} />
-                    <div className="relative pl-2 pr-1 py-0.5 flex flex-col gap-0.5">
+                  <>
+                    <div
+                      className="absolute left-1 right-1 rounded-md border border-dashed pointer-events-none px-2 pt-0.5 text-[10px] font-medium tabular"
+                      style={{ top, height: ghostH, zIndex: 39, borderColor: 'var(--accent)', background: 'var(--accent-soft)', color: 'var(--accent)' }}
+                    >
+                      {formatTimeRange(startHour, startMinute, DEFAULT_DURATION)}
+                    </div>
+                    <div
+                      ref={newEventFormRef}
+                      role="dialog"
+                      aria-label="새 항목"
+                      className="absolute left-1 right-1 pointer-events-auto rounded-lg border border-[var(--border)] p-2.5 flex flex-col gap-2"
+                      style={{
+                        ...(below ? { top: top + ghostH + 4 } : { top: top - 4, transform: 'translateY(-100%)' }),
+                        zIndex: 50, background: 'var(--bg-secondary)', boxShadow: 'var(--shadow-pop)',
+                      }}
+                      onKeyDown={e => { if (e.key === 'Escape') closeNewEventForm() }}
+                    >
+                      {/* 일정 / 할 일 */}
+                      <div role="radiogroup" aria-label="만들 종류" className="grid grid-cols-2 p-0.5 rounded-md bg-[var(--hover-bg)]">
+                        {(['event', 'task'] as const).map(k => (
+                          <button key={k} role="radio" aria-checked={newEventKind === k}
+                            onPointerDown={e => e.stopPropagation()}
+                            onClick={() => { setNewEventKind(k); newEventInputRef.current?.focus() }}
+                            className={`h-6 rounded text-[11px] font-medium transition-colors ${newEventKind === k
+                              ? 'bg-[var(--bg-primary)] text-[var(--text-primary)] shadow-sm'
+                              : 'text-[var(--text-muted)] hover:text-[var(--text-primary)]'}`}
+                          >
+                            {k === 'event' ? '구글 일정' : '할 일 (노트)'}
+                          </button>
+                        ))}
+                      </div>
                       <input
                         ref={newEventInputRef}
                         value={newEventTitle}
@@ -1483,64 +1508,56 @@ export default function DayTimeline({ date, days = 1 }: DayTimelineProps) {
                           if (e.nativeEvent.isComposing || e.keyCode === 229) return
                           if (e.key === 'Enter') handleCreateEvent()
                         }}
-                        placeholder={newEventKind === 'task' ? '할 일…' : '일정 제목…'}
+                        placeholder={newEventKind === 'task' ? '할 일' : '일정 제목'}
                         aria-label={newEventKind === 'task' ? '새 할 일' : '새 일정 제목'}
-                        className="w-full bg-transparent text-[11px] font-medium outline-none placeholder-white/40"
-                        style={{ color: formColor }}
+                        className="w-full h-8 px-2 rounded-md text-[13px] outline-none bg-[var(--hover-bg)]
+                          text-[var(--text-primary)] placeholder:text-[var(--text-muted)]
+                          border border-transparent focus:border-[var(--accent)]"
                       />
-                      <div className="flex items-center gap-1">
-                        {/* 일정 / 할 일 */}
-                        <div role="radiogroup" aria-label="만들 종류" className="flex rounded overflow-hidden flex-shrink-0"
-                          style={{ boxShadow: `inset 0 0 0 1px ${formColor}55` }}>
-                          {(['event', 'task'] as const).map(k => (
-                            <button key={k} role="radio" aria-checked={newEventKind === k}
-                              onPointerDown={e => e.stopPropagation()}
-                              onClick={() => { setNewEventKind(k); newEventInputRef.current?.focus() }}
-                              className="text-[10px] px-1.5 py-0.5 font-medium"
-                              style={newEventKind === k ? { backgroundColor: formColor + '40', color: formColor } : { color: formColor + 'aa' }}
-                            >
-                              {k === 'event' ? '일정' : '할 일'}
-                            </button>
-                          ))}
-                        </div>
-                        {newEventKind === 'event' ? <select
-                          value={newEventCalId}
-                          onChange={e => setNewEventCalId(e.target.value)}
-                          className="flex-1 text-[10px] bg-transparent outline-none truncate"
-                          style={{ color: formColor + 'cc' }}
+                      {newEventKind === 'event' ? (
+                        <label className="flex items-center gap-1.5 text-[11px] text-[var(--text-muted)]">
+                          <span className="w-2 h-2 rounded-full flex-shrink-0" style={{ backgroundColor: calColor }} />
+                          <select
+                            value={newEventCalId}
+                            onChange={e => setNewEventCalId(e.target.value)}
+                            aria-label="캘린더"
+                            className="flex-1 min-w-0 h-6 bg-transparent outline-none truncate text-[var(--text-secondary)]"
+                            onPointerDown={e => e.stopPropagation()}
+                          >
+                            {writableCalendars.length === 0 && <option value="primary">기본 캘린더</option>}
+                            {writableCalendars.map(c => (
+                              <option key={c.id} value={c.id}>{c.summary}{c.primary ? ' ★' : ''}</option>
+                            ))}
+                          </select>
+                        </label>
+                      ) : (
+                        <p className="text-[11px] leading-snug text-[var(--text-muted)]">
+                          이 날 노트의 Tasks 에 시간과 함께 들어갑니다
+                        </p>
+                      )}
+                      {createError && (
+                        <div className="text-[11px] leading-snug text-red-400 break-words">{createError}</div>
+                      )}
+                      <div className="flex items-center justify-end gap-1.5">
+                        <button
                           onPointerDown={e => e.stopPropagation()}
+                          onClick={closeNewEventForm}
+                          className="h-7 px-2.5 rounded-md text-xs text-[var(--text-muted)] hover:bg-[var(--hover-bg)] hover:text-[var(--text-primary)]"
                         >
-                          {writableCalendars.map(c => (
-                            <option key={c.id} value={c.id} style={{ backgroundColor: '#1e1e2e', color: '#cdd6f4' }}>
-                              {c.summary}{c.primary ? ' ★' : ''}
-                            </option>
-                          ))}
-                        </select> : <span className="flex-1 text-[10px] truncate" style={{ color: formColor + 'aa' }}>노트 Tasks 에 추가</span>}
+                          취소
+                        </button>
                         <button
                           onPointerDown={e => e.stopPropagation()}
                           onClick={handleCreateEvent}
                           disabled={savingEvent || !newEventTitle.trim()}
-                          aria-label="추가"
-                          className="text-[10px] px-1.5 py-0.5 rounded font-medium transition-opacity disabled:opacity-40"
-                          style={{ backgroundColor: formColor + '40', color: formColor }}
+                          className="h-7 px-3 rounded-md text-xs font-medium text-white transition-opacity disabled:opacity-40"
+                          style={{ backgroundColor: 'var(--accent)' }}
                         >
-                          {savingEvent ? '…' : 'Add'}
+                          {savingEvent ? '추가 중…' : '추가'}
                         </button>
-                        <button
-                          onPointerDown={e => e.stopPropagation()}
-                          onClick={closeNewEventForm}
-                          aria-label="닫기"
-                          className="text-[10px] opacity-60 hover:opacity-100"
-                          style={{ color: formColor }}
-                        >×</button>
                       </div>
-                      {createError && (
-                        <div className="text-[10px] leading-snug text-red-300 pb-0.5 break-words">
-                          {createError}
-                        </div>
-                      )}
                     </div>
-                  </div>
+                  </>
                 )
               })()}
 
