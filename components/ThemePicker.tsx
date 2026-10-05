@@ -40,7 +40,7 @@ export default function ThemePicker() {
         title="테마 변경"
         className="flex items-center gap-1.5 px-2 py-1 rounded-md text-xs
                    text-[var(--text-muted)] hover:text-[var(--text-primary)]
-                   hover:bg-white/5 transition-colors"
+                   hover:bg-[var(--hover-bg)] transition-colors"
       >
         {/* Color swatch of current theme */}
         <span

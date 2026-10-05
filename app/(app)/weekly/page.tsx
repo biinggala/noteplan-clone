@@ -1,6 +1,6 @@
 'use client'
 import { Suspense, useEffect, useRef, useCallback } from 'react'
-import { useSearchParams } from 'next/navigation'
+import { useSearchParams, useRouter } from 'next/navigation'
 import { format, addDays, startOfWeek, endOfWeek, getWeek, getWeekYear } from 'date-fns'
 import { useCalendarStore } from '@/lib/stores/calendarStore'
 import { getOrCreateWeeklyNote } from '@/lib/db/noteRepository'
@@ -10,12 +10,15 @@ import { usePromoteToAtom } from '@/lib/hooks/usePromoteToAtom'
 import { useWikiLink } from '@/lib/hooks/useWikiLink'
 import BacklinksPanel from '@/components/editor/BacklinksPanel'
 import SupersededBanner from '@/components/editor/SupersededBanner'
+import PageHeader from '@/components/layout/PageHeader'
 import dynamic from 'next/dynamic'
 
 const NoteEditor = dynamic(() => import('@/components/editor/NoteEditor'), { ssr: false })
 
 // 미니 캘린더와 동일: 일요일 시작 주 + CW 규칙 (firstWeekContainsDate:4)
 const WK = { weekStartsOn: 0 as const, firstWeekContainsDate: 4 as const }
+
+const weekKeyOf = (d: Date) => `${getWeekYear(d, WK)}-W${getWeek(d, WK).toString().padStart(2, '0')}`
 
 /** Parse "YYYY-WNN" → 그 주의 시작(일요일) */
 function weekKeyToWeekStart(weekKey: string): Date {
@@ -38,6 +41,7 @@ function WeeklyNoteInner() {
   const searchParams = useSearchParams()
   const week = searchParams.get('week')
     ?? `${getWeekYear(new Date(), WK)}-W${getWeek(new Date(), WK).toString().padStart(2, '0')}`
+  const router = useRouter()
   const { setSelectedWeek } = useCalendarStore()
   const { linkTargets, facets, openWikiLink, openFacet } = useWikiLink()
 
@@ -88,23 +92,18 @@ function WeeklyNoteInner() {
 
   return (
     <div className="flex flex-col h-full">
-      {/* Header */}
-      <div data-tauri-drag-region className="electron-drag flex items-center justify-between px-5 md:px-12 py-3 border-b border-[var(--border)] flex-shrink-0">
-        <div>
-          <div className="flex items-center gap-2">
-            <span className="text-xs font-semibold text-amber-500/80 tracking-wider uppercase">
-              CW {weekNum.toString().padStart(2, '0')}
-            </span>
-            <h1 className="text-lg font-semibold text-[var(--text-primary)]">
-              Week {weekNum}, {year}
-            </h1>
-          </div>
-          <div className="text-sm text-[var(--text-muted)]">{rangeLabel}</div>
-        </div>
-        <div className="flex items-center gap-2">
-          <SaveStatusBadge status={doc.status} error={doc.error} typingAuthor={doc.typingAuthor} />
-        </div>
-      </div>
+      <PageHeader
+        kicker={`CW ${weekNum.toString().padStart(2, '0')}`}
+        title={rangeLabel}
+        nav={{
+          onPrev: () => router.push(`/weekly?week=${weekKeyOf(addDays(weekStart, -7))}`),
+          onNext: () => router.push(`/weekly?week=${weekKeyOf(addDays(weekStart, 7))}`),
+          onToday: () => router.push(`/weekly?week=${weekKeyOf(new Date())}`),
+          isCurrent: week === weekKeyOf(new Date()),
+          prevLabel: '지난주 (⌥⌘←)', nextLabel: '다음 주 (⌥⌘→)', todayLabel: 'This week',
+        }}
+        actions={<SaveStatusBadge status={doc.status} error={doc.error} typingAuthor={doc.typingAuthor} />}
+      />
 
       {doc.notice && <NoticeBar text={doc.notice} onClose={doc.dismissNotice} />}
 

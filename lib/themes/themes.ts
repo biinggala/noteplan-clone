@@ -36,7 +36,10 @@ export interface ThemeVars {
   '--font-editor':    string
 }
 
-const DEFAULT_FONT = '"SF Pro Text", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif'
+// 2.0: 한글과 라틴을 같은 서체로 — Pretendard(번들, SIL OFL)를 앞에 둔다.
+// 맥에선 SF 와 거의 같은 인상이고, 윈도·리눅스·안드로이드에서도 한글이 고르게 나온다.
+export const UI_FONT = '"Pretendard Variable", Pretendard, -apple-system, BlinkMacSystemFont, "SF Pro Text", "Apple SD Gothic Neo", "Segoe UI", "Noto Sans KR", sans-serif'
+const DEFAULT_FONT = UI_FONT
 
 export interface Theme {
   id:     string
@@ -279,7 +282,7 @@ export const THEMES: Theme[] = [
       '--cm-code-fg':    '#B34700',
       '--cm-activeline': 'rgba(255,75,0,0.05)',
       '--cm-hr':         'rgba(20,19,15,0.16)',
-      '--font-editor':   'Menlo, Consolas, "SF Mono", "IBM Plex Mono", monospace',
+      '--font-editor':   'Menlo, Consolas, "SF Mono", "IBM Plex Mono", "Pretendard Variable", monospace',
     },
   },
   {
@@ -311,7 +314,7 @@ export const THEMES: Theme[] = [
       '--cm-code-fg':    '#B3241B',
       '--cm-activeline': 'rgba(255,59,48,0.04)',
       '--cm-hr':         'rgba(10,10,8,0.14)',
-      '--font-editor':   '"Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+      '--font-editor':   '"Inter", "Pretendard Variable", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
     },
   },
 ]

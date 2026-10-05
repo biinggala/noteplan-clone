@@ -1,7 +1,7 @@
 'use client'
 import { Suspense, useEffect, useCallback } from 'react'
-import { useSearchParams } from 'next/navigation'
-import { format, getDaysInMonth } from 'date-fns'
+import { useSearchParams, useRouter } from 'next/navigation'
+import { format, getDaysInMonth, addMonths } from 'date-fns'
 import { useCalendarStore } from '@/lib/stores/calendarStore'
 import { getOrCreateMonthlyNote } from '@/lib/db/noteRepository'
 import { useNoteDocument } from '@/lib/hooks/useNoteDocument'
@@ -10,6 +10,7 @@ import { usePromoteToAtom } from '@/lib/hooks/usePromoteToAtom'
 import { useWikiLink } from '@/lib/hooks/useWikiLink'
 import BacklinksPanel from '@/components/editor/BacklinksPanel'
 import SupersededBanner from '@/components/editor/SupersededBanner'
+import PageHeader from '@/components/layout/PageHeader'
 import dynamic from 'next/dynamic'
 
 const NoteEditor = dynamic(() => import('@/components/editor/NoteEditor'), { ssr: false })
@@ -25,6 +26,7 @@ export default function MonthlyNotePage() {
 function MonthlyNoteInner() {
   const searchParams = useSearchParams()
   const month = searchParams.get('month') ?? format(new Date(), 'yyyy-MM')
+  const router = useRouter()
   const { setSelectedDate } = useCalendarStore()
   const { linkTargets, facets, openWikiLink, openFacet } = useWikiLink()
 
@@ -54,23 +56,19 @@ function MonthlyNoteInner() {
 
   return (
     <div className="flex flex-col h-full">
-      {/* Header */}
-      <div data-tauri-drag-region className="electron-drag flex items-center justify-between px-5 md:px-12 py-3 border-b border-[var(--border)] flex-shrink-0">
-        <div>
-          <div className="flex items-center gap-2">
-            <span className="text-xs font-semibold text-emerald-500/80 tracking-wider uppercase">
-              Monthly
-            </span>
-            <h1 className="text-lg font-semibold text-[var(--text-primary)]">
-              {monthLabel}
-            </h1>
-          </div>
-          <div className="text-sm text-[var(--text-muted)]">{daysLabel}</div>
-        </div>
-        <div className="flex items-center gap-2">
-          <SaveStatusBadge status={doc.status} error={doc.error} typingAuthor={doc.typingAuthor} />
-        </div>
-      </div>
+      <PageHeader
+        kicker="Month"
+        title={monthLabel}
+        subtitle={daysLabel}
+        nav={{
+          onPrev: () => router.push(`/monthly?month=${format(addMonths(firstDay, -1), 'yyyy-MM')}`),
+          onNext: () => router.push(`/monthly?month=${format(addMonths(firstDay, 1), 'yyyy-MM')}`),
+          onToday: () => router.push(`/monthly?month=${format(new Date(), 'yyyy-MM')}`),
+          isCurrent: month === format(new Date(), 'yyyy-MM'),
+          prevLabel: '지난달 (⌥⌘←)', nextLabel: '다음 달 (⌥⌘→)', todayLabel: 'This month',
+        }}
+        actions={<SaveStatusBadge status={doc.status} error={doc.error} typingAuthor={doc.typingAuthor} />}
+      />
 
       {doc.notice && <NoticeBar text={doc.notice} onClose={doc.dismissNotice} />}
 

@@ -23,7 +23,18 @@
   --cm-code-fg:    #e2b96f;
   --cm-activeline: rgba(255,255,255,0.025);
   --cm-hr:         rgba(255,255,255,0.15);
-  --font-editor: "SF Pro Text", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  --font-editor: "Pretendard Variable", Pretendard, -apple-system, BlinkMacSystemFont, "SF Pro Text", "Apple SD Gothic Neo", "Segoe UI", "Noto Sans KR", sans-serif;
+  --font-ui: "Pretendard Variable", Pretendard, -apple-system, BlinkMacSystemFont, "SF Pro Text", "Apple SD Gothic Neo", "Segoe UI", "Noto Sans KR", sans-serif;
+
+  /* ── 2.0 디자인 토큰 (테마 색에서 파생 — 테마마다 따로 정의할 필요 없음) ── */
+  --accent-soft:   color-mix(in srgb, var(--accent) 14%, transparent);
+  --accent-softer: color-mix(in srgb, var(--accent) 8%, transparent);
+  --surface-raised: color-mix(in srgb, var(--bg-secondary) 92%, var(--text-primary) 8%);
+  --radius-sm: 6px;
+  --radius-md: 8px;
+  --radius-lg: 12px;
+  --shadow-pop: 0 12px 32px rgb(0 0 0 / 0.28), 0 2px 6px rgb(0 0 0 / 0.18);
+  --header-h: 52px;
 }
 
 * {
@@ -35,9 +46,22 @@ html, body {
   overflow: hidden;
   background: var(--bg-primary);
   color: var(--text-primary);
-  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  font-family: var(--font-ui);
+  font-feature-settings: "ss06";            /* Pretendard: 숫자 1 꼬리 없는 형태 — 시간표 숫자가 깔끔 */
   -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  text-rendering: optimizeLegibility;
 }
+
+/* 키보드로 움직일 때만 초점 링 (마우스 클릭엔 안 보임) */
+:where(button, a, [role="button"], [role="checkbox"], [role="menuitem"], [tabindex]):focus-visible {
+  outline: 2px solid color-mix(in srgb, var(--accent) 70%, transparent);
+  outline-offset: 2px;
+  border-radius: var(--radius-sm);
+}
+
+/* 숫자 폭 고정 — 시간·날짜·카운트가 흔들리지 않게 */
+.tabular { font-variant-numeric: tabular-nums; }
 
 /* macOS window drag region */
 .titlebar-drag   { -webkit-app-region: drag; }
