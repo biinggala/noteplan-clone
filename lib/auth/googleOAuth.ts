@@ -34,6 +34,32 @@ function consumeCalendarFlow(): boolean {
 }
 
 /**
+ * 이 앱이 실제로 OAuth 를 시작했는지 + 그때 로그인해 있던 사용자.
+ *
+ * noteplan:// 딥링크는 다른 앱·웹페이지 누구나 열 수 있다. 시작한 적 없는
+ * 콜백(예: error_description=already linked)을 그대로 처리하면 앱이 혼자
+ * 로그인 창을 띄우고, 공격자가 고른 문구를 오류 배너에 보여주게 된다.
+ * 또 시작 시점의 사용자 id 를 남겨 두면, 웹 콜백 페이지(앱 레이아웃 밖이라
+ * 스토어에 user 가 없다)에서도 '계정이 바뀌면 반영 안 함' 안전장치가 동작한다.
+ */
+const OAUTH_START_KEY = 'np-oauth-started'
+const OAUTH_START_TTL = 15 * 60 * 1000
+
+function markOAuthStart(userId: string | undefined) {
+  try { localStorage.setItem(OAUTH_START_KEY, JSON.stringify({ at: Date.now(), userId: userId ?? null })) } catch { /* 무시 */ }
+}
+function readOAuthStart(): { userId: string | null } | null {
+  try {
+    const v = JSON.parse(localStorage.getItem(OAUTH_START_KEY) ?? 'null') as { at: number; userId: string | null } | null
+    if (!v || Date.now() - v.at > OAUTH_START_TTL) return null
+    return { userId: v.userId }
+  } catch { return null }
+}
+function clearOAuthStart() {
+  try { localStorage.removeItem(OAUTH_START_KEY) } catch { /* 무시 */ }
+}
+
+/**
  * "already linked" 자동 재시도를 1회로 제한하는 표식.
  * 재시도도 리다이렉트를 거쳐 콜백으로 돌아오므로, 표식이 없으면 같은 조건에서
  * 계속 브라우저를 다시 여는 무한 루프가 될 수 있다.
@@ -88,6 +114,8 @@ export async function startGoogleOAuth(
   // 두 번째 구글 계정을 '추가'만 하므로 로그인이 유지된다.
   const { data: { session } } = await supabase.auth.getSession()
   const shouldLink = withCalendar && !!session && !forceSignIn
+  // 재시도(forceSignIn)는 이전 시작 기록의 사용자를 그대로 이어받는다
+  markOAuthStart(forceSignIn ? (readOAuthStart()?.userId ?? session?.user.id) : session?.user.id)
 
   if (shouldLink) {
     const { data, error } = await supabase.auth.linkIdentity({
@@ -170,8 +198,13 @@ export async function exchangeGoogleCode(
   supabase: SupabaseClient,
   url: string,
   { expectedUserId, allowRetryAsSignIn }: { expectedUserId?: string; allowRetryAsSignIn?: boolean } = {},
-): Promise<{ error?: string }> {
+): Promise<{ error?: string; ignored?: boolean }> {
   try {
+    const started = readOAuthStart()
+    // 이 앱이 시작하지 않은 콜백은 무시한다 (딥링크는 누구나 열 수 있다)
+    if (!started) return { ignored: true }
+    // 호출부가 사용자를 모르면(웹 콜백 페이지) 시작할 때 남겨 둔 사용자로 확인한다
+    expectedUserId = expectedUserId ?? started.userId ?? undefined
     const params = new URL(url).searchParams
     const code = params.get('code')
     if (!code) {
@@ -207,6 +240,7 @@ export async function exchangeGoogleCode(
     }
     const wasCalendarFlow = consumeCalendarFlow()
     clearRetried()
+    clearOAuthStart()
     if (data.session) {
       if (expectedUserId && data.session.user.id !== expectedUserId) {
         return { error: '계정이 바뀌어서 반영하지 않았습니다(안전장치). 로그인 화면에서 다시 시도해주세요.' }

@@ -41,6 +41,9 @@ export function rateLimit(key: string): void {
 }
 
 export function clientKey(req: IncomingMessage): string {
-  const fwd = String(req.headers['x-forwarded-for'] ?? '').split(',')[0].trim()
-  return fwd || req.socket.remoteAddress || 'unknown'
+  // X-Forwarded-For 의 '맨 앞'은 클라이언트가 마음대로 적어 보낼 수 있다 — 그걸
+  // 키로 쓰면 요청마다 값을 바꿔 속도 제한을 피해 간다. 앞단 프록시(Render·
+  // Cloud Run)는 자기가 본 주소를 '맨 뒤'에 덧붙이므로 마지막 값을 쓴다.
+  const hops = String(req.headers['x-forwarded-for'] ?? '').split(',').map(s => s.trim()).filter(Boolean)
+  return hops[hops.length - 1] || req.socket.remoteAddress || 'unknown'
 }

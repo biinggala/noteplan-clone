@@ -15,7 +15,7 @@ import { useIsMobile } from '@/lib/hooks/useIsMobile'
 
 export default function AppLayout({ children }: { children: React.ReactNode }) {
   const router = useRouter()
-  const { session, loading, setSession, setLoading, googleRefreshToken } = useAuthStore()
+  const { session, loading, setSession, setLoading, googleRefreshToken, googleTokenOnServer } = useAuthStore()
   const supabase = createClient()
   const isMobile = useIsMobile()
   useEventNotifications()  // 캘린더 이벤트 10분 전 알림
@@ -40,8 +40,14 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
   // access token은 ~1시간 만료 → refresh token으로 갱신해 재인증 없이 유지.
   // 맥이 잠들어 있던 동안엔 interval 이 돌지 않아, 깨어난 직후엔 만료된 토큰으로
   // 일정 추가가 실패했다 → 포커스/화면 복귀 때 오래된 토큰이면 바로 갱신.
+  const canRefresh = !!googleRefreshToken || googleTokenOnServer
   useEffect(() => {
-    if (!googleRefreshToken) return
+    if (!session) return
+    if (!canRefresh) {
+      // 새 기기·재로그인: 캘린더 토큰이 서버에 보관돼 있으면 다시 연결 없이 이어 쓴다
+      if (!useAuthStore.getState().googleAccessToken) void refreshGoogleTokenNow({ silent: true })
+      return
+    }
     void refreshGoogleTokenNow()  // 시작 시 즉시 (만료된 토큰 교체)
     const id = setInterval(() => { void refreshGoogleTokenNow() }, 50 * 60 * 1000)
     const onWake = () => {
@@ -54,7 +60,7 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
       window.removeEventListener('focus', onWake)
       document.removeEventListener('visibilitychange', onWake)
     }
-  }, [googleRefreshToken])
+  }, [canRefresh, !!session])
 
   // ── 클라이언트 인증 가드 (정적 export는 middleware 없음) ──────────────────
   useEffect(() => {

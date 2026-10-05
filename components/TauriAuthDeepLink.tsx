@@ -25,7 +25,8 @@ export default function TauriAuthDeepLink() {
         // 됐는데 캘린더는 안 뜬다"는 상태가 조용히 만들어질 수 있었다.
         // 기존 재연결 배너(MiniCalendar)를 그대로 재사용해 원인을 보여준다.
         const expectedUserId = useAuthStore.getState().user?.id
-        exchangeGoogleCode(supabase, url, { expectedUserId, allowRetryAsSignIn: true }).then(({ error }) => {
+        exchangeGoogleCode(supabase, url, { expectedUserId, allowRetryAsSignIn: true }).then(({ error, ignored }) => {
+          if (ignored) { console.warn('[deep-link] 이 앱이 시작하지 않은 인증 콜백 — 무시'); return }
           if (error) useAuthStore.getState().setGoogleAuthError(`캘린더 연결 실패: ${error}`)
         })
       }).then(fn => { unlisten = fn })
