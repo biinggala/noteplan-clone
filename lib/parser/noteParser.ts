@@ -12,10 +12,53 @@ const TASK_PATTERNS = {
 // >YYYY-MM-DD 또는 >tomorrow 등 파싱
 const SCHEDULE_DATE_PATTERN = />((\d{4}-\d{2}-\d{2})|tomorrow|today|yesterday)/gi
 
-// #태그, @멘션 — \uAC00-\uD7A3 가-힣, \u3131-\u314E ㄱ-ㅎ, \u314F-\u3163 ㅏ-ㅣ
-const KO = '\uAC00-\uD7A3\u3131-\u314E\u314F-\u3163'
-const TAG_PATTERN = new RegExp(`#([\\w${KO}/]+)`, 'g')
-const MENTION_PATTERN = new RegExp(`@([\\w${KO}/]+)`, 'g')
+// #태그, @멘션 — 가-힣 가-힣, ㄱ-ㅎ ㄱ-ㅎ, ㅏ-ㅣ ㅏ-ㅣ
+//
+// 시길(#, @)은 줄 맨 앞이거나 공백·여는 괄호/따옴표 뒤에 있어야 한다 — 자동완성
+// 트리거(tagMentionComplete)와 같은 규칙. `foo#bar`, `C#x`, `a@b` 같은 건
+// 태그가 아니다. 제목(`# 제목`)은 # 뒤가 공백이라 원래 매칭되지 않는다.
+const KO = '가-힣ㄱ-ㅎㅏ-ㅣ'
+const SIGIL_BEFORE = `(?<![^\\s(\\[{"'])`
+const TAG_PATTERN = new RegExp(`${SIGIL_BEFORE}#([\\w${KO}/]+)`, 'g')
+const MENTION_PATTERN = new RegExp(`${SIGIL_BEFORE}@([\\w${KO}/]+)`, 'g')
+
+// #fff, #1e90ff 같은 CSS 색상 — 숫자가 섞였거나, 6/8자리이거나, 한 글자 반복(#eee)인
+// 16진수만 색상으로 본다. #add, #cafe, #face 같은 영단어 태그는 살린다.
+const HEX_COLOR = /^(?:[0-9a-f]{3,4}|[0-9a-f]{6}|[0-9a-f]{8})$/i
+function isHexColor(v: string): boolean {
+  if (!HEX_COLOR.test(v)) return false
+  return /\d/.test(v) || v.length >= 6 || /^(.)\1+$/i.test(v)
+}
+
+/** 태그/멘션 값으로 인정하는지 — 숫자뿐(#123)이거나 색상(#fff)이면 아니다 */
+export function isFacetValue(v: string, kind: 'tag' | 'mention'): boolean {
+  if (!/[^\d/]/.test(v)) return false
+  if (kind === 'tag' && isHexColor(v)) return false
+  return true
+}
+
+export interface FacetMatch {
+  kind: 'tag' | 'mention'
+  value: string   // 시길 뺀 값
+  index: number   // 시길 위치 (text 기준)
+  length: number  // 시길 포함 길이
+}
+
+/**
+ * 이미 마스킹된 텍스트(maskLinks/maskCode)에서 #태그·@멘션을 찾는다.
+ * 에디터 하이라이트와 색인이 같은 규칙을 쓰도록 여기 하나만 둔다.
+ */
+export function matchFacets(masked: string): FacetMatch[] {
+  const out: FacetMatch[] = []
+  for (const [re, kind] of [[TAG_PATTERN, 'tag'], [MENTION_PATTERN, 'mention']] as const) {
+    re.lastIndex = 0
+    let m: RegExpExecArray | null
+    while ((m = re.exec(masked)) !== null) {
+      if (isFacetValue(m[1], kind)) out.push({ kind, value: m[1], index: m.index, length: m[0].length })
+    }
+  }
+  return out.sort((a, b) => a.index - b.index)
+}
 
 // [[백링크]]
 const WIKILINK_PATTERN = /\[\[([^\]]+)\]\]/g
@@ -24,9 +67,13 @@ const WIKILINK_PATTERN = /\[\[([^\]]+)\]\]/g
 // 마크다운 링크/이미지 `[text](url)`, raw URL, 이메일 주소를 모두 포함.
 const LINK_MASK_PATTERN = new RegExp(
   [
-    '!?\\[[^\\]]*\\]\\([^)]*\\)',                 // 마크다운 링크/이미지
+    // 마크다운 링크/이미지. 링크 텍스트에 '['·줄바꿈을 허용하지 않는다 — 허용하면
+    // 닫히지 않은 '['가 많은 줄에서 시작점마다 끝까지 훑어 O(n²)이 된다.
+    '!?\\[[^\\][\\n]*\\]\\([^)\\n]*\\)',
     '(?:https?:\\/\\/|www\\.)[^\\s)]+',           // raw URL
-    '[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\\.[A-Za-z]{2,}', // 이메일
+    // 이메일 — 로컬 파트 시작을 lookbehind로 고정한다. 없으면 긴 토큰(공백 없는
+    // 4만 자)에서 모든 시작점마다 끝까지 훑어 O(n²)이 된다 (1.4초).
+    '(?<![A-Za-z0-9._%+-])[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\\.[A-Za-z]{2,}',
   ].join('|'),
   'g'
 )
@@ -37,6 +84,72 @@ const LINK_MASK_PATTERN = new RegExp(
  */
 export function maskLinks(text: string): string {
   return text.replace(LINK_MASK_PATTERN, m => ' '.repeat(m.length))
+}
+
+const blank = (s: string) => s.replace(/[^\n]/g, ' ')
+
+/** 한 줄 안의 인라인 코드(`...`, ``...``)를 공백으로 (길이 보존) */
+function maskInlineCode(line: string): string {
+  if (!line.includes('`')) return line
+  // 백틱 덩어리들을 모은 뒤, 같은 길이의 다음 덩어리와 짝짓는다 (CommonMark 코드 스팬)
+  const runs: { pos: number; len: number }[] = []
+  for (let i = 0; i < line.length;) {
+    if (line[i] !== '`') { i++; continue }
+    let j = i
+    while (j < line.length && line[j] === '`') j++
+    runs.push({ pos: i, len: j - i })
+    i = j
+  }
+  // nextSame[k] = k 뒤에서 같은 길이를 가진 첫 덩어리 (선형)
+  const nextSame = new Array<number>(runs.length).fill(-1)
+  const seen = new Map<number, number>()
+  for (let k = runs.length - 1; k >= 0; k--) {
+    nextSame[k] = seen.get(runs[k].len) ?? -1
+    seen.set(runs[k].len, k)
+  }
+  let out = ''
+  let last = 0
+  for (let k = 0; k < runs.length;) {
+    const close = nextSame[k]
+    if (close < 0) { k++; continue }
+    const from = runs[k].pos, to = runs[close].pos + runs[close].len
+    out += line.slice(last, from) + ' '.repeat(to - from)
+    last = to
+    k = close + 1
+  }
+  return out + line.slice(last)
+}
+
+/**
+ * 코드 블록(``` / ~~~ 펜스, 들여쓰기 0~3칸)과 인라인 코드를 같은 길이의 공백으로
+ * 바꾼다. 코드 안의 `#include`, `#fff` 같은 건 태그·멘션이 아니다.
+ * 닫히지 않은 펜스는 문서 끝까지 코드다 (CommonMark와 동일).
+ */
+export function maskCode(text: string): string {
+  if (!text.includes('`') && !text.includes('~~~')) return text
+  const lines = text.split('\n')
+  let fence: { ch: string; len: number } | null = null
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i]
+    const m = /^ {0,3}(`{3,}|~{3,})/.exec(line)
+    if (fence) {
+      if (m && m[1][0] === fence.ch && m[1].length >= fence.len && !line.slice(m[0].length).trim()) fence = null
+      lines[i] = blank(line)
+      continue
+    }
+    if (m && !(m[1][0] === '`' && line.slice(m[0].length).includes('`'))) {
+      fence = { ch: m[1][0], len: m[1].length }
+      lines[i] = blank(line)
+      continue
+    }
+    lines[i] = maskInlineCode(line)
+  }
+  return lines.join('\n')
+}
+
+/** 태그·멘션 추출용 마스킹: 코드 + 링크/URL/이메일 */
+export function maskForFacets(text: string): string {
+  return maskLinks(maskCode(text))
 }
 
 export function parseTasks(content: string, noteId: string): Task[] {
@@ -51,9 +164,9 @@ export function parseTasks(content: string, noteId: string): Task[] {
         const taskContent = match[2]
 
         const scheduledMatch = taskContent.match(SCHEDULE_DATE_PATTERN)
-        const masked = maskLinks(taskContent)
-        const tags = [...masked.matchAll(TAG_PATTERN)].map(m => m[1])
-        const mentions = [...masked.matchAll(MENTION_PATTERN)].map(m => m[1])
+        const facets = matchFacets(maskForFacets(taskContent))
+        const tags = facets.filter(f => f.kind === 'tag').map(f => f.value)
+        const mentions = facets.filter(f => f.kind === 'mention').map(f => f.value)
 
         tasks.push({
           id: uuidv4(),
@@ -83,12 +196,17 @@ export function normalizeKey(s: string): string {
   return s.normalize('NFC')
 }
 
+function extractFacets(content: string, kind: 'tag' | 'mention'): string[] {
+  const values = matchFacets(maskForFacets(content)).filter(f => f.kind === kind).map(f => normalizeKey(f.value))
+  return [...new Set(values)]
+}
+
 export function extractTags(content: string): string[] {
-  return [...new Set([...maskLinks(content).matchAll(TAG_PATTERN)].map(m => normalizeKey(m[1])))]
+  return extractFacets(content, 'tag')
 }
 
 export function extractMentions(content: string): string[] {
-  return [...new Set([...maskLinks(content).matchAll(MENTION_PATTERN)].map(m => normalizeKey(m[1])))]
+  return extractFacets(content, 'mention')
 }
 
 export function extractBacklinks(content: string): string[] {
