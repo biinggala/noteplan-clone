@@ -10,6 +10,7 @@ import { useAuthStore } from '@/lib/stores/authStore'
 import { useCalendarEventStore } from '@/lib/stores/calendarEventStore'
 import { useTimelineDragStore } from '@/lib/dnd/timelineDragStore'
 import { openExternal } from '@/lib/openExternal'
+import { withGoogleToken, googleErrorMessage } from '@/lib/google/withToken'
 import {
   fetchCalendarList,
   fetchAllCalendarEventsForRange,
@@ -104,6 +105,8 @@ export default function DayTimeline({ date, days = 1 }: DayTimelineProps) {
   // Updated to a real ID once calendars load (prefers writable owner/writer calendars).
   const [newEventCalId, setNewEventCalId] = useState<string>('primary')
   const [savingEvent, setSavingEvent] = useState(false)
+  // 저장 실패 사유 — 예전엔 콘솔에만 찍고 폼을 닫아서 '추가가 안 된다'로만 보였다
+  const [createError, setCreateError] = useState<string | null>(null)
   // 중복 생성 방지용 동기 락. savingEvent(React state)는 반영이 한 박자 늦어서
   // Enter 두 번이나 Enter+블러가 같은 틱에 겹치면 둘 다 통과해버린다.
   const creatingRef = useRef(false)
@@ -118,6 +121,7 @@ export default function DayTimeline({ date, days = 1 }: DayTimelineProps) {
       if (newEventFormRef.current && !newEventFormRef.current.contains(e.target as Node)) {
         setNewEventSlot(null)
         setNewEventTitle('')
+        setCreateError(null)
       }
     }
     document.addEventListener('mousedown', onDown)
@@ -594,33 +598,35 @@ export default function DayTimeline({ date, days = 1 }: DayTimelineProps) {
 
   async function handleCreateEvent() {
     if (creatingRef.current) return
-    if (!newEventSlot || !newEventTitle.trim() || !googleAccessToken) return
+    if (!newEventSlot || !newEventTitle.trim()) return
     creatingRef.current = true
     // If no calendar selected yet, fall back to "primary"
     const calId = newEventCalId || 'primary'
     setSavingEvent(true)
+    setCreateError(null)
     const { date: evDate, startHour, startMinute } = newEventSlot
     const endMins = startHour * 60 + startMinute + DEFAULT_DURATION
     const endH = Math.floor(endMins / 60), endM = endMins % 60
     const cal = calendars.find(c => c.id === calId)
-    console.log('[createEvent] calendarId=', calId, 'writableCalendars=', writableCalendars.map(c => `${c.summary}(${c.id})`))
     try {
-      const created = await createCalendarEvent(googleAccessToken, {
+      const created = await withGoogleToken(token => createCalendarEvent(token, {
         calendarId:    calId,
         summary:       newEventTitle.trim(),
         startDateTime: toISO(evDate, startHour, startMinute),
         endDateTime:   toISO(evDate, endH, endM),
-      })
+      }))
       // Attach calendar color
       created.calendarColor = cal?.backgroundColor ?? '#4285f4'
       addEvent(evDate, created as GoogleCalendarEvent)
+      setNewEventSlot(null)
+      setNewEventTitle('')
     } catch (err) {
+      // 폼은 열어 둔다 — 적은 제목이 날아가지 않고, 왜 안 됐는지 보인다
       console.error('[createCalendarEvent]', err)
+      setCreateError(googleErrorMessage(err))
     } finally {
       creatingRef.current = false
       setSavingEvent(false)
-      setNewEventSlot(null)
-      setNewEventTitle('')
     }
   }
 
@@ -628,23 +634,25 @@ export default function DayTimeline({ date, days = 1 }: DayTimelineProps) {
   async function handleCreateAllDay() {
     // Enter로 만든 뒤 입력창이 사라지며 blur가 또 들어온다 — 락으로 막는다
     if (creatingRef.current) return
-    if (!newAllDayDate || !newAllDayTitle.trim() || !googleAccessToken) {
+    if (!newAllDayDate || !newAllDayTitle.trim()) {
       setNewAllDayDate(null); setNewAllDayTitle(''); return
     }
     creatingRef.current = true
     const calId = newEventCalId || 'primary'
     const cal = calendars.find(c => c.id === calId)
+    const date = newAllDayDate
     setSavingEvent(true)
     try {
-      const created = await createAllDayEvent(googleAccessToken, {
+      const created = await withGoogleToken(token => createAllDayEvent(token, {
         calendarId: calId,
         summary: newAllDayTitle.trim(),
-        date: newAllDayDate,
-      })
+        date,
+      }))
       created.calendarColor = cal?.backgroundColor ?? '#4285f4'
-      addEvent(newAllDayDate, created as GoogleCalendarEvent)
+      addEvent(date, created as GoogleCalendarEvent)
     } catch (err) {
       console.error('[createAllDayEvent]', err)
+      setGoogleAuthError(googleErrorMessage(err))
     } finally {
       creatingRef.current = false
       setSavingEvent(false)
@@ -1313,6 +1321,7 @@ export default function DayTimeline({ date, days = 1 }: DayTimelineProps) {
                     const minute = minuteFromRowEvent(e)
                     setNewEventSlot({ date: d, startHour: hour, startMinute: minute })
                     setNewEventTitle('')
+                    setCreateError(null)
                   }}
                 />
               ))}
@@ -1366,7 +1375,8 @@ export default function DayTimeline({ date, days = 1 }: DayTimelineProps) {
                   <div
                     ref={newEventFormRef}
                     className="absolute left-1 right-1 rounded overflow-hidden pointer-events-auto"
-                    style={{ top, height: DEFAULT_DURATION * PX_PER_MIN, zIndex: 40 }}
+                    // 실패 사유가 있으면 그만큼 늘어난다
+                    style={{ top, height: createError ? undefined : DEFAULT_DURATION * PX_PER_MIN, minHeight: DEFAULT_DURATION * PX_PER_MIN, zIndex: 40 }}
                   >
                     {/* colored left bar */}
                     <div className="absolute left-0 top-0 bottom-0 w-[3px] rounded-l" style={{ backgroundColor: formColor }} />
@@ -1380,7 +1390,7 @@ export default function DayTimeline({ date, days = 1 }: DayTimelineProps) {
                           // 한글 IME는 조합 확정 Enter와 실제 Enter가 각각 들어온다
                           if (e.nativeEvent.isComposing || e.keyCode === 229) return
                           if (e.key === 'Enter') handleCreateEvent()
-                          if (e.key === 'Escape') { setNewEventSlot(null); setNewEventTitle('') }
+                          if (e.key === 'Escape') { setNewEventSlot(null); setNewEventTitle(''); setCreateError(null) }
                         }}
                         placeholder="Event title..."
                         className="w-full bg-transparent text-[11px] font-medium outline-none placeholder-white/40"
@@ -1411,11 +1421,16 @@ export default function DayTimeline({ date, days = 1 }: DayTimelineProps) {
                         </button>
                         <button
                           onPointerDown={e => e.stopPropagation()}
-                          onClick={() => { setNewEventSlot(null); setNewEventTitle('') }}
+                          onClick={() => { setNewEventSlot(null); setNewEventTitle(''); setCreateError(null) }}
                           className="text-[10px] opacity-60 hover:opacity-100"
                           style={{ color: formColor }}
                         >×</button>
                       </div>
+                      {createError && (
+                        <div className="text-[10px] leading-snug text-red-300 pb-0.5 break-words">
+                          {createError}
+                        </div>
+                      )}
                     </div>
                   </div>
                 )

@@ -27,6 +27,23 @@ interface CalendarEventStore {
   patchEvent: (oldDate: string, newDate: string, eventId: string, patch: Partial<GoogleCalendarEvent>) => void
 }
 
+// 방금 만든 이벤트. 만드는 도중 토큰이 갱신되면 전체 재fetch가 같이 출발하는데,
+// 그 응답은 생성 '전' 목록이라 도착하는 순간 새 이벤트를 덮어써 화면에서 지웠다.
+// 잠깐 동안은 fetch 결과에 없어도 살려둔다 (다음 fetch부터는 구글 목록에 들어 있다).
+const RECENT_ADD_TTL = 2 * 60 * 1000
+const recentAdds = new Map<string, { date: string; event: GoogleCalendarEvent; at: number }>()
+
+function keepRecentAdds(map: Record<string, GoogleCalendarEvent[]>) {
+  const now = Date.now()
+  const out = { ...map }
+  for (const [id, r] of recentAdds) {
+    if (now - r.at > RECENT_ADD_TTL) { recentAdds.delete(id); continue }
+    const list = out[r.date]
+    if (list && !list.some(e => e.id === id)) out[r.date] = [...list, r.event]
+  }
+  return out
+}
+
 export const useCalendarEventStore = create<CalendarEventStore>()(
   persist(
     (set, get) => ({
@@ -55,7 +72,7 @@ export const useCalendarEventStore = create<CalendarEventStore>()(
         set(state => ({ eventsByDate: { ...state.eventsByDate, [date]: events } })),
 
       mergeEvents: (map) =>
-        set(state => ({ eventsByDate: { ...state.eventsByDate, ...map } })),
+        set(state => ({ eventsByDate: { ...state.eventsByDate, ...keepRecentAdds(map) } })),
 
       setFetching: (date, v) => set(state => {
         const next = new Set(state.fetchingDates)
@@ -74,19 +91,25 @@ export const useCalendarEventStore = create<CalendarEventStore>()(
         return { eventsByDate: rest }
       }),
 
-      addEvent: (date, event) => set(state => ({
-        eventsByDate: {
-          ...state.eventsByDate,
-          [date]: [...(state.eventsByDate[date] ?? []), event],
-        },
-      })),
+      addEvent: (date, event) => set(state => {
+        recentAdds.set(event.id, { date, event, at: Date.now() })
+        return {
+          eventsByDate: {
+            ...state.eventsByDate,
+            [date]: [...(state.eventsByDate[date] ?? []), event],
+          },
+        }
+      }),
 
-      removeEvent: (date, eventId) => set(state => ({
-        eventsByDate: {
-          ...state.eventsByDate,
-          [date]: (state.eventsByDate[date] ?? []).filter(e => e.id !== eventId),
-        },
-      })),
+      removeEvent: (date, eventId) => set(state => {
+        recentAdds.delete(eventId)
+        return {
+          eventsByDate: {
+            ...state.eventsByDate,
+            [date]: (state.eventsByDate[date] ?? []).filter(e => e.id !== eventId),
+          },
+        }
+      }),
 
       patchEvent: (oldDate, newDate, eventId, patch) => set(state => {
         // Remove from old date bucket
@@ -94,6 +117,8 @@ export const useCalendarEventStore = create<CalendarEventStore>()(
         const existing  = (state.eventsByDate[oldDate] ?? []).find(e => e.id === eventId)
         if (!existing) return {}
         const updated = { ...existing, ...patch }
+        const recent = recentAdds.get(eventId)
+        if (recent) recentAdds.set(eventId, { ...recent, date: newDate, event: updated })
         // Insert into new date bucket (may be same date)
         const newBucket = [...(oldDate === newDate ? oldBucket : (state.eventsByDate[newDate] ?? [])), updated]
         return {

@@ -17,6 +17,7 @@ import { useTimelineDragStore } from '@/lib/dnd/timelineDragStore'
 import { useAuthStore } from '@/lib/stores/authStore'
 import { useCalendarEventStore } from '@/lib/stores/calendarEventStore'
 import { createCalendarEvent } from '@/lib/google/calendar'
+import { withGoogleToken, googleErrorMessage } from '@/lib/google/withToken'
 import { formatTimeRange } from '@/lib/parser/timeBlockParser'
 
 const SLOT_H = 60          // 타임라인 1시간 높이(px) — DayTimeline과 동일
@@ -207,24 +208,26 @@ const pad2 = (n: number) => String(n).padStart(2, '0')
 async function createGcalEventForTimeblock(
   date: string, hour: number, minute: number, duration: number, content: string,
 ) {
-  const token = useAuthStore.getState().googleAccessToken
-  if (!token) return
+  // 캘린더를 연결 안 한 사용자는 노트 타임블록만으로 충분 — 조용히 넘어간다
+  if (!useAuthStore.getState().googleAccessToken) return
   const start = `${date}T${pad2(hour)}:${pad2(minute)}:00`
   const endTotal = hour * 60 + minute + duration
   const end = `${date}T${pad2(Math.floor(endTotal / 60) % 24)}:${pad2(endTotal % 60)}:00`
   try {
-    const ev = await createCalendarEvent(token, {
+    const ev = await withGoogleToken(token => createCalendarEvent(token, {
       calendarId: 'primary',
       summary: content,
       startDateTime: start,
       endDateTime: end,
       extendedProperties: { private: { npTimeblock: '1', npContent: content } },
-    })
+    }))
     // eventsByDate에 추가(마커라 렌더는 스킵) → 즉시 재검색으로 삭제/완료 동기화 가능.
     // 다음 fetch 시 Google에서 마커 이벤트로 다시 받아오므로 재시작·기기 무관.
     useCalendarEventStore.getState().addEvent(date, ev)
   } catch (err) {
+    // 예전엔 콘솔에만 남아, 블록은 생겼는데 구글 캘린더엔 없는 이유를 알 수 없었다
     console.error('[timeblock → gcal]', err)
+    useAuthStore.getState().setGoogleAuthError(googleErrorMessage(err))
   }
 }
 
