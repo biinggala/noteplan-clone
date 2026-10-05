@@ -1,7 +1,7 @@
 import { Decoration, EditorView, WidgetType } from '@codemirror/view'
 import type { DecorationSet } from '@codemirror/view'
-import { StateField, RangeSetBuilder } from '@codemirror/state'
-import type { EditorState } from '@codemirror/state'
+import { StateField, RangeSetBuilder, Annotation } from '@codemirror/state'
+import type { EditorState, Text, Transaction } from '@codemirror/state'
 import { openExternal, isSafeHttpUrl } from '@/lib/openExternal'
 
 /**
@@ -87,28 +87,35 @@ function parseDelimiter(line: string): Align[] | null {
 
 const isTableLine = (s: string) => /^\s*\|/.test(s)
 
-/** 문서에서 표 블록을 모두 찾는다 (헤더 + 구분행 + 본문 0줄 이상) */
-function findTables(state: EditorState): TableBlock[] {
-  const doc = state.doc
+/** n번째 줄에서 시작하는 표를 읽는다 (헤더 + 구분행 + 본문 0줄 이상). 표가 아니면 null */
+function parseTableAt(doc: Text, n: number): TableBlock | null {
+  if (n < 1 || n + 1 > doc.lines) return null
+  const head = doc.line(n)
+  if (!isTableLine(head.text)) return null
+  const aligns = parseDelimiter(doc.line(n + 1).text)
+  if (!aligns) return null
+
+  const header = splitRow(head.text)
+  const rows: string[][] = []
+  let last = n + 1
+  for (let m = n + 2; m <= doc.lines; m++) {
+    const l = doc.line(m)
+    if (!isTableLine(l.text)) break
+    rows.push(splitRow(l.text))
+    last = m
+  }
+  return { from: head.from, to: doc.line(last).to, header, aligns, rows }
+}
+
+/** 문서에서 표 블록을 모두 찾는다 */
+function findTables(doc: Text): TableBlock[] {
   const out: TableBlock[] = []
   let n = 1
   while (n <= doc.lines) {
-    const head = doc.line(n)
-    if (!isTableLine(head.text) || n + 1 > doc.lines) { n++; continue }
-    const aligns = parseDelimiter(doc.line(n + 1).text)
-    if (!aligns) { n++; continue }
-
-    const header = splitRow(head.text)
-    const rows: string[][] = []
-    let last = n + 1
-    for (let m = n + 2; m <= doc.lines; m++) {
-      const l = doc.line(m)
-      if (!isTableLine(l.text)) break
-      rows.push(splitRow(l.text))
-      last = m
-    }
-    out.push({ from: head.from, to: doc.line(last).to, header, aligns, rows })
-    n = last + 1
+    const t = parseTableAt(doc, n)
+    if (!t) { n++; continue }
+    out.push(t)
+    n = doc.lineAt(t.to).number + 1
   }
   return out
 }
@@ -198,11 +205,51 @@ function renderInline(text: string, onOpenWikiLink?: (title: string) => void): D
 // 열 너비는 마크다운에 적을 자리가 없어서 문서에 저장하지 못한다.
 // 세션 동안만 헤더 조합을 키로 기억한다 (새로고침하면 기본 너비로 돌아감).
 const columnWidths = new Map<string, number[]>()
-const widthKey = (header: string[]) => header.join(' ')
+const widthKey = (header: string[]) => header.join('\u0000')
 
-// data-table-from 속성으로 커밋 후 재생성된 위젯을 다시 찾아 포커스를 돌려준다
-const FROM_ATTR = 'data-table-from'
 const RAW_ATTR = 'data-raw'
+const WRAP_CLASS = 'cm-md-table-wrap'
+
+/** 셀 편집 커밋 트랜잭션 표시 — 이 트랜잭션으로는 표를 원문 보기로 바꾸지 않는다 */
+const tableCommit = Annotation.define<boolean>()
+
+/** CodeMirror가 화면에서 걷어낸 위젯 DOM. 늦게 도착한 blur가 여기에 쓰지 못하게 한다 */
+const deadWraps = new WeakSet<HTMLElement>()
+
+/** 위젯 DOM이 지금 문서의 어느 표인지 — 위치는 만든 시점이 아니라 지금 문서에서 다시 찾는다 */
+function tableOfWrap(view: EditorView, wrap: HTMLElement): TableBlock | null {
+  if (deadWraps.has(wrap) || !wrap.isConnected || !view.dom.contains(wrap)) return null
+  let pos: number
+  try { pos = view.posAtDOM(wrap) } catch { return null }
+  if (pos < 0 || pos > view.state.doc.length) return null
+  const t = parseTableAt(view.state.doc, view.state.doc.lineAt(pos).number)
+  return t && t.from === pos ? t : null
+}
+
+/** 문서 위치 `from`에서 시작하는 표 위젯의 (row, col) 셀에 포커스. row -1 = 헤더 */
+export function focusTableCell(
+  view: EditorView, from: number, row: number, col: number,
+  mode: 'start' | 'end' | 'all' = 'end',
+): boolean {
+  const wraps = Array.from(view.dom.querySelectorAll<HTMLElement>(`.${WRAP_CLASS}`))
+  const host = wraps.find(w => {
+    if (deadWraps.has(w)) return false
+    try { return view.posAtDOM(w) === from } catch { return false }
+  })
+  const sel = row === -1
+    ? `thead tr th:nth-child(${col + 1}) .cm-tcell`
+    : `tbody tr:nth-child(${row + 1}) td:nth-child(${col + 1}) .cm-tcell`
+  const el = host?.querySelector(sel) as HTMLElement | null
+  if (!el) return false
+  el.focus()
+  const range = document.createRange()
+  range.selectNodeContents(el)
+  if (mode !== 'all') range.collapse(mode === 'start')
+  const s = window.getSelection()
+  s?.removeAllRanges()
+  s?.addRange(range)
+  return true
+}
 
 class TableWidget extends WidgetType {
   constructor(
@@ -210,11 +257,17 @@ class TableWidget extends WidgetType {
     private readonly onOpenWikiLink?: (title: string) => void,
   ) { super() }
 
+  // 위치(from)는 비교하지 않는다. 표 위쪽을 고쳐 표가 밀려나기만 했을 때
+  // DOM을 그대로 두어야 셀에서 치던 글자·포커스가 날아가지 않는다.
+  // 커밋할 때 실제 위치는 tableOfWrap()이 그때의 문서에서 다시 찾는다.
   eq(other: TableWidget): boolean {
-    return this.b.from === other.b.from
-      && JSON.stringify(this.b.header) === JSON.stringify(other.b.header)
+    return JSON.stringify(this.b.header) === JSON.stringify(other.b.header)
       && JSON.stringify(this.b.aligns) === JSON.stringify(other.b.aligns)
       && JSON.stringify(this.b.rows) === JSON.stringify(other.b.rows)
+  }
+
+  destroy(dom: HTMLElement): void {
+    deadWraps.add(dom)
   }
 
   toDOM(view: EditorView): HTMLElement {
@@ -223,8 +276,7 @@ class TableWidget extends WidgetType {
     const onOpen = this.onOpenWikiLink
 
     const wrap = document.createElement('div')
-    wrap.className = 'cm-md-table-wrap'
-    wrap.setAttribute(FROM_ATTR, String(b.from))
+    wrap.className = WRAP_CLASS
 
     const scroll = document.createElement('div')
     scroll.className = 'cm-md-table-scroll'
@@ -233,7 +285,8 @@ class TableWidget extends WidgetType {
     table.className = 'cm-md-table'
 
     // 커밋이 문서를 바꾸면 이 위젯 DOM은 통째로 교체된다. 교체된 뒤에 남은
-    // 옛 노드의 blur가 늦게 도착해 낡은 [from, to]로 또 쓰는 걸 막는 플래그.
+    // 옛 노드의 blur가 늦게 도착해 또 쓰는 걸 막는 플래그 (destroy()의
+    // deadWraps와 함께 — 다른 이유로 걷어내진 경우까지 막는다).
     let dead = false
 
     /** 셀의 원문(마크다운). 포커스 중이면 화면 텍스트가 곧 원문이다. */
@@ -250,31 +303,39 @@ class TableWidget extends WidgetType {
       return { header, rows }
     }
 
-    /** 현재 화면 값을 마크다운으로 재직렬화해 문서에 한 번에 반영 */
+    /** 이 위젯이 그리는 표의 지금 위치 (위젯이 이미 버려졌으면 null) */
+    let lastFrom: number | null = null
+    function current(): TableBlock | null {
+      if (dead) return null
+      const t = tableOfWrap(view, wrap)
+      if (t) lastFrom = t.from
+      return t
+    }
+
+    /**
+     * 현재 화면 값을 마크다운으로 재직렬화해 문서에 한 번에 반영.
+     * 표의 범위는 위젯을 만들 때가 아니라 지금 문서에서 다시 찾는다 —
+     * 그 사이 문서가 바뀌었으면 낡은 범위로 쓰다 RangeError가 나거나 남의
+     * 글을 덮어쓴다.
+     */
     function commit(extra?: { header: string[]; aligns: Align[]; rows: string[][] }) {
-      if (dead) return
+      const cur = current()
+      if (!cur) { dead = true; return }
       const next = extra ?? { ...readCells(), aligns: b.aligns }
       const text = serializeTable(next)
-      if (text === view.state.doc.sliceString(b.from, b.to)) return
+      if (text === view.state.doc.sliceString(cur.from, cur.to)) return
       dead = true
-      view.dispatch({ changes: { from: b.from, to: b.to, insert: text } })
+      view.dispatch({
+        changes: { from: cur.from, to: cur.to, insert: text },
+        annotations: tableCommit.of(true),
+        userEvent: 'input.table',
+      })
     }
 
     /** 커밋 후 새로 그려진 위젯에서 같은 좌표의 셀을 찾아 포커스 (row -1 = 헤더) */
     function focusCell(row: number, col: number, atStart = false) {
-      const host = view.dom.querySelector(`[${FROM_ATTR}="${b.from}"]`)
-      const sel = row === -1
-        ? `thead tr th:nth-child(${col + 1}) .cm-tcell`
-        : `tbody tr:nth-child(${row + 1}) td:nth-child(${col + 1}) .cm-tcell`
-      const el = host?.querySelector(sel) as HTMLElement | null
-      if (!el) return
-      el.focus()
-      const range = document.createRange()
-      range.selectNodeContents(el)
-      range.collapse(atStart)
-      const s = window.getSelection()
-      s?.removeAllRanges()
-      s?.addRange(range)
+      if (lastFrom == null) return
+      focusTableCell(view, lastFrom, row, col, atStart ? 'start' : 'end')
     }
 
     function paint(editable: HTMLElement, raw: string) {
@@ -312,15 +373,42 @@ class TableWidget extends WidgetType {
         document.execCommand('insertText', false, t.replace(/\r?\n/g, ' '))
       })
 
-      editable.addEventListener('blur', () => {
+      // 한글 IME 조합 중에는 커밋하지 않는다. 조합 중인 글자는 아직 DOM에
+      // 확정되지 않아서, 이때 커밋/다시 그리면 마지막 음절이 두 번 들어가거나
+      // 사라진다. 조합 중에 포커스를 잃으면 조합이 끝난 뒤에 커밋한다.
+      let composing = false
+      let blurPending = false
+      const finishBlur = () => {
+        blurPending = false
         const raw2 = editable.textContent ?? ''
         editable.setAttribute(RAW_ATTR, raw2)
         commit()
         // 문서가 안 바뀌어 위젯이 그대로면 여기서 직접 다시 렌더한다
-        if (!dead) paint(editable, raw2)
+        if (!dead && document.activeElement !== editable) paint(editable, raw2)
+      }
+      editable.addEventListener('compositionstart', () => { composing = true })
+      editable.addEventListener('compositionend', () => {
+        composing = false
+        if (blurPending) finishBlur()
+      })
+
+      editable.addEventListener('blur', () => {
+        if (composing) {
+          blurPending = true
+          // compositionend가 끝내 오지 않는 브라우저 대비
+          setTimeout(() => { if (blurPending) { composing = false; finishBlur() } }, 300)
+          return
+        }
+        finishBlur()
       })
 
       editable.addEventListener('keydown', (e) => {
+        // IME 조합 중의 Enter/Tab 등은 조합 확정용이다 — 셀 이동/커밋을 하면
+        // 확정되기 전 글자로 커밋된 뒤 확정 글자가 한 번 더 들어간다.
+        if (e.isComposing || e.keyCode === 229) {
+          e.stopPropagation()
+          return
+        }
         if (e.key === 'Escape') {
           editable.textContent = row === -1 ? b.header[col] : b.rows[row][col]
           editable.blur()
@@ -517,9 +605,28 @@ class TableWidget extends WidgetType {
   ignoreEvent(): boolean { return true }
 }
 
-function build(state: EditorState, onOpenWikiLink?: (title: string) => void): DecorationSet {
+interface TableState {
+  tables: TableBlock[]
+  /** 원문으로 보여 주는 표의 시작 위치 (커서가 그 표 안에 있을 때) */
+  reveal: number | null
+  decos: DecorationSet
+}
+
+/**
+ * 커서(메인 선택의 head)가 들어 있는 표. 그 표는 위젯으로 가리지 않고 원문
+ * 그대로 보여 준다 — 가려진 범위 안에 커서가 있으면 CodeMirror가 DOM 캐럿을
+ * 둘 곳이 없어 타이핑이 문서 맨 앞으로 튄다 (문서 끝의 표 뒤, 구분행을 막
+ * 친 직후, /표 삽입 직후 등). 경계(from, to)도 포함한다.
+ */
+function tableAtHead(tables: TableBlock[], state: EditorState): TableBlock | null {
+  const head = state.selection.main.head
+  return tables.find(t => t.from <= head && head <= t.to) ?? null
+}
+
+function build(tables: TableBlock[], reveal: number | null, onOpenWikiLink?: (title: string) => void): DecorationSet {
   const builder = new RangeSetBuilder<Decoration>()
-  for (const b of findTables(state)) {
+  for (const b of tables) {
+    if (b.from === reveal) continue
     builder.add(b.from, b.to, Decoration.replace({
       widget: new TableWidget(b, onOpenWikiLink),
       block: true,
@@ -528,13 +635,47 @@ function build(state: EditorState, onOpenWikiLink?: (title: string) => void): De
   return builder.finish()
 }
 
+/**
+ * 이번 변경이 표에 영향을 줄 수 있는지. 아니면 전체 재스캔 대신 기존 표
+ * 위치만 옮긴다 — 큰 노트에서 키 입력마다 문서 전체를 훑지 않도록.
+ * (바뀐 줄에 '|'가 있거나, 바뀐 범위가 기존 표에 닿으면 재스캔)
+ */
+function touchesTables(tr: Transaction, tables: TableBlock[]): boolean {
+  let hit = false
+  const doc = tr.state.doc
+  tr.changes.iterChangedRanges((fromA, toA, fromB, toB) => {
+    if (hit) return
+    if (tables.some(t => fromA <= t.to + 1 && toA >= t.from - 1)) { hit = true; return }
+    const text = doc.sliceString(doc.lineAt(fromB).from, doc.lineAt(toB).to)
+    if (text.includes('|')) hit = true
+  })
+  return hit
+}
+
+function mapTables(tables: TableBlock[], tr: Transaction): TableBlock[] {
+  return tables.map(t => ({ ...t, from: tr.changes.mapPos(t.from, 1), to: tr.changes.mapPos(t.to, -1) }))
+}
+
 export function mdTableExtension(onOpenWikiLink?: (title: string) => void) {
-  return StateField.define<DecorationSet>({
-    create(state) { return build(state, onOpenWikiLink) },
-    update(value, tr) {
-      if (!tr.docChanged) return value
-      return build(tr.state, onOpenWikiLink)
+  return StateField.define<TableState>({
+    create(state) {
+      const tables = findTables(state.doc)
+      // 처음 열 때는 커서가 (기본값 0이라) 맨 앞 표 안에 있어도 렌더한다
+      return { tables, reveal: null, decos: build(tables, null, onOpenWikiLink) }
     },
-    provide: f => EditorView.decorations.from(f),
+    update(value, tr) {
+      const tables = !tr.docChanged ? value.tables
+        : touchesTables(tr, value.tables) ? findTables(tr.state.doc)
+        : mapTables(value.tables, tr)
+
+      let reveal: number | null
+      if (tr.annotation(tableCommit)) reveal = null              // 셀 편집 커밋: 렌더 유지
+      else if (tr.docChanged || tr.selection) reveal = tableAtHead(tables, tr.state)?.from ?? null
+      else reveal = value.reveal
+
+      if (!tr.docChanged && reveal === value.reveal) return value
+      return { tables, reveal, decos: build(tables, reveal, onOpenWikiLink) }
+    },
+    provide: f => EditorView.decorations.from(f, v => v.decos),
   })
 }
