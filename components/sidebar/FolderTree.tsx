@@ -397,7 +397,7 @@ export default function FolderTree() {
       type: 'project' as const,
       title: name,
       content: `# ${name}\n\n`,
-      filePath: `${folderPath}/${name}.md`,
+      filePath: `Notes/${folderPath}/${name}.md`,
       folder: folderPath,
       tags: [] as string[],
       mentions: [] as string[],
@@ -433,8 +433,13 @@ export default function FolderTree() {
     if (!folder) return
     const name = await showInputDialog('폴더 이름 변경', '새 이름 입력...', folder.name)
     if (!name || name === folder.name) return
-    await dbRenameFolder(folderId, name)
-    // 폴더 경로 변경 → 내부 노트의 folder 필드도 갱신될 수 있어 둘 다 새로고침
+    try {
+      await dbRenameFolder(folderId, name)
+    } catch (e) {
+      // 같은 이름 폴더가 있거나 저장 실패 — 예전엔 조용히 반쯤 바뀐 채 남았다
+      await showConfirmDialog(`이름을 바꾸지 못했습니다.\n${e instanceof Error ? e.message : String(e)}`)
+    }
+    // 폴더 경로 변경 → 내부 노트의 folder 필드도 갱신되므로 둘 다 새로고침
     await Promise.all([loadFolders(), reloadNotes()])
   }
 
@@ -442,7 +447,11 @@ export default function FolderTree() {
     setContextMenu(null)
     const ok = await showConfirmDialog('이 폴더를 삭제하시겠습니까?\n(폴더 안의 노트는 유지됩니다)')
     if (!ok) return
-    await dbDeleteFolder(folderId)
+    try {
+      await dbDeleteFolder(folderId)
+    } catch (e) {
+      await showConfirmDialog(`폴더를 삭제하지 못했습니다. 노트는 그대로입니다.\n${e instanceof Error ? e.message : String(e)}`)
+    }
     // 폴더 삭제 시 내부 노트는 미분류로 이동 → 둘 다 새로고침
     await Promise.all([loadFolders(), reloadNotes()])
   }
@@ -451,7 +460,12 @@ export default function FolderTree() {
     setContextMenu(null)
     const ok = await showConfirmDialog('이 노트를 삭제하시겠습니까?')
     if (!ok) return
-    await dbDeleteNote(noteId)
+    try {
+      await dbDeleteNote(noteId)
+    } catch (e) {
+      await showConfirmDialog(`노트를 삭제하지 못했습니다 (오프라인?).\n${e instanceof Error ? e.message : String(e)}`)
+      return
+    }
     await reloadNotes()
     // 지금 보고 있던 노트를 지웠으면 그 자리에 머물면 안 된다.
     // 그대로 두면 삭제된 노트가 계속 편집 가능한 채로 남고, 자동저장이

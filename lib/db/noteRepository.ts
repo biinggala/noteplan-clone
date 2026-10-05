@@ -5,7 +5,7 @@ import { format, addDays, startOfWeek, endOfWeek } from 'date-fns'
 const WK = { weekStartsOn: 0 as const, firstWeekContainsDate: 4 as const }
 import { v4 as uuidv4 } from 'uuid'
 import { createClient } from '@/lib/supabase/client'
-import { normalizeKey, renameWikiLinks, extractBacklinks, extractSupersedes } from '@/lib/parser/noteParser'
+import { normalizeKey, renameWikiLinks, extractBacklinks, extractSupersedes, extractTags, extractMentions } from '@/lib/parser/noteParser'
 
 // ── Supabase row → Note 변환 ─────────────────────────────────────────────────
 
@@ -65,18 +65,46 @@ async function getUserId(): Promise<string> {
   return session.user.id
 }
 
+/**
+ * Supabase(PostgREST)는 한 번에 최대 1000행만 돌려준다. 몇 년 치 데일리 노트가
+ * 쌓이면 1000을 넘는데, 그동안은 그 뒤가 조용히 잘려서 오래된 노트가 사이드바·
+ * 검색·링크 후보에서 사라지고, [[링크]]를 누르면 중복 노트가 생기고, 가져오기
+ * '건너뛰기'가 중복을 만들었다. 범위를 바꿔 가며 끝까지 받는다.
+ */
+async function fetchAllRows<T = Record<string, unknown>>(
+  page: (from: number, to: number) => PromiseLike<{ data: T[] | null; error: unknown }>,
+  pageSize = 1000,
+): Promise<T[]> {
+  const out: T[] = []
+  for (let from = 0; ; from += pageSize) {
+    const { data, error } = await page(from, from + pageSize - 1)
+    if (error) throw error
+    const rows = data ?? []
+    out.push(...rows)
+    if (rows.length < pageSize) return out
+  }
+}
+
 // ── Note CRUD ─────────────────────────────────────────────────────────────────
 
-export async function getNoteByDate(date: string): Promise<Note | undefined> {
+/**
+ * 날짜 키로 노트 찾기. type 을 주면 그 종류만 — 예전 가져오기가 주간/월간 노트를
+ * 'YYYY-MM-DD' 날짜로 저장해 둔 탓에, 월요일·1일 데일리를 열면 주간·월간 노트가
+ * 대신 열려 거기에 적히는 일이 있었다.
+ */
+export async function getNoteByDate(date: string, type?: NoteType): Promise<Note | undefined> {
   const supabase = createClient()
   const userId = await getUserId()
   // maybeSingle() 대신 limit(1) 사용 — 중복 행이 있어도 에러 없이 첫 번째 반환
-  const { data, error } = await supabase
+  let q = supabase
     .from('notes')
     .select('*')
     .eq('user_id', userId)
     .eq('date', date)
+  if (type) q = q.eq('type', type)
+  const { data, error } = await q
     .order('created_at', { ascending: true })
+    .order('id', { ascending: true })
     .limit(1)
   if (error) console.error('[getNoteByDate]', error)
   return data && data.length > 0 ? rowToNote(data[0]) : undefined
@@ -84,10 +112,12 @@ export async function getNoteByDate(date: string): Promise<Note | undefined> {
 
 export async function getNoteById(id: string): Promise<Note | undefined> {
   const supabase = createClient()
+  const userId = await getUserId()
   const { data } = await supabase
     .from('notes')
     .select('*')
     .eq('id', id)
+    .eq('user_id', userId)   // RLS 가 1차 방어, 이건 2차
     .maybeSingle()
   return data ? rowToNote(data) : undefined
 }
@@ -95,12 +125,14 @@ export async function getNoteById(id: string): Promise<Note | undefined> {
 export async function getAllNotes(): Promise<Note[]> {
   const supabase = createClient()
   const userId = await getUserId()
-  const { data } = await supabase
+  const rows = await fetchAllRows((from, to) => supabase
     .from('notes')
     .select('*')
     .eq('user_id', userId)
     .order('updated_at', { ascending: false })
-  return (data ?? []).map(rowToNote)
+    .order('id', { ascending: true })
+    .range(from, to))
+  return rows.map(rowToNote)
 }
 
 export async function getNotesByType(type: NoteType): Promise<Note[]> {
@@ -143,6 +175,90 @@ export async function upsertNote(note: Note): Promise<Note> {
   return rowToNote(data)
 }
 
+export type SaveResult =
+  | { status: 'saved'; updatedAt: number }
+  | { status: 'conflict'; latest: Note }
+  | { status: 'missing' }
+  | { status: 'deleted' }
+
+/**
+ * 본문 저장 — '내가 마지막으로 본 서버 버전(baseUpdatedAt)'일 때만 쓴다.
+ *
+ * 예전 저장은 (1) updated_at 을 읽어 비교하고 (2) 행 전체를 upsert 하는 두 단계라
+ * 그 사이에 끼어든 다른 저장을 덮어쓸 수 있었고, 행 전체를 쓰다 보니 다른 곳에서
+ * 바꾼 제목·폴더까지 옛 값으로 되돌렸다(이름을 바꿔도 다음 자동저장이 되돌림).
+ * 이제는 본문에서 나오는 열만, 조건부 UPDATE 한 번으로 쓴다. 0행이 바뀌면 그 사이
+ * 누가 고친 것 → 'conflict' 와 최신본을 돌려준다(합치는 건 호출자 몫).
+ *
+ * baseUpdatedAt=null 은 아직 서버에 없는 새 노트 — 행 전체를 insert 한다.
+ */
+export async function saveNoteContent(note: Note, baseUpdatedAt: number | null): Promise<SaveResult> {
+  if (deletedNoteIds.has(note.id)) return { status: 'deleted' }
+  const supabase = createClient()
+  const userId = await getUserId()
+  // 기기 시계가 뒤처져 있어도 값이 반드시 바뀌게 (조건부 저장의 기준이 되므로)
+  const now = Math.max(Date.now(), (baseUpdatedAt ?? 0) + 1)
+
+  if (baseUpdatedAt == null) {
+    const row = noteToRow({ ...note, updatedAt: now }, userId)
+    const { error } = await supabase.from('notes').insert(row)
+    if (!error) return { status: 'saved', updatedAt: now }
+    if ((error as { code?: string }).code !== '23505') throw error
+    // 이미 있다(다른 탭·기기가 먼저 만듦) → 충돌로 처리
+    const latest = await getNoteById(note.id)
+    return latest ? { status: 'conflict', latest } : { status: 'missing' }
+  }
+
+  const { data, error } = await supabase
+    .from('notes')
+    .update({
+      content:    note.content,
+      tags:       note.tags,
+      mentions:   note.mentions,
+      backlinks:  note.backlinks,
+      supersedes: note.supersedes ?? [],
+      updated_at: now,
+    })
+    .eq('id', note.id)
+    .eq('user_id', userId)
+    .eq('updated_at', baseUpdatedAt)
+    .select('updated_at')
+  if (error) throw error
+  if (data && data.length > 0) return { status: 'saved', updatedAt: data[0].updated_at as number }
+
+  const latest = await getNoteById(note.id)
+  return latest ? { status: 'conflict', latest } : { status: 'missing' }
+}
+
+/**
+ * 다른 노트의 본문을 '최신본 위에서' 고친다 (예: 데일리에서 주간 할 일 체크).
+ * 예전엔 화면에 들고 있던 옛 사본을 통째로 저장해, 그 사이 다른 곳에서 고친
+ * 내용을 덮어썼다. transform 이 null 을 돌려주면 아무것도 하지 않는다.
+ */
+export async function updateNoteContentSafely(
+  id: string,
+  transform: (content: string) => string | null,
+): Promise<Note | undefined> {
+  for (let attempt = 0; attempt < 4; attempt++) {
+    const latest = await getNoteById(id)
+    if (!latest) return undefined
+    const next = transform(latest.content)
+    if (next == null || next === latest.content) return latest
+    const updated: Note = {
+      ...latest,
+      content: next,
+      tags: extractTags(next),
+      mentions: extractMentions(next),
+      backlinks: extractBacklinks(next),
+      supersedes: extractSupersedes(next),
+    }
+    const r = await saveNoteContent(updated, latest.updatedAt)
+    if (r.status === 'saved') return { ...updated, updatedAt: r.updatedAt }
+    if (r.status !== 'conflict') return undefined
+  }
+  throw new Error('다른 곳에서 계속 고치고 있어 저장하지 못했습니다')
+}
+
 /**
  * 노트 이름 변경 + 다른 노트에 있는 [[옛 제목]]까지 새 제목으로 따라가기.
  *
@@ -172,10 +288,10 @@ export async function renameNote(
   let updatedLinks = 0
 
   if (normalizeKey(oldTitle).trim() !== title) {
-    const { data: all } = await supabase
-      .from('notes').select('id,content').eq('user_id', userId).limit(5000)
+    const all = await fetchAllRows((from, to) => supabase
+      .from('notes').select('id,content').eq('user_id', userId).order('id').range(from, to))
 
-    for (const row of all ?? []) {
+    for (const row of all) {
       const content = (row.content as string) ?? ''
       if (!content.includes('[[')) continue
       const next = renameWikiLinks(content, oldTitle, title)
@@ -237,10 +353,12 @@ function rowToRevision(row: Record<string, unknown>): NoteRevision {
 /** 노트의 이전 버전 목록 (최신순). DB 트리거(capture_note_revision)가 UPDATE 때마다 자동 기록. */
 export async function getNoteRevisions(noteId: string, limit = 30): Promise<NoteRevision[]> {
   const supabase = createClient()
+  const userId = await getUserId()
   const { data, error } = await supabase
     .from('note_revisions')
     .select('*')
     .eq('note_id', noteId)
+    .eq('user_id', userId)
     .order('revised_at', { ascending: false })
     .limit(limit)
   if (error) { console.error('[getNoteRevisions]', error); return [] }
@@ -250,10 +368,12 @@ export async function getNoteRevisions(noteId: string, limit = 30): Promise<Note
 /** row 전체를 안 받아오는 가벼운 조회 — 저장 전 충돌(다른 기기가 그새 더 최신으로 고쳤는지) 검사용 */
 export async function getNoteUpdatedAt(id: string): Promise<number | null> {
   const supabase = createClient()
+  const userId = await getUserId()
   const { data, error } = await supabase
     .from('notes')
     .select('updated_at')
     .eq('id', id)
+    .eq('user_id', userId)
     .maybeSingle()
   if (error || !data) return null
   return data.updated_at as number
@@ -264,7 +384,14 @@ export async function deleteNote(id: string): Promise<void> {
   // 삭제 표식을 먼저 세운다 — 삭제 요청이 오가는 동안 돌아버린 자동저장이
   // 노트를 되살리는 걸 막기 위해서.
   deletedNoteIds.add(id)
-  await supabase.from('notes').delete().eq('id', id)
+  const userId = await getUserId()
+  const { error } = await supabase.from('notes').delete().eq('id', id).eq('user_id', userId)
+  if (error) {
+    // 삭제가 실패했으면(오프라인 등) 표식을 거둔다 — 남겨두면 화면엔 노트가
+    // 그대로 있는데 이후 저장이 전부 '성공'처럼 보이며 아무것도 안 쓴다.
+    deletedNoteIds.delete(id)
+    throw error
+  }
 }
 
 /** 특정 태그를 포함하는 노트 목록 (tags 배열 contains 쿼리) */
@@ -296,6 +423,15 @@ export async function getNotesByMention(mention: string): Promise<Note[]> {
 // ── 위키링크 / 백링크 (제텔카스텐) ─────────────────────────────────────────
 
 /** 앞머리 이모지/기호를 떼어낸 비교용 제목 (NotePlan은 "🎲 조선 검시관"을 [[조선 검시관]]으로 링크) */
+/** ilike 패턴에서 %, _ 를 글자 그대로 */
+function escapeLike(s: string): string {
+  return s.replace(/[\\%_]/g, m => '\\' + m)
+}
+/** .or() 필터 문자열에 넣을 값 — 필터 구분자(, ( ))와 따옴표 제거 */
+function escapeFilter(s: string): string {
+  return escapeLike(s).replace(/[,()"]/g, ' ')
+}
+
 function bareTitle(s: string): string {
   return s.replace(/^[^\p{L}\p{N}]+/u, '').trim().toLowerCase()
 }
@@ -311,12 +447,19 @@ export async function getNoteByTitle(title: string): Promise<Note | undefined> {
   const want = normalizeKey(title).trim()
   const wantLower = want.toLowerCase()
 
-  const { data } = await supabase
+  // 제목 일치는 서버에서 먼저 찾는다 (대부분 여기서 끝난다)
+  const { data: hit } = await supabase
+    .from('notes').select('*').eq('user_id', userId).ilike('title', escapeLike(want))
+    .order('updated_at', { ascending: false }).limit(1)
+  if (hit && hit.length > 0) return rowToNote(hit[0])
+
+  const rows = (await fetchAllRows((from, to) => supabase
     .from('notes')
     .select('*')
     .eq('user_id', userId)
     .order('updated_at', { ascending: false })
-  const rows = (data ?? []).map(rowToNote)
+    .order('id', { ascending: true })
+    .range(from, to))).map(rowToNote)
 
   const exact = rows.find(n => normalizeKey(n.title).trim().toLowerCase() === wantLower)
   if (exact) return exact
@@ -372,12 +515,12 @@ export interface LinkTarget {
 export async function getLinkTargets(): Promise<LinkTarget[]> {
   const supabase = createClient()
   const userId = await getUserId()
-  const { data } = await supabase
+  const rows = await fetchAllRows((from, to) => supabase
     .from('notes')
     .select('id,title,type,folder,updated_at,backlinks,supersedes')
     .eq('user_id', userId)
-    .limit(2000)
-  const rows = data ?? []
+    .order('id')
+    .range(from, to))
 
   // 전체 노트의 backlinks를 모아 "제목 → 피참조 횟수" 집계
   const inboundBy = new Map<string, number>()
@@ -430,8 +573,8 @@ export interface FacetItem {
 export async function getTagMentionFacets(): Promise<{ tags: FacetItem[]; mentions: FacetItem[] }> {
   const supabase = createClient()
   const userId = await getUserId()
-  const { data } = await supabase
-    .from('notes').select('tags,mentions').eq('user_id', userId).limit(5000)
+  const data = await fetchAllRows((from, to) => supabase
+    .from('notes').select('tags,mentions').eq('user_id', userId).order('id').range(from, to))
 
   interface Acc { uses: number; variants: Map<string, number> }
 
@@ -496,7 +639,8 @@ export async function searchNotes(query: string): Promise<Note[]> {
     .from('notes')
     .select('*')
     .eq('user_id', userId)
-    .or(`title.ilike.%${query}%,content.ilike.%${query}%`)
+    // , ( ) 는 PostgREST 필터 문법이라 그대로 넣으면 조건을 바꿔 버린다
+    .or(`title.ilike.%${escapeFilter(query)}%,content.ilike.%${escapeFilter(query)}%`)
     .order('updated_at', { ascending: false })
     .limit(20)
   return (data ?? []).map(rowToNote)
@@ -529,13 +673,15 @@ export async function bulkImportNotes(
   const userId = await getUserId()
 
   // 1) 기존 filePath 목록을 한 번에 조회
-  const { data: existing } = await supabase
+  const existing = await fetchAllRows((from, to) => supabase
     .from('notes')
     .select('id, file_path')
     .eq('user_id', userId)
+    .order('id')
+    .range(from, to))
 
   const existingMap = new Map<string, string>()  // filePath → id
-  for (const row of existing ?? []) {
+  for (const row of existing) {
     existingMap.set(row.file_path as string, row.id as string)
   }
 
@@ -543,8 +689,15 @@ export async function bulkImportNotes(
   const toInsert: Note[] = []
   const toUpdate: Note[] = []
   let skipped = 0
+  let firstError: string | undefined
 
-  for (const note of notes) {
+  // 한 번에 고른 파일 중 같은 경로(예: 같은 이름의 .txt 와 .md)는 하나만 — 뒤엣것 우선
+  const byPath = new Map<string, Note>()
+  for (const note of notes) byPath.set(note.filePath, note)
+  const dupInBatch = notes.length - byPath.size
+  skipped += dupInBatch
+
+  for (const note of byPath.values()) {
     const existingId = existingMap.get(note.filePath)
     if (existingId) {
       if (onConflict === 'overwrite') {
@@ -568,11 +721,15 @@ export async function bulkImportNotes(
     const chunk = toInsert.slice(i, i + CHUNK)
     const rows = chunk.map(n => noteToRow(n, userId))
     const { error } = await supabase.from('notes').insert(rows)
-    if (error) {
-      console.error('[bulkImport insert]', error)
-      errors += chunk.length
-    } else {
+    if (!error) {
       imported += chunk.length
+    } else {
+      // 한 행이 문제면 50개 묶음 전체가 실패한다 — 한 개씩 다시 넣어 나머지는 살린다
+      console.error('[bulkImport insert]', error)
+      for (const row of rows) {
+        const { error: e1 } = await supabase.from('notes').insert(row)
+        if (e1) { errors++; firstError ??= `${row.file_path}: ${e1.message}` } else imported++
+      }
     }
     done += chunk.length
     onProgress?.(done + skipped, notes.length)
@@ -588,6 +745,7 @@ export async function bulkImportNotes(
     if (error) {
       console.error('[bulkImport upsert]', error)
       errors += chunk.length
+      firstError ??= error.message
     } else {
       imported += chunk.length
     }
@@ -595,7 +753,7 @@ export async function bulkImportNotes(
     onProgress?.(done + skipped, notes.length)
   }
 
-  return { imported, skipped, errors }
+  return { imported, skipped, errors, firstError }
 }
 
 // ── Daily / Weekly Note 자동 생성 ────────────────────────────────────────────
@@ -625,7 +783,7 @@ export async function getOrCreateDailyNote(dateStr: string): Promise<Note> {
   }
 
   // 먼저 기존 노트 조회 — 있으면 바로 반환 (중복 생성 방지)
-  const existing = await getNoteByDate(dateStr)
+  const existing = await getNoteByDate(dateStr, 'daily')
   if (existing) return existing
 
   // 없으면 insert (중복 키 에러는 무시 — Strict Mode 이중 실행 대비)
@@ -636,7 +794,7 @@ export async function getOrCreateDailyNote(dateStr: string): Promise<Note> {
   }
 
   // 항상 DB에서 최신 fetch
-  const note = await getNoteByDate(dateStr)
+  const note = await getNoteByDate(dateStr, 'daily')
   if (!note) throw new Error(`노트 생성 실패: ${dateStr}`)
   return note
 }
@@ -679,7 +837,7 @@ export async function getOrCreateWeeklyNote(weekKey: string): Promise<Note> {
     updated_at: Date.now(),
   }
 
-  const existing = await getNoteByDate(weekKey)
+  const existing = await getNoteByDate(weekKey, 'weekly')
   if (existing) return existing
 
   const { error } = await supabase.from('notes').insert(row)
@@ -687,7 +845,7 @@ export async function getOrCreateWeeklyNote(weekKey: string): Promise<Note> {
     console.error('[getOrCreateWeeklyNote] insert error', error)
   }
 
-  const note = await getNoteByDate(weekKey)
+  const note = await getNoteByDate(weekKey, 'weekly')
   if (!note) throw new Error(`주간 노트 생성 실패: ${weekKey}`)
   return note
 }
@@ -721,7 +879,7 @@ export async function getOrCreateMonthlyNote(monthKey: string): Promise<Note> {
     updated_at: Date.now(),
   }
 
-  const existing = await getNoteByDate(monthKey)
+  const existing = await getNoteByDate(monthKey, 'monthly')
   if (existing) return existing
 
   const { error } = await supabase.from('notes').insert(row)
@@ -729,7 +887,7 @@ export async function getOrCreateMonthlyNote(monthKey: string): Promise<Note> {
     console.error('[getOrCreateMonthlyNote] insert error', error)
   }
 
-  const note = await getNoteByDate(monthKey)
+  const note = await getNoteByDate(monthKey, 'monthly')
   if (!note) throw new Error(`월간 노트 생성 실패: ${monthKey}`)
   return note
 }
@@ -887,56 +1045,114 @@ export async function ensureFolders(paths: string[]): Promise<void> {
   }
 }
 
+/** 폴더에 들어 있는 모든 노트의 (id, folder, file_path) */
+async function notesInFolders(userId: string) {
+  const supabase = createClient()
+  return fetchAllRows((from, to) => supabase
+    .from('notes').select('id, folder, file_path').eq('user_id', userId)
+    .not('folder', 'is', null).order('id').range(from, to))
+}
+const inFolder = (folder: string | null, path: string) =>
+  !!folder && (folder === path || folder.startsWith(path + '/'))
+
+/**
+ * 폴더 삭제 — 하위 폴더까지 지우고, 그 안의 노트는 지우지 않고 '미분류'로 옮긴다.
+ *
+ * 노트는 folder(경로 문자열)로 폴더에 붙어 있다. 예전엔 폴더 행만 지워서, 안의
+ * 노트가 트리(해당 폴더 없음)에도 미분류(folder 가 null 이 아님)에도 안 보이는
+ * 상태로 사라졌다. 삭제 확인창의 '노트는 남습니다'가 사실이 되게 한다.
+ */
 export async function deleteFolder(id: string): Promise<void> {
   const supabase = createClient()
   const userId = await getUserId()
 
-  // 하위 폴더 재귀 삭제
-  const { data: subs } = await supabase
-    .from('folders')
-    .select('id')
-    .eq('user_id', userId)
-    .eq('parent_id', id)
-  for (const sub of subs ?? []) await deleteFolder(sub.id)
+  const { data: folder, error: findErr } = await supabase
+    .from('folders').select('id, path').eq('id', id).eq('user_id', userId).maybeSingle()
+  if (findErr) throw findErr
+  if (!folder) return
+  const path = folder.path as string
 
-  await supabase.from('folders').delete().eq('id', id)
+  // 1) 노트를 먼저 미분류로 (실패하면 폴더는 그대로 둔다 — 노트가 고아가 되지 않게)
+  const notes = (await notesInFolders(userId)).filter(n => inFolder(n.folder as string, path))
+  const now = Date.now()
+  for (const n of notes) {
+    const base = String(n.file_path ?? '').split('/').pop() || `${n.id}.md`
+    const { error } = await supabase.from('notes')
+      .update({ folder: null, file_path: `Notes/${base}`, updated_at: now })
+      .eq('id', n.id as string).eq('user_id', userId)
+    if (error) throw error
+  }
+
+  // 2) 자기 자신 + 하위 폴더 삭제 (깊은 것부터)
+  const { data: all, error: listErr } = await supabase
+    .from('folders').select('id, path').eq('user_id', userId)
+  if (listErr) throw listErr
+  const doomed = (all ?? [])
+    .filter(f => f.path === path || String(f.path).startsWith(path + '/'))
+    .sort((x, y) => String(y.path).length - String(x.path).length)
+  for (const f of doomed) {
+    const { error } = await supabase.from('folders').delete().eq('id', f.id as string).eq('user_id', userId)
+    if (error) throw error
+  }
 }
 
+/**
+ * 폴더 이름 변경 — 하위 폴더 경로와 그 안 노트의 folder/file_path 까지 함께.
+ *
+ * 예전엔 노트를 안 고쳐서 이름을 바꾸면 안의 노트가 전부 사라져 보였고, 같은
+ * 이름의 형제 폴더가 있으면 하위 폴더만 바뀐 채 중간에 실패해 트리가 반쯤
+ * 바뀐 상태로 남았다. 이제 충돌은 먼저 확인하고, 실패는 숨기지 않는다.
+ */
 export async function renameFolder(id: string, newName: string): Promise<Folder | undefined> {
   const supabase = createClient()
   const userId = await getUserId()
+  const name = newName.trim().replace(/\//g, '-')
+  if (!name) throw new Error('폴더 이름이 비어 있습니다')
 
-  const { data: folder } = await supabase
-    .from('folders')
-    .select('*')
-    .eq('id', id)
-    .maybeSingle()
+  const { data: folder, error: findErr } = await supabase
+    .from('folders').select('*').eq('id', id).eq('user_id', userId).maybeSingle()
+  if (findErr) throw findErr
   if (!folder) return undefined
 
   const oldPath = folder.path as string
   const newPath = oldPath.includes('/')
-    ? oldPath.substring(0, oldPath.lastIndexOf('/') + 1) + newName
-    : newName
+    ? oldPath.substring(0, oldPath.lastIndexOf('/') + 1) + name
+    : name
+  if (newPath === oldPath) return rowToFolder(folder)
 
-  // 하위 폴더 경로 일괄 업데이트
-  const { data: allFolders } = await supabase
-    .from('folders')
-    .select('*')
-    .eq('user_id', userId)
+  const { data: clash } = await supabase
+    .from('folders').select('id').eq('user_id', userId).eq('path', newPath).maybeSingle()
+  if (clash) throw new Error(`같은 위치에 '${name}' 폴더가 이미 있습니다`)
+
+  // 자기 자신 먼저 → 하위 폴더 (얕은 것부터)
+  const { data, error } = await supabase
+    .from('folders').update({ name, path: newPath }).eq('id', id).eq('user_id', userId).select().single()
+  if (error) throw error
+
+  const { data: allFolders, error: listErr } = await supabase
+    .from('folders').select('id, path').eq('user_id', userId)
+  if (listErr) throw listErr
   for (const f of allFolders ?? []) {
-    if ((f.path as string).startsWith(oldPath + '/')) {
-      const updatedPath = newPath + (f.path as string).slice(oldPath.length)
-      await supabase.from('folders').update({ path: updatedPath }).eq('id', f.id)
-    }
+    const p = f.path as string
+    if (!p.startsWith(oldPath + '/')) continue
+    const { error: e } = await supabase.from('folders')
+      .update({ path: newPath + p.slice(oldPath.length) }).eq('id', f.id as string).eq('user_id', userId)
+    if (e) throw e
   }
 
-  const { data, error } = await supabase
-    .from('folders')
-    .update({ name: newName, path: newPath })
-    .eq('id', id)
-    .select()
-    .single()
-  if (error) throw error
+  // 노트 따라가기
+  const notes = (await notesInFolders(userId)).filter(n => inFolder(n.folder as string, oldPath))
+  const now = Date.now()
+  for (const n of notes) {
+    const nf = n.folder as string
+    const newFolder = newPath + nf.slice(oldPath.length)
+    const base = String(n.file_path ?? '').split('/').pop() || `${n.id}.md`
+    const { error: e } = await supabase.from('notes')
+      .update({ folder: newFolder, file_path: `Notes/${newFolder}/${base}`, updated_at: now })
+      .eq('id', n.id as string).eq('user_id', userId)
+    if (e) throw e
+  }
+
   return rowToFolder(data)
 }
 

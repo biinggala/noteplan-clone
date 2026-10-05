@@ -2,7 +2,7 @@
 import { useCallback, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { v4 as uuidv4 } from 'uuid'
-import { upsertNote, getNoteByTitle } from '@/lib/db/noteRepository'
+import { updateNoteContentSafely, upsertNote, getNoteByTitle } from '@/lib/db/noteRepository'
 import { extractTags, extractMentions, extractBacklinks, extractSupersedes } from '@/lib/parser/noteParser'
 import { suggestAtomTitle } from '@/components/editor/extensions/selectionMenu'
 import type { Note } from '@/types/note'
@@ -58,7 +58,17 @@ export function usePromoteToAtom(sourceTitle?: string) {
       // (원자가 두 벌 생기면 나중에 어느 게 진짜인지 알 수 없어진다)
       const existing = await getNoteByTitle(clean)
       if (existing && !dupe) { setDupe(existing); setBusy(false); return }
-      if (existing) { close(existing.title); return }
+      if (existing) {
+        // 고른 글은 [[링크]]로 바뀌어 원래 자리에서 사라진다 — 그 글을 기존 노트
+        // 끝에 붙여야 잃어버리지 않는다 (예전엔 링크만 걸고 글은 어디에도 안 남았다)
+        const body = pending.body.trim()
+        if (body) {
+          const from = sourceTitle ? `\n\n---\n출처: [[${sourceTitle}]]` : ''
+          await updateNoteContentSafely(existing.id, c => `${c.replace(/\s+$/, '')}\n\n${body}${from}\n`)
+        }
+        close(existing.title)
+        return
+      }
 
       const body = pending.body.trim()
       const content = sourceTitle
@@ -74,7 +84,7 @@ export function usePromoteToAtom(sourceTitle?: string) {
         // 원자는 기본 Resources — 마감 있는 일(Projects)도, 지속되는 역할(Areas)도
         // 아닌 "나중에 참조할 지식"이라서. 다른 데가 맞으면 사이드바에서 옮기면 된다.
         folder: PROMOTE_FOLDER,
-        filePath: `${PROMOTE_FOLDER}/${safe}.md`,
+        filePath: `Notes/${PROMOTE_FOLDER}/${safe}.md`,
         tags: extractTags(content),
         mentions: extractMentions(content),
         backlinks: extractBacklinks(content), supersedes: extractSupersedes(content),
@@ -121,7 +131,7 @@ export function usePromoteToAtom(sourceTitle?: string) {
 
         {dupe && (
           <div className="mt-2 rounded-md bg-amber-500/15 border border-amber-500/30 px-2.5 py-2 text-[11px] text-amber-300">
-            같은 제목의 노트가 이미 있습니다. 한 번 더 누르면 <b>새로 만들지 않고</b> 그 노트로 링크만 겁니다.
+            같은 제목의 노트가 이미 있습니다. 한 번 더 누르면 <b>새로 만들지 않고</b>, 고른 글을 그 노트 끝에 붙인 뒤 링크를 겁니다.
           </div>
         )}
 

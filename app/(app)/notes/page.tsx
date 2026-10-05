@@ -2,10 +2,9 @@
 import { Suspense, useEffect, useRef, useState, useCallback } from 'react'
 import { useSearchParams, useRouter } from 'next/navigation'
 import { format } from 'date-fns'
-import { useNoteStore } from '@/lib/stores/noteStore'
 import { getNoteById, upsertNote } from '@/lib/db/noteRepository'
-import { extractTags, extractMentions, extractBacklinks, extractSupersedes } from '@/lib/parser/noteParser'
-import { useNoteRealtime } from '@/lib/hooks/useNoteRealtime'
+import { useNoteDocument } from '@/lib/hooks/useNoteDocument'
+import SaveStatusBadge, { NoticeBar } from '@/components/editor/SaveStatusBadge'
 import { usePromoteToAtom } from '@/lib/hooks/usePromoteToAtom'
 import { useWikiLink } from '@/lib/hooks/useWikiLink'
 import type { NoteRevision } from '@/lib/db/noteRepository'
@@ -31,134 +30,51 @@ function NoteInner() {
   const searchParams = useSearchParams()
   const router = useRouter()
   const noteId = searchParams.get('id') ?? 'new'
-  const { setActiveNote, updateNote } = useNoteStore()
-  const [note, setNote] = useState<Note | null>(null)
   const [showHistory, setShowHistory] = useState(false)
-  const noteRef = useRef<Note | null>(null)
-  noteRef.current = note
-  // 이 노트가 사라졌다고 확인된 경우 — 언마운트 저장으로 되살리지 않기 위한 표식
-  const deletedRef = useRef(false)
   const { linkTargets, facets, openWikiLink, openFacet } = useWikiLink()
+
+  // /notes?id=new — 새 노트를 만들어 그 id 로 주소를 바꾼다 (뒤로 가기·새로 고침에도 같은 노트)
+  const creatingRef = useRef(false)
+  useEffect(() => {
+    if (noteId !== 'new') { creatingRef.current = false; return }
+    if (creatingRef.current) return   // 개발 모드 이중 실행·빠른 재렌더에 두 개 만들지 않게
+    creatingRef.current = true
+    const fresh: Note = {
+      id: crypto.randomUUID(),
+      type: 'project',
+      title: 'Untitled Note',
+      content: '# Untitled Note\n\n',
+      filePath: 'Notes/Untitled.md',
+      tags: [], mentions: [], backlinks: [], supersedes: [],
+      createdAt: Date.now(), updatedAt: Date.now(),
+    }
+    upsertNote(fresh)
+      .then(saved => router.replace(`/notes?id=${saved.id}`))
+      .catch(err => console.error('[new note]', err))
+  }, [noteId, router])
+
+  const loadNote = useCallback(async (id: string) => {
+    const n = await getNoteById(id)
+    return n ? { note: n } : null
+  }, [])
+  const doc = useNoteDocument(noteId === 'new' ? null : noteId, loadNote)
+  const note = doc.note
   const { promote, dialog: promoteDialog } = usePromoteToAtom(note?.title)
 
-  // ── 실시간 동기화: 외부(MCP 등)가 이 노트를 고치면 즉시 반영 + 작성자 표시 ──
-  const handleRemoteContent = useCallback((content: string) => {
-    setNote(prev => {
-      if (!prev) return prev
-      const tags      = extractTags(content)
-      const mentions  = extractMentions(content)
-      const backlinks = extractBacklinks(content)
-      const supersedes = extractSupersedes(content)
-      const updated   = { ...prev, content, tags, mentions, backlinks, supersedes }
-      setActiveNote(updated)
-      updateNote(prev.id, { content, tags, mentions, backlinks, supersedes })
-      return updated
-    })
-  }, [setActiveNote, updateNote])
-
-  const { typingAuthor, markSelfWrite, save } = useNoteRealtime(note?.id, handleRemoteContent)
-
+  // 노트가 없다(삭제됐거나 링크가 죽었다) → 오늘 데일리로
   useEffect(() => {
-    if (!noteId || noteId === 'new') {
-      const newNote: Note = {
-        id: crypto.randomUUID(),
-        type: 'project',
-        title: 'Untitled Note',
-        content: '# Untitled Note\n\n',
-        filePath: 'Notes/Untitled.md',
-        tags: [],
-        mentions: [],
-        backlinks: [],
-        supersedes: [],
-        createdAt: Date.now(),
-        updatedAt: Date.now(),
-      }
-      setNote(newNote)
-      setActiveNote(newNote)
-      upsertNote(newNote).then(s => markSelfWrite(s.content, s.updatedAt)).catch(console.error)
-      return
-    }
-    deletedRef.current = false
-    getNoteById(noteId).then(n => {
-      if (n) {
-        setNote(n)
-        setActiveNote(n)
-        markSelfWrite(n.content, n.updatedAt)  // baseline
-        return
-      }
-      // 노트가 없다(삭제됐거나 링크가 죽었다). 예전엔 여기서 아무것도 안 해서
-      // 이전 노트가 화면에 그대로 남았고, 계속 편집되고 자동저장으로 되살아날
-      // 수도 있었다. 상태를 비우고 오늘 데일리로 보낸다.
-      deletedRef.current = true
-      setNote(null)
-      setActiveNote(null)
-      router.replace(`/daily?date=${format(new Date(), 'yyyy-MM-dd')}`)
-    })
-  }, [noteId])
-
-  const handleChange = useCallback((content: string) => {
-    if (!note) return
-    const tags = extractTags(content)
-    const mentions = extractMentions(content)
-    const backlinks = extractBacklinks(content)
-    const supersedes = extractSupersedes(content)
-    const updated = { ...note, content, tags, mentions, backlinks, supersedes }
-    setNote(updated)
-    setActiveNote(updated)
-    updateNote(note.id, { content, tags, mentions, backlinks, supersedes })
-  }, [note, setActiveNote, updateNote])
-
-  const handleChangeRef = useRef(handleChange)
-  handleChangeRef.current = handleChange
+    if (doc.notFound) router.replace(`/daily?date=${format(new Date(), 'yyyy-MM-dd')}`)
+  }, [doc.notFound, router])
 
   const handleRestore = useCallback((revision: NoteRevision) => {
-    handleChangeRef.current(revision.content)
+    doc.setContent(revision.content)
     setShowHistory(false)
-  }, [])
-
-  const saveNote = useCallback(async (n: Note) => {
-    const saved = await save(n)
-    // 저장/충돌해결 결과의 updatedAt을 로컬에도 반영 — 안 그러면 다음 저장이
-    // 매번 옛 baseline과 비교돼 매번 "충돌"로 오판한다. 그 사이 다른 노트로
-    // 넘어갔다면(noteRef가 이미 다른 노트) 여기 적용하지 않음.
-    if (noteRef.current?.id === n.id) {
-      setNote(prev => {
-        if (!prev || prev.id !== n.id) return prev
-        // 저장이 서버를 왕복하는 동안 사용자가 계속 타이핑했다면 prev.content는
-        // 이미 n.content(저장 시점 스냅샷)보다 최신이다. saved.content로 되돌리면
-        // NoteEditor가 전체 교체 diff를 적용해 커서가 맨 위로 튕긴다 —
-        // updatedAt(충돌 판정 baseline)만 갱신하고 content는 건드리지 않는다.
-        if (prev.content !== n.content) {
-          return { ...prev, updatedAt: saved.updatedAt }
-        }
-        return { ...prev, content: saved.content, tags: saved.tags, mentions: saved.mentions, backlinks: saved.backlinks, supersedes: saved.supersedes, updatedAt: saved.updatedAt }
-      })
-    }
-  }, [save])
-
-  // 언마운트 시 즉시 저장.
-  // 단 삭제된 노트라면 저장하면 안 된다 — upsert라 그대로 되살아난다.
-  useEffect(() => {
-    return () => {
-      if (noteRef.current && !deletedRef.current) {
-        saveNote(noteRef.current).catch(console.error)
-      }
-    }
-  }, [saveNote]) // eslint-disable-line react-hooks/exhaustive-deps
-
-  // Auto-save every 2s
-  useEffect(() => {
-    if (!note) return
-    const timer = setTimeout(() => {
-      saveNote(note).catch(console.error)
-    }, 2000)
-    return () => clearTimeout(timer)
-  }, [note?.content, saveNote])
+  }, [doc])
 
   if (!note) {
     return (
       <div className="flex h-full items-center justify-center text-[var(--text-muted)]">
-        Loading...
+        {doc.error ?? 'Loading...'}
       </div>
     )
   }
@@ -168,12 +84,7 @@ function NoteInner() {
       <div data-tauri-drag-region className="electron-drag px-5 md:px-12 py-3 border-b border-[var(--border)] flex-shrink-0 flex items-center justify-between">
         <NoteBreadcrumb title={note.title} folder={note.folder} />
         <div className="flex items-center gap-2">
-          {typingAuthor && (
-            <span className="text-xs text-[var(--accent)] flex items-center gap-1">
-              <span className="w-1.5 h-1.5 rounded-full bg-[var(--accent)] animate-pulse" />
-              {typingAuthor} 작성 중…
-            </span>
-          )}
+          <SaveStatusBadge status={doc.status} error={doc.error} typingAuthor={doc.typingAuthor} />
           <button
             onClick={() => setShowHistory(true)}
             title="이전 버전 보기"
@@ -183,6 +94,7 @@ function NoteInner() {
           </button>
         </div>
       </div>
+      {doc.notice && <NoticeBar text={doc.notice} onClose={doc.dismissNotice} />}
       <SupersededBanner title={note.title} onOpen={openWikiLink} />
       <div className="flex-1 overflow-hidden">
         <NoteEditor
@@ -191,7 +103,8 @@ function NoteInner() {
           // (8/12 페이지에 8/14 본문이 떠 있던 문제).
           key={note.id}
           content={note.content}
-          onChange={handleChange}
+          onChange={doc.setContent}
+          onSave={doc.saveNow}
           onOpenWikiLink={openWikiLink}
           onOpenFacet={openFacet}
           linkTargets={linkTargets}
