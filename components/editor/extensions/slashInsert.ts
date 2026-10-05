@@ -1,6 +1,7 @@
 import type { CompletionContext, CompletionResult, CompletionSource } from '@codemirror/autocomplete'
 import type { EditorView } from '@codemirror/view'
 import { format } from 'date-fns'
+import { focusTableCell } from './mdTable'
 
 /**
  * `/` 를 치면 마크다운 요소를 골라 넣는 삽입 메뉴 (Notion / NotePlan 방식).
@@ -16,6 +17,8 @@ interface SlashItem {
   insert: string | (() => string)
   cursor?: number
   block?: boolean
+  /** 표: 삽입 후 첫 헤더 셀에 포커스 (커서는 표 아래 줄에 둔다) */
+  table?: boolean
 }
 
 const TABLE_SKELETON =
@@ -42,7 +45,9 @@ const ITEMS: SlashItem[] = [
   // ── 블록 ──
   {
     label: '표', keywords: 'table 표 테이블', detail: '| … |',
-    insert: TABLE_SKELETON, cursor: 2, block: true,   // 첫 셀 '제목'의 시작 위치
+    // 커서를 표 안(위젯이 가린 범위)에 두면 타이핑이 문서 맨 앞으로 튄다.
+    // 커서는 표 아래 줄에 두고, 대신 첫 헤더 셀에 포커스를 넣는다.
+    insert: TABLE_SKELETON, block: true, table: true,
   },
   {
     label: '코드 블록', keywords: 'code 코드 블록', detail: '```',
@@ -101,6 +106,22 @@ export function slashInsertSource(): CompletionSource {
         apply: (view: EditorView, _c: unknown, from: number, to: number) => {
           const raw = typeof it.insert === 'function' ? it.insert() : it.insert
           const prefix = it.block && hasTextBefore ? '\n' : ''
+          if (it.table) {
+            // 표 뒤에는 항상 편집 가능한 줄이 있어야 한다 (문서 끝의 표 뒤로
+            // 커서를 둘 데가 없으면 타이핑이 엉뚱한 곳에 들어간다)
+            const hasLineAfter = view.state.doc.sliceString(to, to + 1) === '\n'
+            const text = prefix + raw + (hasLineAfter ? '' : '\n')
+            const tableFrom = from + prefix.length
+            view.dispatch({
+              changes: { from, to, insert: text },
+              selection: { anchor: tableFrom + raw.length + 1 },
+              scrollIntoView: true,
+              userEvent: 'input.complete',
+            })
+            // 첫 헤더 셀의 '제목'을 골라 둔다 — 바로 치면 덮어쓴다
+            requestAnimationFrame(() => { focusTableCell(view, tableFrom, -1, 0, 'all') })
+            return
+          }
           const text = prefix + raw
           view.dispatch({
             changes: { from, to, insert: text },
