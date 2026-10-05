@@ -1,7 +1,7 @@
 'use client'
 import { useState, useRef, useEffect } from 'react'
 import { createPortal } from 'react-dom'
-import { THEMES } from '@/lib/themes/themes'
+import { THEMES, SYSTEM_THEME_ID } from '@/lib/themes/themes'
 import { useThemeStore } from '@/lib/stores/themeStore'
 
 export default function ThemePicker() {
@@ -30,7 +30,10 @@ export default function ThemePicker() {
     return () => document.removeEventListener('mousedown', onDown)
   }, [open])
 
-  const current = THEMES.find(t => t.id === themeId) ?? THEMES[0]
+  const isSystem = themeId === SYSTEM_THEME_ID
+  const current = isSystem
+    ? { id: SYSTEM_THEME_ID, name: 'System', swatch: 'linear-gradient(135deg, #f5f5f4 50%, #1a1a1a 50%)', dark: false }
+    : (THEMES.find(t => t.id === themeId) ?? THEMES[0])
 
   return (
     <>
@@ -45,7 +48,7 @@ export default function ThemePicker() {
         {/* Color swatch of current theme */}
         <span
           className="w-3 h-3 rounded-full border border-white/20 flex-shrink-0"
-          style={{ backgroundColor: current.swatch }}
+          style={{ background: current.swatch }}
         />
         <span>{current.name}</span>
         <svg className="w-3 h-3 opacity-50" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -68,6 +71,25 @@ export default function ThemePicker() {
           <div className="px-3 pb-1 text-[10px] font-semibold text-[var(--text-muted)] uppercase tracking-wider">
             테마
           </div>
+          <button
+            onClick={() => { setThemeId(SYSTEM_THEME_ID); setOpen(false) }}
+            className="flex items-center gap-2.5 w-full px-3 py-2 text-sm transition-colors text-left hover:bg-[var(--bg-tertiary)]"
+            style={{
+              backgroundColor: isSystem ? 'color-mix(in srgb, var(--accent) 15%, transparent)' : undefined,
+              color: isSystem ? 'var(--accent)' : 'var(--text-secondary)',
+            }}
+          >
+            <span className="w-4 h-4 rounded-full flex-shrink-0 border border-white/10"
+              style={{ background: 'linear-gradient(135deg, #f5f5f4 50%, #1a1a1a 50%)' }} />
+            <span className="flex-1">System</span>
+            <span className="text-[10px] opacity-50">기기 설정</span>
+            {isSystem && (
+              <svg className="w-3.5 h-3.5 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M5 13l4 4L19 7" />
+              </svg>
+            )}
+          </button>
+          <div className="my-1 border-t border-[var(--border)]" />
           {THEMES.map(theme => {
             const active = theme.id === themeId
             return (

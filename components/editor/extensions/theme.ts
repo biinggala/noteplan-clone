@@ -280,8 +280,8 @@ export const noteplanTheme = [
 
   syntaxHighlighting(
     HighlightStyle.define([
-      { tag: tags.heading1, fontSize: '1.75em', fontWeight: '700', color: 'var(--cm-h1)', lineHeight: '1.3' },
-      { tag: tags.heading2, fontSize: '1.35em', fontWeight: '600', color: 'var(--cm-h2)' },
+      { tag: tags.heading1, fontSize: '1.75em', fontWeight: '700', color: 'var(--cm-h1)', lineHeight: '1.3', letterSpacing: '-0.02em' },
+      { tag: tags.heading2, fontSize: '1.35em', fontWeight: '650', color: 'var(--cm-h2)', letterSpacing: '-0.015em' },
       { tag: tags.heading3, fontSize: '1.15em', fontWeight: '600', color: 'var(--cm-h3)' },
       { tag: tags.heading4, fontSize: '1.05em', fontWeight: '600', color: 'var(--cm-h3)' },
 

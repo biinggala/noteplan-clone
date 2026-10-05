@@ -319,7 +319,13 @@ export const THEMES: Theme[] = [
   },
 ]
 
-export const DEFAULT_THEME_ID = 'dark'
+/** 'system' = 기기 설정(라이트/다크)을 따라 Light ↔ Dark 를 자동으로 고른다 */
+export const SYSTEM_THEME_ID = 'system'
+export const DEFAULT_THEME_ID = SYSTEM_THEME_ID
+
+export function resolveThemeId(id: string, prefersDark: boolean): string {
+  return id === SYSTEM_THEME_ID ? (prefersDark ? 'dark' : 'light') : id
+}
 export function getTheme(id: string): Theme {
   return THEMES.find(t => t.id === id) ?? THEMES[0]
 }

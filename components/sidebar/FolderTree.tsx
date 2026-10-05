@@ -188,7 +188,7 @@ function NoteItem({ note, depth, isActive, onClick, onContextMenu, dnd }: {
 }) {
   return (
     <div
-      className={`flex items-center gap-1.5 py-1 rounded-md cursor-pointer text-sm transition-colors
+      className={`flex items-center gap-1.5 py-2 md:py-1 rounded-md cursor-pointer text-sm transition-colors
         ${isActive
           ? ''
           : 'text-[var(--text-secondary)] hover:bg-[var(--hover-bg)] hover:text-[var(--text-primary)]'
@@ -230,7 +230,7 @@ function FolderNode({ folder, depth, expandedFolders, toggleFolder, onContextMen
       <div
         data-folder-drop=""
         data-folder-path={folder.path}
-        className="flex items-center gap-1 py-1 rounded-md cursor-pointer select-none
+        className="flex items-center gap-1 py-2 md:py-1 rounded-md cursor-pointer select-none
           text-[var(--text-secondary)] hover:bg-[var(--hover-bg)] group"
         style={{ paddingLeft: `${6 + depth * 14}px`, paddingRight: '6px' }}
         onClick={() => toggleFolder(folder.id)}

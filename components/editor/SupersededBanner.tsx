@@ -33,8 +33,8 @@ export default function SupersededBanner({
   return (
     <div className="mx-auto max-w-[780px] px-6 pt-3">
       <div className="rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-2
-        text-[12px] text-amber-200 flex items-start gap-2">
-        <span aria-hidden className="mt-[1px]">⚠</span>
+        text-[12px] text-[var(--text-primary)] flex items-start gap-2">
+        <span aria-hidden className="mt-[1px] text-amber-500">⚠</span>
         <div className="min-w-0">
           <span className="opacity-80">이 노트는 대체되었습니다 → </span>
           {by.map((n, i) => (
@@ -42,7 +42,7 @@ export default function SupersededBanner({
               {i > 0 && <span className="opacity-50">, </span>}
               <button
                 onClick={() => onOpen(n.title)}
-                className="underline underline-offset-2 font-medium hover:text-amber-100"
+                className="underline underline-offset-2 decoration-amber-500/60 font-medium hover:decoration-amber-500"
               >
                 {n.title}
               </button>
