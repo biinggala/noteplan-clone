@@ -10,7 +10,8 @@ export interface ParsedTimeBlock {
   content: string          // clean text for timeline display (task prefix stripped)
   originalContent: string  // raw content after time range (may NOT include task prefix in new format)
   linePrefix: string       // text before the time range, e.g. "- [ ] " or "" (includes trailing space)
-  lineText: string         // the full original line as it appears in the note
+  lineText: string         // the full original line, trimmed (indentation removed)
+  lineIndex: number        // 0-based index of the line in the content (같은 줄이 여러 개일 때 구분용)
 }
 
 // Group 1: optional task/bullet marker before the time  (e.g. "- [ ] ", "* ", "+ ")
@@ -31,8 +32,9 @@ function to24h(h: number, meridiem: string): number {
 
 export function parseTimeBlockLines(content: string): ParsedTimeBlock[] {
   const result: ParsedTimeBlock[] = []
-  for (const line of content.split('\n')) {
-    const trimmed = line.trim()
+  const lines = content.split('\n')
+  for (let lineIndex = 0; lineIndex < lines.length; lineIndex++) {
+    const trimmed = lines[lineIndex].trim()
     const m = TIME_BLOCK_RE.exec(trimmed)
     if (!m) continue
     const sh = to24h(parseInt(m[2]), m[4])
@@ -59,6 +61,7 @@ export function parseTimeBlockLines(content: string): ParsedTimeBlock[] {
         originalContent,
         linePrefix,
         lineText: trimmed,
+        lineIndex,
       })
     }
   }

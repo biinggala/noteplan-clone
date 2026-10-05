@@ -11,7 +11,7 @@ import { useCalendarEventStore } from '@/lib/stores/calendarEventStore'
 import { useAuthStore } from '@/lib/stores/authStore'
 import { refreshGoogleTokenNow } from '@/lib/google/withToken'
 import { useTaskDotStore, hasOpenTask } from '@/lib/stores/taskDotStore'
-import { fetchAllCalendarEventsForRange } from '@/lib/google/calendar'
+import { fetchAllCalendarEventsForRange, CalendarFetchError, type GoogleCalendarEvent } from '@/lib/google/calendar'
 import { getNoteSummariesByDateRange } from '@/lib/db/noteRepository'
 import { useRouter, usePathname } from 'next/navigation'
 import { startGoogleOAuth } from '@/lib/auth/googleOAuth'
@@ -29,7 +29,7 @@ export default function MiniCalendar() {
   const { googleAccessToken, googleAuthError } = useAuthStore()
   const {
     calendars, enabledCalendarIds,
-    eventsByDate, mergeEvents,
+    eventsByDate, mergeEvents, fetchGen,
     fetchingMonths, setFetchingMonth,
   } = useCalendarEventStore()
   const { taskDates, setTaskDates } = useTaskDotStore()
@@ -58,30 +58,38 @@ export default function MiniCalendar() {
     if (fetchingMonths.has(monthKey) && !tokenChanged) return
     const startStr = format(calStart, 'yyyy-MM-dd')
     const endStr   = format(calEnd,   'yyyy-MM-dd')
+    const st = useCalendarEventStore.getState()
     const allFetched = !tokenChanged &&
-      allDays.every(d => eventsByDate[format(d, 'yyyy-MM-dd')] !== undefined)
+      allDays.every(d => !st.needsFetch(format(d, 'yyyy-MM-dd')))
     if (allFetched) return
     fetchedTokenRef.current = googleAccessToken
+    // 출발 시점의 세대 — 그 사이 캘린더를 켜고 끄면 결과를 버린다
+    const gen = st.fetchGen
 
-    setFetchingMonth(monthKey, true)
-    fetchAllCalendarEventsForRange(googleAccessToken, calendars, enabledCalendarIds, startStr, endStr)
-      .then(grouped => {
-        // 이벤트 없는 날도 빈 배열로 채워서 "이미 fetch됨" 표시
-        const full: Record<string, typeof grouped[string]> = {}
-        allDays.forEach(d => {
-          const ds = format(d, 'yyyy-MM-dd')
-          full[ds] = grouped[ds] ?? []
-        })
-        mergeEvents(full)
+    const fill = (grouped: Record<string, GoogleCalendarEvent[]>) => {
+      // 이벤트 없는 날도 빈 배열로 채워서 "이미 fetch됨" 표시
+      const full: Record<string, GoogleCalendarEvent[]> = {}
+      allDays.forEach(d => {
+        const ds = format(d, 'yyyy-MM-dd')
+        full[ds] = grouped[ds] ?? []
       })
+      return full
+    }
+    setFetchingMonth(monthKey, true)
+    fetchAllCalendarEventsForRange(googleAccessToken, calendars, st.enabledCalendarIds, startStr, endStr)
+      .then(grouped => { mergeEvents(fill(grouped), { gen }) })
       .catch(err => {
         console.error('[MiniCalendar fetch]', err)
+        // 일부 캘린더만 실패: 받은 만큼 보여주되 다음에 다시 불러오게 '불완전' 표시
+        if (err instanceof CalendarFetchError) mergeEvents(fill(err.partial), { gen, incomplete: true })
         // 토큰 만료 → 바로 갱신 (새 토큰이 오면 이 effect 가 다시 돈다). 갱신도 실패하면 배너.
-        if (err instanceof Error && err.message === 'GOOGLE_TOKEN_EXPIRED') void refreshGoogleTokenNow()
+        else if (err instanceof Error && err.message === 'GOOGLE_TOKEN_EXPIRED') void refreshGoogleTokenNow()
       })
-      .finally(() => setFetchingMonth(monthKey, false))
+      .finally(() => {
+        if (useCalendarEventStore.getState().fetchGen === gen) setFetchingMonth(monthKey, false)
+      })
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [googleAccessToken, calendars, enabledCalendarIds, viewDate])
+  }, [googleAccessToken, calendars, enabledCalendarIds, viewDate, fetchGen])
 
   // ── 월 단위 노트 fetch → 태스크 점 계산 ─────────────────────────────────
   useEffect(() => {

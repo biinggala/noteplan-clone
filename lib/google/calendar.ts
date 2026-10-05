@@ -1,3 +1,5 @@
+import { addDays, addMinutes, format, parseISO } from 'date-fns'
+
 // ── 타입 ─────────────────────────────────────────────────────────────────────
 
 export interface GoogleCalendar {
@@ -12,6 +14,13 @@ export interface GoogleCalendar {
   accessRole?: string
 }
 
+export interface EventTime {
+  dateTime?: string
+  date?: string
+  /** 이벤트에 지정된 시간대. 수정할 때 그대로 돌려보낸다 (브라우저 시간대로 덮지 않는다) */
+  timeZone?: string
+}
+
 export interface GoogleCalendarEvent {
   id: string
   calendarId: string        // 어느 캘린더 소속인지
@@ -19,10 +28,14 @@ export interface GoogleCalendarEvent {
   summary: string
   description?: string
   colorId?: string
-  start: { dateTime?: string; date?: string }
-  end:   { dateTime?: string; date?: string }
+  start: EventTime
+  end:   EventTime
   htmlLink: string
   extendedProperties?: { private?: Record<string, string>; shared?: Record<string, string> }
+  attendees?: { email?: string; self?: boolean; responseStatus?: string }[]
+  organizer?: { email?: string; self?: boolean }
+  guestsCanModify?: boolean
+  locked?: boolean
 }
 
 // ── 캘린더 목록 fetch ─────────────────────────────────────────────────────────
@@ -44,43 +57,6 @@ export async function fetchCalendarList(accessToken: string): Promise<GoogleCale
   return (data.items ?? []) as GoogleCalendar[]
 }
 
-// ── 이벤트 fetch (단일 캘린더) ────────────────────────────────────────────────
-
-export async function fetchCalendarEvents(
-  accessToken: string,
-  calendarId: string,
-  calendarColor: string,
-  date: string,             // 'YYYY-MM-DD'
-): Promise<GoogleCalendarEvent[]> {
-  const timeMin = new Date(`${date}T00:00:00`).toISOString()
-  const timeMax = new Date(`${date}T23:59:59`).toISOString()
-
-  const url = new URL(
-    `https://www.googleapis.com/calendar/v3/calendars/${encodeURIComponent(calendarId)}/events`
-  )
-  url.searchParams.set('timeMin', timeMin)
-  url.searchParams.set('timeMax', timeMax)
-  url.searchParams.set('singleEvents', 'true')
-  url.searchParams.set('orderBy', 'startTime')
-  url.searchParams.set('maxResults', '50')
-
-  const res = await fetch(url.toString(), {
-    headers: { Authorization: `Bearer ${accessToken}` },
-  })
-
-  if (!res.ok) {
-    if (res.status === 401) throw new Error('GOOGLE_TOKEN_EXPIRED')
-    throw new Error(`Calendar API error: ${res.status}`)
-  }
-
-  const data = await res.json()
-  return ((data.items ?? []) as Record<string, unknown>[]).map(item => ({
-    ...(item as object),
-    calendarId,
-    calendarColor,
-  })) as GoogleCalendarEvent[]
-}
-
 // ── 날짜 범위 이벤트 fetch (단일 캘린더) ─────────────────────────────────────
 
 export async function fetchCalendarEventsForRange(
@@ -90,34 +66,56 @@ export async function fetchCalendarEventsForRange(
   startDate: string,   // 'YYYY-MM-DD'
   endDate: string,     // 'YYYY-MM-DD' (inclusive)
 ): Promise<GoogleCalendarEvent[]> {
-  const timeMin = new Date(`${startDate}T00:00:00`).toISOString()
-  const timeMax = new Date(`${endDate}T23:59:59`).toISOString()
+  // 기기 시간대의 자정 ~ 마지막 날 다음 자정 (배타적)
+  const timeMin = parseISO(startDate).toISOString()
+  const timeMax = addDays(parseISO(endDate), 1).toISOString()
 
-  const url = new URL(
-    `https://www.googleapis.com/calendar/v3/calendars/${encodeURIComponent(calendarId)}/events`
-  )
-  url.searchParams.set('timeMin', timeMin)
-  url.searchParams.set('timeMax', timeMax)
-  url.searchParams.set('singleEvents', 'true')
-  url.searchParams.set('orderBy', 'startTime')
-  url.searchParams.set('maxResults', '500')
+  const items: Record<string, unknown>[] = []
+  let pageToken: string | undefined
+  for (let page = 0; page < 10; page++) {
+    const url = new URL(
+      `https://www.googleapis.com/calendar/v3/calendars/${encodeURIComponent(calendarId)}/events`
+    )
+    url.searchParams.set('timeMin', timeMin)
+    url.searchParams.set('timeMax', timeMax)
+    url.searchParams.set('singleEvents', 'true')
+    url.searchParams.set('orderBy', 'startTime')
+    url.searchParams.set('maxResults', '500')
+    if (pageToken) url.searchParams.set('pageToken', pageToken)
 
-  const res = await fetch(url.toString(), {
-    headers: { Authorization: `Bearer ${accessToken}` },
-  })
-  if (!res.ok) {
-    if (res.status === 401) throw new Error('GOOGLE_TOKEN_EXPIRED')
-    throw new Error(`Calendar API error: ${res.status}`)
+    const res = await fetch(url.toString(), {
+      headers: { Authorization: `Bearer ${accessToken}` },
+    })
+    if (!res.ok) {
+      if (res.status === 401) throw new Error('GOOGLE_TOKEN_EXPIRED')
+      throw new Error(`Calendar API error: ${res.status}`)
+    }
+    const data = await res.json()
+    items.push(...((data.items ?? []) as Record<string, unknown>[]))
+    pageToken = data.nextPageToken
+    if (!pageToken) break
   }
-  const data = await res.json()
-  return ((data.items ?? []) as Record<string, unknown>[]).map(item => ({
-    ...(item as object),
-    calendarId,
-    calendarColor,
-  })) as GoogleCalendarEvent[]
+  return items
+    // 취소된 일정(singleEvents 예외 등)은 보이지 않아야 한다
+    .filter(item => item.status !== 'cancelled')
+    .map(item => ({ ...(item as object), calendarId, calendarColor })) as GoogleCalendarEvent[]
 }
 
 // ── 날짜 범위 이벤트 fetch (모든 활성 캘린더) → 날짜별로 그룹화 ──────────────
+
+/**
+ * 일부 캘린더만 실패했을 때. 받은 만큼은 partial에 들어 있다.
+ * 예전엔 실패한 캘린더를 조용히 빼고 '그 날은 일정 없음'으로 캐시해서,
+ * 다시 불러오지도 않고 에러도 안 보였다.
+ */
+export class CalendarFetchError extends Error {
+  partial: Record<string, GoogleCalendarEvent[]>
+  constructor(message: string, partial: Record<string, GoogleCalendarEvent[]>) {
+    super(message)
+    this.name = 'CalendarFetchError'
+    this.partial = partial
+  }
+}
 
 export async function fetchAllCalendarEventsForRange(
   accessToken: string,
@@ -132,6 +130,11 @@ export async function fetchAllCalendarEventsForRange(
       fetchCalendarEventsForRange(accessToken, c.id, c.backgroundColor, startDate, endDate)
     )
   )
+  const failed = results.filter((r): r is PromiseRejectedResult => r.status === 'rejected')
+  // 토큰 만료는 호출한 쪽이 갱신 후 다시 부를 수 있게 그대로 올린다
+  if (failed.some(r => r.reason instanceof Error && r.reason.message === 'GOOGLE_TOKEN_EXPIRED')) {
+    throw new Error('GOOGLE_TOKEN_EXPIRED')
+  }
   const allEvents = results
     .filter((r): r is PromiseFulfilledResult<GoogleCalendarEvent[]> => r.status === 'fulfilled')
     .flatMap(r => r.value)
@@ -144,46 +147,101 @@ export async function fetchAllCalendarEventsForRange(
       grouped[d].push(ev)
     }
   }
+  if (failed.length > 0) {
+    const reason = failed[0].reason
+    const msg = reason instanceof Error ? reason.message : String(reason)
+    throw new CalendarFetchError(`${failed.length}개 캘린더를 불러오지 못했습니다: ${msg}`, grouped)
+  }
   return grouped
 }
 
-/** 이벤트가 걸치는 모든 날짜(YYYY-MM-DD) 목록. all-day는 end.date가 배타적. */
-function eventCoveredDates(ev: GoogleCalendarEvent): string[] {
-  const isAllDay = !!ev.start.date
-  const startStr = ev.start.date ?? ev.start.dateTime?.split('T')[0]
-  if (!startStr) return []
-  const endStr = isAllDay
-    ? (ev.end?.date ?? startStr)        // 배타적 (마지막날 다음)
-    : (ev.end?.dateTime?.split('T')[0] ?? startStr)  // 포함
-  const dates: string[] = []
-  const cur = new Date(`${startStr}T00:00:00`)
-  const end = new Date(`${endStr}T00:00:00`)
-  // all-day: cur < end (배타적) / timed: cur <= end (포함)
-  while (isAllDay ? cur < end : cur <= end) {
-    dates.push(
-      `${cur.getFullYear()}-${String(cur.getMonth() + 1).padStart(2, '0')}-${String(cur.getDate()).padStart(2, '0')}`,
-    )
-    cur.setDate(cur.getDate() + 1)
-    if (dates.length > 400) break // 안전장치
-  }
-  return dates.length ? dates : [startStr]
+// ── 날짜/시각 유틸 (모두 '기기 시간대' 기준) ──────────────────────────────────
+
+const dayKey = (d: Date) => format(d, 'yyyy-MM-dd')
+
+/** 구글에 보낼 RFC3339 (오프셋 포함, 예: 2026-10-05T09:00:00+09:00) */
+export function toRfc3339(d: Date): string {
+  return format(d, "yyyy-MM-dd'T'HH:mm:ssxxx")
 }
 
-// ── 활성화된 모든 캘린더에서 이벤트 fetch ────────────────────────────────────
+/** 'YYYY-MM-DD' 날짜의 자정에서 mins분 뒤 (mins ≥ 1440 이면 다음날로 넘어간다) */
+export function dateAtMinutes(date: string, mins: number): Date {
+  return addMinutes(parseISO(date), mins)
+}
 
-export async function fetchAllCalendarEvents(
-  accessToken: string,
-  calendars: GoogleCalendar[],
-  enabledIds: Set<string>,
-  date: string,
-): Promise<GoogleCalendarEvent[]> {
-  const active = calendars.filter(c => enabledIds.has(c.id))
-  const results = await Promise.allSettled(
-    active.map(c => fetchCalendarEvents(accessToken, c.id, c.backgroundColor, date))
-  )
-  return results
-    .filter((r): r is PromiseFulfilledResult<GoogleCalendarEvent[]> => r.status === 'fulfilled')
-    .flatMap(r => r.value)
+export function isAllDayEvent(ev: GoogleCalendarEvent): boolean {
+  return !!ev.start.date && !ev.start.dateTime
+}
+
+/** 시간 지정 이벤트의 시작/끝 (Date). 종일 일정이면 null */
+export function eventInterval(ev: GoogleCalendarEvent): { start: Date; end: Date } | null {
+  if (isAllDayEvent(ev) || !ev.start.dateTime) return null
+  const start = new Date(ev.start.dateTime)
+  const end = ev.end?.dateTime ? new Date(ev.end.dateTime) : start
+  if (isNaN(start.getTime()) || isNaN(end.getTime())) return null
+  return { start, end: end < start ? start : end }
+}
+
+/**
+ * 이벤트가 걸치는 모든 날짜(YYYY-MM-DD, 기기 시간대) 목록.
+ * - 종일: end.date 가 배타적
+ * - 시간 지정: 끝 시각이 배타적 → 자정에 딱 끝나는 일정은 다음날에 나오지 않는다.
+ *   문자열의 날짜 부분이 아니라 실제 시각을 기기 시간대로 바꿔서 나눈다
+ *   (다른 시간대로 만든 일정이 엉뚱한 날에 붙던 문제).
+ */
+export function eventCoveredDates(ev: GoogleCalendarEvent): string[] {
+  const dates: string[] = []
+  if (isAllDayEvent(ev)) {
+    const startStr = ev.start.date!
+    const endStr = ev.end?.date ?? startStr
+    let cur = parseISO(startStr)
+    const end = parseISO(endStr)
+    while (cur < end && dates.length < 400) { dates.push(dayKey(cur)); cur = addDays(cur, 1) }
+    return dates.length ? dates : [startStr]
+  }
+  const iv = eventInterval(ev)
+  if (!iv) return []
+  let cur = parseISO(dayKey(iv.start))
+  while (cur < iv.end && dates.length < 400) { dates.push(dayKey(cur)); cur = addDays(cur, 1) }
+  return dates.length ? dates : [dayKey(iv.start)]   // 길이 0 인 일정
+}
+
+/** 이벤트 시작의 기기 시간대 날짜 (종일이면 start.date) */
+export function eventStartDay(ev: GoogleCalendarEvent): string | null {
+  if (isAllDayEvent(ev)) return ev.start.date ?? null
+  const iv = eventInterval(ev)
+  return iv ? dayKey(iv.start) : null
+}
+
+export interface DaySegment {
+  startMins: number      // 그 날 00:00 부터 (0..1440)
+  endMins: number        // (0..1440), 다음날 자정까지면 1440
+  startsBefore: boolean  // 전날부터 이어짐
+  endsAfter: boolean     // 다음날로 이어짐
+}
+
+/** 시간 지정 이벤트를 date 칸의 [00:00, 다음날 00:00) 로 자른 구간. 그 날과 안 겹치면 null */
+export function eventSegmentForDay(ev: GoogleCalendarEvent, date: string): DaySegment | null {
+  const iv = eventInterval(ev)
+  if (!iv) return null
+  const dayStart = parseISO(date)
+  const dayEnd = addDays(dayStart, 1)
+  const zeroLen = iv.end.getTime() === iv.start.getTime()
+  if (zeroLen ? !(iv.start >= dayStart && iv.start < dayEnd) : (iv.end <= dayStart || iv.start >= dayEnd)) return null
+  const segStart = iv.start < dayStart ? dayStart : iv.start
+  const segEnd = iv.end > dayEnd ? dayEnd : iv.end
+  const minsOf = (d: Date) => (d.getTime() >= dayEnd.getTime() ? 1440 : d.getHours() * 60 + d.getMinutes())
+  return {
+    startMins: minsOf(segStart),
+    endMins: Math.max(minsOf(segStart), minsOf(segEnd)),
+    startsBefore: iv.start < dayStart,
+    endsAfter: iv.end > dayEnd,
+  }
+}
+
+/** 내가 거절한 일정 */
+export function isDeclinedBySelf(ev: GoogleCalendarEvent): boolean {
+  return !!ev.attendees?.some(a => a.self && a.responseStatus === 'declined')
 }
 
 // ── 이벤트 생성 ───────────────────────────────────────────────────────────────
@@ -192,7 +250,7 @@ export interface CreateEventPayload {
   calendarId: string
   summary: string
   description?: string
-  startDateTime: string   // ISO 8601, e.g. "2026-04-26T09:00:00"
+  startDateTime: string   // RFC3339 (toRfc3339 권장 — 끝이 다음날로 넘어가도 유효)
   endDateTime:   string
   timeZone?:     string
   extendedProperties?: { private?: Record<string, string>; shared?: Record<string, string> }
@@ -235,9 +293,9 @@ export async function createAllDayEvent(
   accessToken: string,
   payload: { calendarId: string; summary: string; date: string }, // date: 'YYYY-MM-DD'
 ): Promise<GoogleCalendarEvent & { calendarId: string; calendarColor: string }> {
-  const next = new Date(`${payload.date}T00:00:00`)
-  next.setDate(next.getDate() + 1)
-  const endDate = next.toISOString().slice(0, 10)
+  // toISOString() 은 UTC 라서 한국(UTC+9)에선 다음날 자정이 '오늘'로 찍혀
+  // end == start → 구글이 400 으로 거절했다. 날짜 문자열끼리 계산한다.
+  const endDate = format(addDays(parseISO(payload.date), 1), 'yyyy-MM-dd')
   const body = {
     summary: payload.summary,
     start: { date: payload.date },
@@ -260,24 +318,38 @@ export async function createAllDayEvent(
   return { ...data, calendarId: payload.calendarId, calendarColor: '' }
 }
 
-// ── 이벤트 수정 (시간 변경) ───────────────────────────────────────────────────
+// ── 이벤트 수정 ───────────────────────────────────────────────────────────────
+
+export interface UpdateEventPatch {
+  start?: Date
+  end?: Date
+  /** 원래 이벤트의 start.timeZone / end.timeZone — 있으면 그대로 유지 */
+  startTimeZone?: string
+  endTimeZone?: string
+  summary?: string
+  /** extendedProperties.private 전체 (덮어쓸 값 포함) */
+  privateProps?: Record<string, string>
+}
+
+/** PATCH 에 실을 start/end 객체 (스토어 낙관적 반영에도 같은 값을 쓴다) */
+export function eventTimeFor(d: Date, timeZone?: string): EventTime {
+  return timeZone ? { dateTime: toRfc3339(d), timeZone } : { dateTime: toRfc3339(d) }
+}
 
 export async function updateCalendarEvent(
   accessToken: string,
   calendarId: string,
   eventId: string,
-  patch: {
-    startDateTime?: string
-    endDateTime?:   string
-    summary?:       string
-    timeZone?:      string
-  },
+  patch: UpdateEventPatch,
 ): Promise<void> {
-  const tz = patch.timeZone ?? Intl.DateTimeFormat().resolvedOptions().timeZone
+  // 시각은 오프셋을 붙인 RFC3339 로 보내 '어느 시간대 기준인지'가 문자열에 들어 있게 한다.
+  // timeZone 은 이벤트가 원래 갖고 있던 값만 돌려보낸다 — 예전엔 브라우저 시간대로
+  // 덮어써서, 다른 시간대로 만든 일정을 한 번 옮기면 그 일정의 시간대가 바뀌었다.
   const body: Record<string, unknown> = {}
-  if (patch.summary) body.summary = patch.summary
-  if (patch.startDateTime) body.start = { dateTime: patch.startDateTime, timeZone: tz }
-  if (patch.endDateTime)   body.end   = { dateTime: patch.endDateTime,   timeZone: tz }
+  if (patch.summary !== undefined) body.summary = patch.summary
+  if (patch.start) body.start = eventTimeFor(patch.start, patch.startTimeZone)
+  if (patch.end)   body.end   = eventTimeFor(patch.end, patch.endTimeZone)
+  if (patch.privateProps) body.extendedProperties = { private: patch.privateProps }
 
   const res = await fetch(
     `https://www.googleapis.com/calendar/v3/calendars/${encodeCalId(calendarId)}/events/${encodeURIComponent(eventId)}`,
@@ -313,7 +385,8 @@ export async function deleteCalendarEvent(
   )
   if (!res.ok && res.status !== 410) {  // 410 = already deleted
     if (res.status === 401) throw new Error('GOOGLE_TOKEN_EXPIRED')
-    throw new Error(`Delete event error ${res.status}`)
+    const text = await res.text().catch(() => '')
+    throw new Error(`Delete event error ${res.status}: ${text}`)
   }
 }
 
@@ -331,21 +404,21 @@ function encodeCalId(id: string): string {
 
 // ── 유틸 ─────────────────────────────────────────────────────────────────────
 
+/** 시작/끝의 기기 시간대 시·분 (표시용). 여러 날에 걸치면 eventSegmentForDay 를 쓴다. */
 export function eventToTimeRange(event: GoogleCalendarEvent): {
   startHour: number; startMinute: number
   endHour: number;   endMinute: number
   allDay: boolean
 } {
-  if (event.start.date && !event.start.dateTime) {
+  const iv = eventInterval(event)
+  if (!iv) {
     return { startHour: 0, startMinute: 0, endHour: 23, endMinute: 59, allDay: true }
   }
-  const start = new Date(event.start.dateTime!)
-  const end   = new Date(event.end.dateTime!)
   return {
-    startHour:   start.getHours(),
-    startMinute: start.getMinutes(),
-    endHour:     end.getHours(),
-    endMinute:   end.getMinutes(),
+    startHour:   iv.start.getHours(),
+    startMinute: iv.start.getMinutes(),
+    endHour:     iv.end.getHours(),
+    endMinute:   iv.end.getMinutes(),
     allDay:      false,
   }
 }

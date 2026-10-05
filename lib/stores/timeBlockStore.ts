@@ -14,6 +14,7 @@ export interface TimeBlock {
   noteLineText?: string    // full line in note, e.g. "- [ ] 2:30 PM - 3:00 PM content"
   originalContent?: string // raw content AFTER the time range, e.g. "content"
   linePrefix?: string      // text BEFORE the time range, e.g. "- [ ] " or ""
+  lineIndex?: number       // 0-based line index in the daily note (같은 내용 줄이 여럿일 때 우선)
 }
 
 const BLOCK_COLORS = [
@@ -86,6 +87,7 @@ export const useTimeBlockStore = create<TimeBlockStore>((set) => ({
             noteLineText: p.lineText,
             originalContent: p.originalContent,
             linePrefix: p.linePrefix,
+            lineIndex: p.lineIndex,
           }
         }
         return {
@@ -98,6 +100,7 @@ export const useTimeBlockStore = create<TimeBlockStore>((set) => ({
           noteLineText: p.lineText,
           originalContent: p.originalContent,
           linePrefix: p.linePrefix,
+          lineIndex: p.lineIndex,
           color: BLOCK_COLORS[_colorIdx++ % BLOCK_COLORS.length],
         }
       })
