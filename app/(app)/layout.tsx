@@ -66,6 +66,12 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
   // ── ⌘\ 왼쪽 사이드바, ⌘⇧\ 오른쪽(캘린더) 패널 ─────────────────────────────
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
+      // ⌘⌥⇧L — 마지막 줄 드래그 기록 (타임라인 드롭이 안 될 때 원인 확인용)
+      if ((e.metaKey || e.ctrlKey) && e.altKey && e.shiftKey && e.code === 'KeyL') {
+        e.preventDefault()
+        void import('@/lib/dnd/pointerLineDrag').then(m => m.showDragLog())
+        return
+      }
       if ((e.metaKey || e.ctrlKey) && !e.altKey && !e.shiftKey && e.code === 'KeyN') {
         e.preventDefault()
         window.dispatchEvent(new Event('np:new-note'))

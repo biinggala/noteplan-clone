@@ -53,6 +53,58 @@ const EDGE_MAX_SPEED = 14 // px/frame
 
 let active: ActiveDrag | null = null
 
+// ── 진단 기록 ─────────────────────────────────────────────────────────────
+// 맥 앱에서만 '끌어다 놓았는데 아무 일도 없음'이 생겨 원인을 직접 볼 수 있게, 마지막
+// 드래그의 이벤트 흐름을 남긴다. ⌘⌥⇧L 로 보고 복사할 수 있다 (showDragLog).
+let curLog: string[] = []
+let lastLog: string[] = []
+let logT0 = 0
+function dlog(msg: string) {
+  if (curLog.length < 300) curLog.push(`${String(Math.round(performance.now() - logT0)).padStart(5)}ms ${msg}`)
+}
+function describeEl(el: Element | null): string {
+  if (!el) return '(없음)'
+  const h = el as HTMLElement
+  const cls = typeof h.className === 'string' ? h.className.split(/\s+/).filter(Boolean).slice(0, 3).join('.') : ''
+  const data = [...h.attributes].filter(a => a.name.startsWith('data-')).map(a => a.name).slice(0, 2).join(',')
+  return `${el.tagName.toLowerCase()}${cls ? '.' + cls : ''}${data ? `[${data}]` : ''}`
+}
+
+/** 잠깐 뜨는 안내 (드롭이 안 된 이유 등) */
+function toast(msg: string) {
+  const el = document.createElement('div')
+  el.className = 'np-toast'
+  el.textContent = msg
+  document.body.appendChild(el)
+  requestAnimationFrame(() => el.classList.add('np-toast--on'))
+  setTimeout(() => { el.classList.remove('np-toast--on'); setTimeout(() => el.remove(), 300) }, 4500)
+}
+
+/** 마지막 드래그 기록 창 (⌘⌥⇧L) — 복사해서 보내 주면 원인을 바로 알 수 있다 */
+export function showDragLog() {
+  document.querySelector('.np-draglog')?.remove()
+  const text = [
+    `NotePlan drag log · ${new Date().toISOString()} · ${navigator.userAgent}`,
+    `url=${location.pathname}${location.search} · viewport=${innerWidth}x${innerHeight} · dpr=${devicePixelRatio}`,
+    ...(lastLog.length ? lastLog : ['(아직 드래그 기록이 없습니다 — 줄 왼쪽 ⋮⋮ 손잡이를 끌어 보세요)']),
+  ].join('\n')
+  const box = document.createElement('div')
+  box.className = 'np-draglog'
+  const pre = document.createElement('textarea')
+  pre.readOnly = true
+  pre.value = text
+  const row = document.createElement('div')
+  const copy = document.createElement('button'); copy.textContent = '복사'
+  const close = document.createElement('button'); close.textContent = '닫기'
+  copy.onclick = async () => {
+    try { await navigator.clipboard.writeText(text) } catch { pre.select(); document.execCommand('copy') }
+    copy.textContent = '복사됨 ✓'
+  }
+  close.onclick = () => box.remove()
+  row.append(copy, close); box.append(pre, row); document.body.appendChild(box)
+  pre.focus(); pre.select()
+}
+
 /** 줄 드래그 중인지 — 에디터가 드래그 동안 hover 표시를 바꾸지 않게 (dragHandle.ts) */
 export function isLineDragActive(): boolean { return active != null }
 
@@ -73,6 +125,8 @@ export function startLineDrag(
 ) {
   if (active) cleanup()
   e.preventDefault()
+  curLog = []; logT0 = performance.now(); lastHint = ''
+  dlog(`start lines ${fromLine}-${toLine} pointer=${e.pointerType} id=${e.pointerId} at ${Math.round(e.clientX)},${Math.round(e.clientY)} target=${describeEl(e.target as Element)}`)
 
   const doc = view.state.doc
   const lines: string[] = []
@@ -89,12 +143,13 @@ export function startLineDrag(
     `<circle cx="2" cy="2" r="1"/><circle cx="6" cy="2" r="1"/>` +
     `<circle cx="2" cy="6" r="1"/><circle cx="6" cy="6" r="1"/>` +
     `<circle cx="2" cy="10" r="1"/><circle cx="6" cy="10" r="1"/></svg></span>` +
-    `<span class="np-drag-ghost__text"></span>`
+    `<span class="np-drag-ghost__text"></span><span class="np-drag-ghost__hint"></span>`
   ;(ghost.querySelector('.np-drag-ghost__text') as HTMLElement).textContent = label
   document.body.appendChild(ghost)
 
   const onMove = (ev: PointerEvent) => {
     if (!active) return
+    if (!active.moved) dlog(`first move (${ev.type}) at ${Math.round(ev.clientX)},${Math.round(ev.clientY)}`)
     active.moved = true
     active.lastX = ev.clientX
     active.lastY = ev.clientY
@@ -106,6 +161,7 @@ export function startLineDrag(
 
   const onUp = (ev: PointerEvent) => {
     if (!active) return
+    dlog(`${ev.type} at ${Math.round(ev.clientX)},${Math.round(ev.clientY)} moved=${active.moved} fallback=${active.mouseFallback}`)
     const drag = active
     cleanup()
     clearReorder(view)
@@ -118,6 +174,7 @@ export function startLineDrag(
   // 것이라 mouse 이벤트로 이어서 따라가고, 버튼을 놓을 때(mouseup) 드롭한다.
   const onCancel = (ev: PointerEvent) => {
     if (!active) return
+    dlog(`pointercancel pointer=${ev.pointerType} → ${ev.pointerType === 'mouse' || ev.pointerType === 'pen' ? 'mouse 이벤트로 계속' : '중단'}`)
     if (ev.pointerType === 'mouse' || ev.pointerType === 'pen') { active.mouseFallback = true; return }
     cleanup()
     clearReorder(view)
@@ -166,6 +223,8 @@ function cleanup() {
   document.removeEventListener('selectstart', blockNative, true)
   document.body.classList.remove('np-line-dragging')
   if (active.rafId != null) cancelAnimationFrame(active.rafId)
+  dlog('cleanup')
+  lastLog = curLog
   active.ghost.remove()
   active = null
   hideAfterIndicator()
@@ -236,17 +295,34 @@ function slotInfoAt(clientX: number, clientY: number) {
 // ── 드롭 처리 ────────────────────────────────────────────────────────────────
 
 function drop(e: PointerEvent, drag: ActiveDrag) {
+  const el = document.elementFromPoint(e.clientX, e.clientY) as HTMLElement | null
+  dlog(`drop under=${describeEl(el)} inTimeline=${!!el?.closest('[data-tl-root]')}`)
   // 1) 타임라인 슬롯에 드롭 → TimeBlock 생성/이동
   const slot = slotInfoAt(e.clientX, e.clientY)
   if (slot) {
-    if (slot.allowed && slot.date) dropOnTimeline(drag, slot.date, slot.hour * 60 + slot.minute)
+    dlog(`slot ${slot.date} ${slot.hour}:${String(slot.minute).padStart(2, '0')} allowed=${slot.allowed}`)
+    if (!slot.allowed) {
+      toast(`이 날짜에는 놓을 수 없어요 — 지금 열린 노트(${openDailyNoteDate()})의 날짜 칸에 놓아 주세요`)
+      return
+    }
+    if (slot.date) {
+      const n = dropOnTimeline(drag, slot.date, slot.hour * 60 + slot.minute)
+      dlog(`dropOnTimeline → ${n}줄 반영`)
+      if (n === 0) toast('타임블록을 만들 줄을 찾지 못했어요 (끄는 사이 노트가 바뀌었을 수 있어요). 다시 시도해 주세요')
+    }
     return
   }
 
   // 2) 에디터 본문에 드롭 → 줄 재정렬
-  const el = document.elementFromPoint(e.clientX, e.clientY) as HTMLElement | null
   if (el?.closest('.cm-content')) {
+    dlog('reorder')
     reorder(e, drag)
+    return
+  }
+  // 타임라인 쪽에 놓았는데 칸을 못 찾았으면 알려 준다 (예전엔 말없이 무시)
+  if (el?.closest('[data-tl-root], .cm-editor') == null && el?.closest('aside, [class*="overflow-y-auto"]')) {
+    dlog('no slot found near timeline')
+    toast('타임라인의 시간 칸을 찾지 못했어요. 시간 줄 위에 놓아 주세요 (⌘⌥⇧L 로 기록 보기)')
   }
 }
 
@@ -267,7 +343,7 @@ interface PlannedLine {
  *   새로 만들지 않고 옮긴다 (예전엔 "12:00 PM - 12:30 PM 9:00 AM - 9:30 AM 할일" + 이벤트 2개).
  * - 들여쓰기는 그대로 둔다.
  */
-function dropOnTimeline(drag: ActiveDrag, date: string, dropMins: number) {
+function dropOnTimeline(drag: ActiveDrag, date: string, dropMins: number): number {
   const { view } = drag
   const doc = view.state.doc
   const src = openDailyNoteDate()
@@ -314,7 +390,7 @@ function dropOnTimeline(drag: ActiveDrag, date: string, dropMins: number) {
     plans.push(plan)
     total += plan.duration
   }
-  if (plans.length === 0) return
+  if (plans.length === 0) return 0
 
   // 옮기는 블록은 노트를 고치기 '전에' 새 시각으로 바꿔 둔다 — 일간 노트는 고친 직후
   // syncTimeBlocks 로 블록을 다시 만드는데, 시각+내용이 같으면 같은 블록(id)으로 이어진다.
@@ -348,6 +424,7 @@ function dropOnTimeline(drag: ActiveDrag, date: string, dropMins: number) {
     void createTimeblockEvent(date, p.startMins, p.duration, p.content)
   }
   for (const mv of moves) void moveTimeblockEvent(mv.ev, date, mv.startMins, mv.duration)
+  return plans.length
 }
 
 /** 드롭 위치 → 대상 줄. 줄의 세로 중간보다 아래면 그 줄 '다음'에 넣는다. */
@@ -430,9 +507,22 @@ function hideAfterIndicator() {
 
 // ── 드롭 대상 하이라이트 ───────────────────────────────────────────────────────
 
+/** 고스트 카드에 '놓으면 무엇이 되는지' 표시 + 대상이 바뀔 때만 기록 */
+let lastHint = ''
+function setHint(hint: string) {
+  if (hint === lastHint) return
+  lastHint = hint
+  dlog(`over: ${hint || '(대상 없음)'}`)
+  const el = active?.ghost.querySelector('.np-drag-ghost__hint') as HTMLElement | null
+  if (el) { el.textContent = hint; el.dataset.kind = hint.startsWith('✕') ? 'no' : hint ? 'ok' : '' }
+}
+const fmt12 = (h: number, m: number) => `${h < 12 ? '오전' : '오후'} ${h % 12 === 0 ? 12 : h % 12}:${String(m).padStart(2, '0')}`
+
 function highlightUnderXY(x: number, y: number, view: EditorView) {
   // 타임라인 슬롯 위 → 미리보기 블록(시작시각 + 길이). 놓을 수 없는 칸이면 빨갛게
   const slot = slotInfoAt(x, y)
+  setHint(slot ? (slot.allowed ? `→ ${fmt12(slot.hour, slot.minute)} 타임블록` : '✕ 열린 노트 날짜에만')
+    : (document.elementFromPoint(x, y) as HTMLElement | null)?.closest('.cm-content') ? '→ 줄 이동' : '')
   if (slot) {
     useTimelineDragStore.getState().setPreview({
       date: slot.date, hour: slot.hour, minute: slot.minute,

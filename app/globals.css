@@ -329,3 +329,32 @@ body.np-line-dragging, body.np-line-dragging * {
   cursor: grabbing !important;
 }
 .cm-drag-handle, .cm-drag-handle * { -webkit-user-drag: none; }
+
+/* 줄 드래그 고스트의 '놓으면 무엇이 되는지' */
+.np-drag-ghost__hint { flex-shrink: 0; font-size: 11px; font-weight: 600; color: var(--accent); }
+.np-drag-ghost__hint:empty { display: none; }
+.np-drag-ghost__hint[data-kind="no"] { color: #f87171; }
+
+/* 잠깐 뜨는 안내 */
+.np-toast {
+  position: fixed; left: 50%; bottom: 24px; z-index: 10000;
+  max-width: min(92vw, 480px); padding: 10px 14px; border-radius: 10px;
+  font-size: 13px; line-height: 1.45; color: var(--text-primary);
+  background: var(--bg-secondary); border: 1px solid var(--border); box-shadow: var(--shadow-pop);
+  transform: translate(-50%, 8px); opacity: 0; transition: opacity .2s ease, transform .2s ease;
+  pointer-events: none;
+}
+.np-toast--on { opacity: 1; transform: translate(-50%, 0); }
+
+/* 드래그 기록 창 (⌘⌥⇧L) */
+.np-draglog {
+  position: fixed; inset: 10% 15%; z-index: 10001; display: flex; flex-direction: column; gap: 8px;
+  padding: 12px; border-radius: 12px; background: var(--bg-secondary); border: 1px solid var(--border); box-shadow: var(--shadow-pop);
+}
+.np-draglog textarea {
+  flex: 1; resize: none; font: 11px/1.5 Menlo, monospace; color: var(--text-primary);
+  background: var(--bg-primary); border: 1px solid var(--border); border-radius: 8px; padding: 8px;
+}
+.np-draglog div { display: flex; gap: 8px; justify-content: flex-end; }
+.np-draglog button { height: 28px; padding: 0 12px; border-radius: 6px; font-size: 12px; background: var(--hover-bg); color: var(--text-primary); }
+.np-draglog button:first-child { background: var(--accent); color: white; }
