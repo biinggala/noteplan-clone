@@ -79,30 +79,41 @@ export default function LeftSidebar() {
   //  잘려 있을 수 있으므로, 항상 현재 파서로 content를 다시 읽어 단일 진실원천으로 삼음)
   // 목록은 최신순 — 각 태그/멘션이 쓰인 노트 중 가장 최근 updatedAt을 기준으로 삼는다.
   // (정렬 자체는 buildTagTree가 계층 레벨마다 수행하므로 여기선 순서 대신 기준값을 넘긴다)
-  const collectFacets = (pick: (text: string) => string[]) => {
+  // 노트마다 파싱 결과를 기억한다 — 내용이 그대로인 노트는 다시 훑지 않는다
+  // (예전엔 한 노트만 바뀌어도 수천 개 노트를 전부 다시 정규식으로 훑었다)
+  const collectFacets = (pick: (text: string) => string[], cache: Map<string, { content: string; names: string[] }>) => {
     const recency = new Map<string, number>()
     const bump = (name: string, at: number) => {
       const prev = recency.get(name)
       if (prev === undefined || at > prev) recency.set(name, at)
     }
+    const namesOf = (id: string, content: string) => {
+      const hit = cache.get(id)
+      if (hit && hit.content === content) return hit.names
+      const names = pick(content)
+      cache.set(id, { content, names })
+      return names
+    }
     for (const n of notes) {
-      for (const name of pick(n.content ?? '')) bump(name, n.updatedAt ?? 0)
+      for (const name of namesOf(n.id, n.content ?? '')) bump(name, n.updatedAt ?? 0)
     }
     // 열려 있는 노트는 아직 저장 전일 수 있어 store의 notes보다 내용이 앞선다
     if (activeNote?.content) {
-      for (const name of pick(activeNote.content)) bump(name, activeNote.updatedAt ?? 0)
+      for (const name of namesOf('active:' + activeNote.id, activeNote.content)) bump(name, activeNote.updatedAt ?? 0)
     }
     return { names: [...recency.keys()], recency }
   }
+  const tagCache = useRef(new Map<string, { content: string; names: string[] }>()).current
+  const mentionCache = useRef(new Map<string, { content: string; names: string[] }>()).current
 
   const { names: allTags, recency: tagRecency } = useMemo(
-    () => collectFacets(extractTags),
+    () => collectFacets(extractTags, tagCache),
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [notes, activeNote?.content, activeNote?.updatedAt],
   )
 
   const { names: allMentions, recency: mentionRecency } = useMemo(
-    () => collectFacets(extractMentions),
+    () => collectFacets(extractMentions, mentionCache),
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [notes, activeNote?.content, activeNote?.updatedAt],
   )

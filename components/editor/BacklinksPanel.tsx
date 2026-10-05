@@ -1,5 +1,5 @@
 'use client'
-import { useEffect, useState } from 'react'
+import { useEffect, useState, memo } from 'react'
 import { useRouter } from 'next/navigation'
 import { getBacklinks } from '@/lib/db/noteRepository'
 import { routeForNote } from '@/lib/hooks/useWikiLink'
@@ -46,7 +46,7 @@ function renderLine(line: string, title: string) {
   )
 }
 
-export default function BacklinksPanel({ title, noteId }: BacklinksPanelProps) {
+function BacklinksPanel({ title, noteId }: BacklinksPanelProps) {
   const router = useRouter()
   const [refs, setRefs] = useState<Ref[] | null>(null)
   const [collapsed, setCollapsed] = useState(false)
@@ -121,3 +121,6 @@ export default function BacklinksPanel({ title, noteId }: BacklinksPanelProps) {
     </div>
   )
 }
+
+// 본문을 칠 때마다 페이지가 다시 그려져도, 받는 값(제목 등)이 그대로면 다시 그리지 않는다
+export default memo(BacklinksPanel)

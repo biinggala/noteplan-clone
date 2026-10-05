@@ -1,5 +1,5 @@
 'use client'
-import { Suspense, useEffect, useCallback } from 'react'
+import { Suspense, useEffect, useCallback, useState } from 'react'
 import { useSearchParams, useRouter } from 'next/navigation'
 import { format, getDaysInMonth, addMonths } from 'date-fns'
 import { useCalendarStore } from '@/lib/stores/calendarStore'
@@ -10,10 +10,13 @@ import { usePromoteToAtom } from '@/lib/hooks/usePromoteToAtom'
 import { useWikiLink } from '@/lib/hooks/useWikiLink'
 import BacklinksPanel from '@/components/editor/BacklinksPanel'
 import SupersededBanner from '@/components/editor/SupersededBanner'
-import PageHeader from '@/components/layout/PageHeader'
+import PageHeader, { IconButton } from '@/components/layout/PageHeader'
+import HistoryIcon from '@/components/icons/HistoryIcon'
+import type { NoteRevision } from '@/lib/db/noteRepository'
 import dynamic from 'next/dynamic'
 
 const NoteEditor = dynamic(() => import('@/components/editor/NoteEditor'), { ssr: false })
+const NoteHistoryPanel = dynamic(() => import('@/components/editor/NoteHistoryPanel'), { ssr: false })
 
 export default function MonthlyNotePage() {
   return (
@@ -46,6 +49,13 @@ function MonthlyNoteInner() {
   const note = doc.note
   const { promote, dialog: promoteDialog } = usePromoteToAtom(note?.title)
 
+  // 버전 기록 (데일리·노트와 같은 '타임머신')
+  const [showHistory, setShowHistory] = useState(false)
+  const handleRestore = useCallback((revision: NoteRevision) => {
+    doc.setContent(revision.content)
+    setShowHistory(false)
+  }, [doc])
+
   if (!note) {
     return (
       <div className="flex h-full items-center justify-center text-[var(--text-muted)]">
@@ -67,7 +77,10 @@ function MonthlyNoteInner() {
           isCurrent: month === format(new Date(), 'yyyy-MM'),
           prevLabel: '지난달 (⌥⌘←)', nextLabel: '다음 달 (⌥⌘→)', todayLabel: 'This month',
         }}
-        actions={<SaveStatusBadge status={doc.status} error={doc.error} typingAuthor={doc.typingAuthor} />}
+        status={<SaveStatusBadge status={doc.status} error={doc.error} typingAuthor={doc.typingAuthor} />}
+        actions={<IconButton label="이전 버전 보기" onClick={() => setShowHistory(true)}>
+            <HistoryIcon className="w-4 h-4" />
+          </IconButton>}
       />
 
       {doc.notice && <NoticeBar text={doc.notice} onClose={doc.dismissNotice} />}
@@ -93,6 +106,14 @@ function MonthlyNoteInner() {
       {promoteDialog}
 
       <BacklinksPanel title={note.title} noteId={note.id} />
+
+      {showHistory && (
+        <NoteHistoryPanel
+          noteId={note.id}
+          onRestore={handleRestore}
+          onClose={() => setShowHistory(false)}
+        />
+      )}
     </div>
   )
 }

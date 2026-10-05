@@ -70,11 +70,22 @@ function DailyNoteInner() {
   // 본문이 바뀔 때마다 타임라인 블록·캘린더 점 갱신 (어디서 바뀌었든)
   // date 가 다른 노트가 잠깐 남아 있는 동안엔 반영하지 않는다
   const content = note?.date === dateStr ? note.content : null
+  // 타자 중엔 잠깐 모았다가 한 번 (타임라인 다시 그리기가 매 글자마다 돌지 않게)
+  const syncedOnce = useRef<string | null>(null)
   useEffect(() => {
     if (content == null) return
-    syncTimeBlocks(dateStr, parseTimeBlockLines(content))
-    setTaskDate(dateStr, hasOpenTask(content))
+    const run = () => {
+      syncTimeBlocks(dateStr, parseTimeBlockLines(content))
+      setTaskDate(dateStr, hasOpenTask(content))
+      syncedOnce.current = dateStr
+    }
+    if (syncedOnce.current !== dateStr) { run(); return }   // 노트를 연 직후는 바로
+    const t = setTimeout(run, 200)
+    return () => clearTimeout(t)
   }, [content, dateStr, syncTimeBlocks, setTaskDate])
+
+  const noteContentRef = useRef<string | null>(null)
+  useEffect(() => { noteContentRef.current = note?.date === dateStr ? note.content : null })
 
   // ── 이 주의 주간 노트에 있는 task를 상단 요약박스에 표시 ──────────────────
   const [weeklyNote, setWeeklyNote] = useState<Note | null>(null)
@@ -115,10 +126,11 @@ function DailyNoteInner() {
     if (match) {
       const newPrefix = newLine.match(/^\s*(?:- \[[ x>-]\]\s|\+(?: \[x\])?\s)/i)?.[0] ?? match.linePrefix
       updateTimeBlock(match.id, { linePrefix: newPrefix, noteLineText: newLine })
-      if (match.date === dateStr && note) {
+      const openContent = noteContentRef.current
+      if (match.date === dateStr && openContent != null) {
         // 지금 열려 있는 이 데일리 노트 — 편집 세션을 통해 바꾼다
         // (DB 에 직접 쓰면 편집 중인 내용과 충돌한다)
-        const lines = note.content.split('\n')
+        const lines = openContent.split('\n')
         const i = lines.findIndex(l => l === task.raw)
         if (i >= 0) { lines[i] = newLine; doc.setContent(lines.join('\n')) }
       } else {
@@ -132,7 +144,10 @@ function DailyNoteInner() {
         }).catch(err => console.error('[타임블록 연결 노트 저장 실패]', err))
       }
     }
-  }, [weeklyNote, timeBlocks, updateTimeBlock, dateStr, note, doc])
+  // 본문(note)은 ref 로 읽는다 — 의존성에 넣으면 타자마다 함수가 새로 만들어져
+  // 요약박스까지 매 글자 다시 그려졌다
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [weeklyNote, timeBlocks, updateTimeBlock, dateStr, doc.setContent])
 
   const handleRestore = useCallback((revision: NoteRevision) => {
     doc.setContent(revision.content)
@@ -141,8 +156,6 @@ function DailyNoteInner() {
 
   // ── 타임라인에서 만든 '할 일' → 지금 열린 이 노트에 넣기 ────────────────────
   // DB 에 직접 쓰면 편집 중인 내용과 충돌하므로, 열려 있으면 편집 세션으로 넣는다
-  const noteContentRef = useRef<string | null>(null)
-  useEffect(() => { noteContentRef.current = note?.date === dateStr ? note.content : null })
   useEffect(() => {
     const onAppend = (e: Event) => {
       const d = (e as CustomEvent<AppendTaskDetail>).detail
@@ -201,12 +214,10 @@ function DailyNoteInner() {
           isCurrent: dateStr === today,
           prevLabel: '전날 (⌥⌘←)', nextLabel: '다음 날 (⌥⌘→)', todayLabel: 'Today',
         }}
-        actions={<>
-          <SaveStatusBadge status={doc.status} error={doc.error} typingAuthor={doc.typingAuthor} />
-          <IconButton label="이전 버전 보기" onClick={() => setShowHistory(true)}>
+        status={<SaveStatusBadge status={doc.status} error={doc.error} typingAuthor={doc.typingAuthor} />}
+        actions={<IconButton label="이전 버전 보기" onClick={() => setShowHistory(true)}>
             <HistoryIcon className="w-4 h-4" />
-          </IconButton>
-        </>}
+          </IconButton>}
       />
 
       {doc.notice && <NoticeBar text={doc.notice} onClose={doc.dismissNotice} />}
