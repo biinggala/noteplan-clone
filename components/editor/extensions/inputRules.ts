@@ -1,6 +1,8 @@
-import { EditorView } from '@codemirror/view'
-import { Prec } from '@codemirror/state'
-import { syntaxTree } from '@codemirror/language'
+import { EditorView, keymap } from '@codemirror/view'
+import { Prec, EditorSelection, type ChangeSpec } from '@codemirror/state'
+import { syntaxTree, getIndentUnit, indentString } from '@codemirror/language'
+import { indentMore, indentLess } from '@codemirror/commands'
+import { shiftListLines } from '@/lib/text/orderedList'
 
 /**
  * NotePlan 입력 규칙:
@@ -18,11 +20,11 @@ import { syntaxTree } from '@codemirror/language'
  *   Enter는 여기서 Prec.highest로 먼저 처리하고, 인용(>)·코드 블록 등
  *   나머지는 lang-markdown에 넘긴다.
  *
- * Tab / Shift+Tab:
- *   숫자 리스트 줄에서 Tab → 2칸 들여쓰기 + 번호를 1.로 리셋
- *   숫자 리스트 줄에서 Shift+Tab → 2칸 내어쓰기 + 번호를 1.로 리셋
- *   불릿/태스크 줄에서 Tab → 2칸 들여쓰기
- *   불릿/태스크 줄에서 Shift+Tab → 2칸 내어쓰기
+ * Tab / Shift+Tab (번호 목록 줄):
+ *   Tab → 한 단계 들여쓰고 번호는 그 단계에서 새로 1. (같은 단계 앞 항목이 있으면 이어서)
+ *   Shift+Tab → 한 단계 내어쓰고 바깥 단계 번호를 이어 받는다
+ *   아래에 남은 항목들도 각 단계에서 번호가 이어지게 다시 매긴다
+ *   불릿/태스크 줄은 기본 들여쓰기(indentWithTab)
  */
 export function inputRulesExtension() {
   return [
@@ -55,73 +57,14 @@ export function inputRulesExtension() {
       },
     })),
 
-    // Tab / Shift+Tab
-    EditorView.domEventHandlers({
-      keydown(e, view) {
-        const isTab = e.key === 'Tab' && !e.metaKey && !e.ctrlKey
-        if (!isTab) return false
-
-        const { from } = view.state.selection.main
-        const line = view.state.doc.lineAt(from)
-        const text = line.text
-
-        // ── Tab / Shift+Tab ────────────────────────────────────────────
-        {
-          const numberedList = text.match(/^(\s*)(\d+)\.\s/)
-          const bulletTask  = text.match(/^(\s*)(- (\[.?\] )?|\+ )/)
-
-          if (numberedList || bulletTask) {
-            e.preventDefault()
-            const currentIndent = (numberedList ?? bulletTask)![1]
-
-            if (!e.shiftKey) {
-              // Indent: add 2 spaces
-              if (numberedList) {
-                // reset numbering to 1.
-                const after = text.slice(numberedList[0].length)
-                const newLine = `${currentIndent}  1. ${after}`
-                const newCursorOffset = from - line.from - numberedList[0].length + newLine.length - after.length
-                view.dispatch({
-                  changes: { from: line.from, to: line.to, insert: newLine },
-                  selection: { anchor: line.from + Math.max(0, newCursorOffset) },
-                  userEvent: 'input.type',
-                })
-              } else {
-                // bullets/tasks: just indent
-                view.dispatch({
-                  changes: { from: line.from, to: line.from, insert: '  ' },
-                  selection: { anchor: from + 2 },
-                  userEvent: 'input.type',
-                })
-              }
-            } else {
-              // Shift+Tab: remove up to 2 leading spaces
-              const removeCount = Math.min(2, currentIndent.length)
-              if (removeCount === 0) return true
-              if (numberedList) {
-                const after = text.slice(numberedList[0].length)
-                const newIndent = currentIndent.slice(removeCount)
-                const newLine = `${newIndent}1. ${after}`
-                const newCursorOffset = line.from + newLine.length - after.length
-                view.dispatch({
-                  changes: { from: line.from, to: line.to, insert: newLine },
-                  selection: { anchor: newCursorOffset },
-                  userEvent: 'input.type',
-                })
-              } else {
-                view.dispatch({
-                  changes: { from: line.from, to: line.from + removeCount, insert: '' },
-                  selection: { anchor: Math.max(line.from, from - removeCount) },
-                  userEvent: 'input.type',
-                })
-              }
-            }
-            return true
-          }
-          return false
-        }
-      },
-    }),
+    // Tab / Shift+Tab: 번호 목록 줄은 단계를 옮기면서 번호를 다시 매긴다.
+    // NoteEditor 키맵의 indentWithTab 이 Tab 을 먼저 가져가서 예전 처리기는 한 번도
+    // 돌지 않았다 (들여써도 번호가 3. 그대로). 그래서 키맵으로, 더 높은 우선순위로 건다.
+    // 번호 목록이 아닌 줄은 false → indentWithTab 이 평소대로 들여쓴다.
+    Prec.highest(keymap.of([
+      { key: 'Tab', run: v => shiftListCommand(v, 1) },
+      { key: 'Shift-Tab', run: v => shiftListCommand(v, -1) },
+    ])),
 
     // "타이핑으로 줄바꿈이 삽입돼 새 빈 줄로 커서가 이동" + 윗줄이 리스트면 마커 이어붙임.
     // (한글 조합-Enter처럼 keydown이 안 잡히는 경우를 결과 기반으로 처리 → 이중 없이 한 번만)
@@ -239,6 +182,93 @@ function continueList(view: EditorView): boolean {
     changes: { from, to: from + lead, insert },
     selection: { anchor: from + insert.length },
     userEvent: 'input.type',
+    scrollIntoView: true,
+  })
+  return true
+}
+
+/**
+ * 선택한 줄들에 번호 목록 줄이 있으면 한 단계 들이거나 내어쓰고 번호를 다시 매긴다.
+ * 번호 목록 줄이 없으면 false (기본 들여쓰기로 넘어감).
+ */
+function shiftListCommand(view: EditorView, dir: 1 | -1): boolean {
+  // 한글 조합 중에 문서를 바꾸면 조합이 깨진다 → 조합이 끝난 뒤에 처리
+  if (view.composing) {
+    const started = Date.now()
+    const retry = () => {
+      if (view.composing && Date.now() - started < 1000) { setTimeout(retry, 16); return }
+      if (!shiftList(view, dir)) (dir > 0 ? indentMore : indentLess)(view)
+    }
+    setTimeout(retry, 0)
+    return true
+  }
+  return shiftList(view, dir)
+}
+
+function shiftList(view: EditorView, dir: 1 | -1): boolean {
+  const { state } = view
+  const doc = state.doc
+  let first = Infinity, last = -1
+  for (const r of state.selection.ranges) {
+    const a = doc.lineAt(r.from).number
+    // 선택 끝이 줄 맨 앞이면 그 줄은 빼고 (여러 줄을 끌어 선택했을 때 흔함)
+    let bLine = doc.lineAt(r.to)
+    if (!r.empty && r.to === bLine.from && bLine.number > a) bLine = doc.line(bLine.number - 1)
+    first = Math.min(first, a)
+    last = Math.max(last, bLine.number)
+  }
+  if (inCode(view, doc.line(first).from)) return false
+
+  // 아래쪽 다시 매기기를 위해 목록이 끝나는 곳(빈 줄)까지만 본다
+  const winEnd = (() => {
+    for (let n = last + 1; n <= doc.lines; n++) if (!doc.line(n).text.trim()) return n - 1
+    return doc.lines
+  })()
+  const winStart = (() => {
+    for (let n = first - 1; n >= 1; n--) if (!doc.line(n).text.trim()) return n + 1
+    return 1
+  })()
+  const before: string[] = []
+  for (let n = winStart; n <= winEnd; n++) before.push(doc.line(n).text)
+
+  const after = shiftListLines(before, first - winStart, last - winStart, dir, {
+    unit: indentString(state, getIndentUnit(state)),
+    tabSize: state.tabSize,
+  })
+  if (!after) return false
+
+  // 바뀐 부분만 바꿔서 커서·선택이 내용 기준으로 그대로 따라오게
+  const changes: ChangeSpec[] = []
+  for (let i = 0; i < before.length; i++) {
+    const a = before[i], b = after[i]
+    if (a === b) continue
+    let p = 0
+    while (p < a.length && p < b.length && a[p] === b[p]) p++
+    let s = 0
+    while (s < a.length - p && s < b.length - p && a[a.length - 1 - s] === b[b.length - 1 - s]) s++
+    const line = doc.line(winStart + i)
+    changes.push({ from: line.from + p, to: line.from + a.length - s, insert: b.slice(p, b.length - s) })
+  }
+  if (!changes.length) return true
+  const cs = state.changes(changes)
+  view.dispatch({
+    changes: cs,
+    selection: EditorSelection.create(
+      state.selection.ranges.map(r => {
+        // 줄 맨 앞(마커 앞)의 커서는 마커 뒤로 — 들여쓴 공백 앞에 남지 않게
+        const line = doc.lineAt(r.head)
+        const atStart = r.empty && r.head <= line.from + (line.text.match(/^\s*\S+\s/)?.[0].length ?? 0)
+        if (atStart) {
+          const nl = cs.mapPos(line.from, -1)
+          const nt = after[line.number - winStart] ?? ''
+          const m = nt.match(/^\s*\S+\s/)
+          return EditorSelection.cursor(nl + (m ? m[0].length : 0))
+        }
+        return r.map(cs, 1)
+      }),
+      state.selection.mainIndex,
+    ),
+    userEvent: dir > 0 ? 'input.indent' : 'delete.dedent',
     scrollIntoView: true,
   })
   return true
