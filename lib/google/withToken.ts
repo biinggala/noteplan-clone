@@ -8,21 +8,34 @@ import { refreshGoogleAccessToken } from '@/lib/google/auth'
 
 let inflight: Promise<string | null> | null = null
 let lastRefreshAt = 0
+let lastFailAt = 0   // 갱신이 계속 실패하면 포커스마다 다시 두드리지 않게
 
-/** refresh token으로 access token을 새로 받는다. 동시에 여러 번 불려도 갱신은 한 번. */
-export function refreshGoogleTokenNow(): Promise<string | null> {
+/**
+ * access token 을 새로 받는다. 동시에 여러 번 불려도 갱신은 한 번.
+ * - 로컬에 refresh token 이 있으면(처음 연결 직후) 그걸 보내고, 서버가 보관하면 로컬 사본을 지운다.
+ * - 없으면 서버 보관본으로 갱신한다.
+ * silent: 서버 보관본이 없을 때 배너를 띄우지 않는다 (새 기기에서 '혹시 있나' 확인용)
+ */
+export function refreshGoogleTokenNow(opts: { silent?: boolean } = {}): Promise<string | null> {
   if (inflight) return inflight
   inflight = (async () => {
-    const { googleRefreshToken, setGoogleToken, setGoogleAuthError } = useAuthStore.getState()
-    if (!googleRefreshToken) return null
-    const { token, error } = await refreshGoogleAccessToken(googleRefreshToken)
+    const st = useAuthStore.getState()
+    const local = st.googleRefreshToken
+    if (!local && !st.googleTokenOnServer && !opts.silent) return null
+    const { token, error, stored, noStoredToken } = await refreshGoogleAccessToken(local)
     if (token) {
       lastRefreshAt = Date.now()
-      setGoogleToken(token)
-      setGoogleAuthError(null)
+      st.setGoogleToken(token)
+      st.setGoogleAuthError(null)
+      if (stored) st.setGoogleTokenOnServer(true)
       return token
     }
-    setGoogleAuthError(error ?? '구글 토큰 갱신 실패')
+    if (noStoredToken) {
+      st.setGoogleTokenOnServer(false)
+      if (opts.silent) return null
+    }
+    lastFailAt = Date.now()
+    st.setGoogleAuthError(error ?? '구글 토큰 갱신 실패')
     return null
   })().finally(() => { inflight = null })
   return inflight
@@ -31,6 +44,7 @@ export function refreshGoogleTokenNow(): Promise<string | null> {
 /** 마지막 갱신이 maxAgeMs보다 오래됐으면 갱신 (앱이 다시 앞으로 올 때용). */
 export function refreshGoogleTokenIfStale(maxAgeMs: number) {
   if (Date.now() - lastRefreshAt < maxAgeMs) return
+  if (Date.now() - lastFailAt < 5 * 60 * 1000) return
   void refreshGoogleTokenNow()
 }
 

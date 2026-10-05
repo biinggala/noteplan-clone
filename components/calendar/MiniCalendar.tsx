@@ -9,6 +9,7 @@ import { useEffect, useRef, useState } from 'react'
 import { useCalendarStore } from '@/lib/stores/calendarStore'
 import { useCalendarEventStore } from '@/lib/stores/calendarEventStore'
 import { useAuthStore } from '@/lib/stores/authStore'
+import { refreshGoogleTokenNow } from '@/lib/google/withToken'
 import { useTaskDotStore, hasOpenTask } from '@/lib/stores/taskDotStore'
 import { fetchAllCalendarEventsForRange } from '@/lib/google/calendar'
 import { getNoteSummariesByDateRange } from '@/lib/db/noteRepository'
@@ -25,7 +26,7 @@ export default function MiniCalendar() {
   const router = useRouter()
   const { selectedDate, selectedWeek, setSelectedDate, today, viewMonthDate: viewDate, setViewMonthDate: setViewDate } = useCalendarStore()
 
-  const { googleAccessToken, googleAuthError, googleRefreshToken, setGoogleAuthError } = useAuthStore()
+  const { googleAccessToken, googleAuthError } = useAuthStore()
   const {
     calendars, enabledCalendarIds,
     eventsByDate, mergeEvents,
@@ -75,10 +76,8 @@ export default function MiniCalendar() {
       })
       .catch(err => {
         console.error('[MiniCalendar fetch]', err)
-        // 토큰 만료인데 refresh token이 없으면(구버전 로그인) 갱신으로 못 살림 → 재연결 배너
-        if (err instanceof Error && err.message === 'GOOGLE_TOKEN_EXPIRED' && !googleRefreshToken) {
-          setGoogleAuthError('구글 토큰이 만료됐습니다. 재연결이 필요합니다.')
-        }
+        // 토큰 만료 → 바로 갱신 (새 토큰이 오면 이 effect 가 다시 돈다). 갱신도 실패하면 배너.
+        if (err instanceof Error && err.message === 'GOOGLE_TOKEN_EXPIRED') void refreshGoogleTokenNow()
       })
       .finally(() => setFetchingMonth(monthKey, false))
   // eslint-disable-next-line react-hooks/exhaustive-deps

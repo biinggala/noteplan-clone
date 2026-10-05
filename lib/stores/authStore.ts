@@ -8,11 +8,15 @@ interface AuthState {
   loading: boolean
   googleAccessToken: string | null
   googleRefreshToken: string | null
+  /** refresh token 을 서버(google_tokens)가 보관 중 — 로컬엔 사본을 두지 않는다 */
+  googleTokenOnServer: boolean
   googleAuthError: string | null   // 토큰 갱신 실패 메시지 (재연결 유도)
   setUser: (user: User | null) => void
   setSession: (session: Session | null, opts?: { captureGoogleToken?: boolean }) => void
   setLoading: (loading: boolean) => void
   setGoogleToken: (token: string | null) => void
+  /** 서버 보관이 확인되면 로컬 refresh token 을 지운다 (false 면 서버 보관본 없음) */
+  setGoogleTokenOnServer: (onServer: boolean) => void
   setGoogleAuthError: (msg: string | null) => void
 }
 
@@ -24,6 +28,7 @@ export const useAuthStore = create<AuthState>()(
       loading: true,
       googleAccessToken: null,
       googleRefreshToken: null,
+      googleTokenOnServer: false,
       googleAuthError: null,
       setUser: (user) => set({ user }),
       // provider_token / provider_refresh_token은 초기 OAuth 콜백에만 있음 → persist로 살려둠
@@ -43,12 +48,16 @@ export const useAuthStore = create<AuthState>()(
             user: session?.user ?? null,
             googleAccessToken: providerToken ?? (session ? state.googleAccessToken : null),
             googleRefreshToken: providerRefresh ?? (session ? state.googleRefreshToken : null),
+            googleTokenOnServer: session ? state.googleTokenOnServer : false,
             // 캘린더 토큰을 새로 받았다면 이전 실패 배너는 치운다
             ...(providerToken ? { googleAuthError: null } : {}),
           }
         }),
       setLoading: (loading) => set({ loading }),
       setGoogleToken: (token) => set({ googleAccessToken: token }),
+      setGoogleTokenOnServer: (onServer) => set(onServer
+        ? { googleTokenOnServer: true, googleRefreshToken: null }
+        : { googleTokenOnServer: false }),
       setGoogleAuthError: (msg) => set({ googleAuthError: msg }),
     }),
     {
@@ -57,6 +66,7 @@ export const useAuthStore = create<AuthState>()(
       partialize: (state) => ({
         googleAccessToken: state.googleAccessToken,
         googleRefreshToken: state.googleRefreshToken,
+        googleTokenOnServer: state.googleTokenOnServer,
       }),
     }
   )

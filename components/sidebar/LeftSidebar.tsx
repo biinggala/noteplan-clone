@@ -1,4 +1,5 @@
 'use client'
+import { useCalendarEventStore } from '@/lib/stores/calendarEventStore'
 import { useEffect, useState, useMemo, useRef } from 'react'
 import { useRouter, usePathname, useSearchParams } from 'next/navigation'
 import { format, subDays, addDays, parseISO } from 'date-fns'
@@ -152,11 +153,19 @@ export default function LeftSidebar() {
         }).catch(console.error)
       }, 300)
     }
-    const channel = supabase
-      .channel('notes-list')
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'notes' }, refresh)
-      .subscribe()
-    return () => { clearTimeout(timer); supabase.removeChannel(channel) }
+    // 내 행만 구독한다. 필터가 없으면 RLS 가 적용되지 않는 DELETE 이벤트로
+    // 다른 사용자의 노트 id 가 흘러 들어오고, 그때마다 목록을 다시 받았다.
+    let channel: ReturnType<typeof supabase.channel> | null = null
+    let cancelled = false
+    supabase.auth.getSession().then(({ data }) => {
+      const uid = data.session?.user.id
+      if (cancelled || !uid) return
+      channel = supabase
+        .channel(`notes-list:${uid}`)
+        .on('postgres_changes', { event: '*', schema: 'public', table: 'notes', filter: `user_id=eq.${uid}` }, refresh)
+        .subscribe()
+    })
+    return () => { cancelled = true; clearTimeout(timer); if (channel) supabase.removeChannel(channel) }
   }, [setNotes])
 
   const navItem = (label: string, path: string, icon: React.ReactNode) => {
@@ -483,6 +492,12 @@ function UserFooter() {
 
   const handleLogout = async () => {
     await supabase.auth.signOut()
+    // 같은 기기에서 다음에 로그인하는 사람에게 이전 사용자의 캘린더 목록·
+    // 진행 중이던 OAuth 표식이 남지 않게 지운다 (구글 토큰은 signOut 이벤트에서 비워진다)
+    useCalendarEventStore.persist.clearStorage()
+    try {
+      for (const k of ['np-oauth-started', 'np-oauth-with-calendar', 'auth-google-token']) localStorage.removeItem(k)
+    } catch { /* storage 를 못 써도 로그아웃은 진행 */ }
     window.location.href = '/login'
   }
 
