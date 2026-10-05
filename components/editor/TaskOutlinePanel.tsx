@@ -20,17 +20,37 @@ const ICON: Record<TaskOutlineType, string> = {
 
 const TOGGLEABLE: TaskOutlineType[] = ['open', 'done', 'checklist', 'checklist-done']
 
-function TaskIcon({ type, onClick }: { type: TaskOutlineType; onClick?: () => void }) {
+const LABEL: Record<TaskOutlineType, string> = {
+  open: '할 일',
+  done: '완료한 할 일',
+  cancelled: '취소한 할 일',
+  scheduled: '미룬 할 일',
+  checklist: '체크리스트',
+  'checklist-done': '완료한 체크리스트',
+}
+
+function TaskIcon({ type, text, onClick }: { type: TaskOutlineType; text: string; onClick?: () => void }) {
   const done = type === 'done' || type === 'checklist-done'
   const cancelled = type === 'cancelled'
-  const clickable = onClick && TOGGLEABLE.includes(type)
+  const clickable = !!onClick && TOGGLEABLE.includes(type)
   return (
     <span
+      role="checkbox"
+      aria-checked={done ? true : cancelled ? 'mixed' : false}
+      aria-disabled={clickable ? undefined : true}
+      aria-label={`${LABEL[type]}: ${text}`}
+      tabIndex={clickable ? 0 : undefined}
       onClick={clickable ? onClick : undefined}
-      className={`inline-block w-4 text-center flex-shrink-0 ${clickable ? 'cursor-pointer hover:opacity-70' : ''}`}
+      onKeyDown={clickable ? (e) => {
+        if (e.key === ' ' || e.key === 'Enter') {
+          e.preventDefault()
+          onClick?.()
+        }
+      } : undefined}
+      className={`inline-block w-4 text-center flex-shrink-0 rounded-sm ${clickable ? 'cursor-pointer hover:opacity-70 focus-visible:outline focus-visible:outline-2 focus-visible:outline-[var(--accent)] focus-visible:outline-offset-1' : ''}`}
       style={{ color: done ? 'var(--accent)' : cancelled ? 'var(--text-muted)' : 'var(--accent)', opacity: done ? 1 : cancelled ? 1 : 0.65 }}
     >
-      {ICON[type]}
+      <span aria-hidden="true">{ICON[type]}</span>
     </span>
   )
 }
@@ -97,7 +117,7 @@ export default function TaskOutlinePanel({ content, title = '할 일 요약', on
                             : 'text-[var(--text-primary)]'
                         }`}
                       >
-                        <TaskIcon type={task.type} onClick={onToggleTask ? () => onToggleTask(task) : undefined} />
+                        <TaskIcon type={task.type} text={task.text} onClick={onToggleTask ? () => onToggleTask(task) : undefined} />
                         <span className="min-w-0 break-words">{task.text}</span>
                       </div>
                     ))}
