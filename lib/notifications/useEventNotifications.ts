@@ -1,14 +1,15 @@
 'use client'
-import { useEffect, useRef } from 'react'
-import { format } from 'date-fns'
+import { useEffect } from 'react'
+import { addDays, format } from 'date-fns'
 import { useCalendarEventStore } from '@/lib/stores/calendarEventStore'
-import { eventToTimeRange } from '@/lib/google/calendar'
+import { eventInterval, isDeclinedBySelf, type GoogleCalendarEvent } from '@/lib/google/calendar'
+import { useTodayEvents } from '@/lib/hooks/useTodayEvents'
 
 const NOTIFY_BEFORE_MINS = 10   // 몇 분 전에 알림
 const CHECK_INTERVAL_MS  = 60_000  // 1분마다 체크
 
-/** 이미 알림을 보낸 이벤트 ID를 기억 (세션 동안만) */
-const notifiedIds = new Set<string>()
+/** 이미 알림을 보낸 (이벤트 ID + 시작 시각) — 일정을 옮기면 새 시각으로 다시 알린다 (세션 동안만) */
+const notifiedKeys = new Set<string>()
 
 const isTauri = () =>
   typeof window !== 'undefined' && '__TAURI_INTERNALS__' in window
@@ -40,49 +41,53 @@ async function showNotification(title: string, body: string) {
   new Notification(title, { body, icon: '/icon.png', silent: false })
 }
 
+/** 지금부터 NOTIFY_BEFORE_MINS 안에 '시작하는' 일정 (실제 시작 시각 기준) */
+export function eventsStartingSoon(
+  eventsByDate: Record<string, GoogleCalendarEvent[]>,
+  now: Date,
+): { ev: GoogleCalendarEvent; start: Date; minutesLeft: number }[] {
+  const days = [format(now, 'yyyy-MM-dd'), format(addDays(now, 1), 'yyyy-MM-dd')]
+  const seen = new Set<string>()
+  const out: { ev: GoogleCalendarEvent; start: Date; minutesLeft: number }[] = []
+  for (const d of days) {
+    for (const ev of eventsByDate[d] ?? []) {
+      if (seen.has(ev.id)) continue
+      seen.add(ev.id)
+      if (isDeclinedBySelf(ev)) continue          // 거절한 일정은 알리지 않는다
+      const iv = eventInterval(ev)
+      if (!iv) continue                            // 종일 일정
+      // 시·분만 보고 '오늘 그 시각'으로 계산하면 어제 시작한 일정이 오늘 같은 시각에 또 울렸다
+      const diffMin = (iv.start.getTime() - now.getTime()) / 60_000
+      if (diffMin > 0 && diffMin <= NOTIFY_BEFORE_MINS) {
+        out.push({ ev, start: iv.start, minutesLeft: Math.max(1, Math.round(diffMin)) })
+      }
+    }
+  }
+  return out
+}
+
 export function useEventNotifications() {
-  const { eventsByDate } = useCalendarEventStore()
-  const eventsByDateRef = useRef(eventsByDate)
-  eventsByDateRef.current = eventsByDate
+  // 오늘 일정은 화면과 상관없이 주기적으로 불러온다 (레이아웃에서 이 훅이 한 번 돈다)
+  useTodayEvents()
 
   useEffect(() => {
     let permitted = false
-    requestPermission().then(ok => { permitted = ok })
+    requestPermission().then(ok => { permitted = ok; if (ok) check() })
 
     function check() {
       if (!permitted) return
-
-      const now = new Date()
-      const todayStr = format(now, 'yyyy-MM-dd')
-      const events = eventsByDateRef.current[todayStr] ?? []
-      const nowMs = now.getTime()
-
-      for (const ev of events) {
-        const { startHour, startMinute, allDay } = eventToTimeRange(ev)
-        if (allDay) continue
-
-        // 오늘 날짜 기준으로 이벤트 시작 시각을 ms로 계산
-        const startMs = new Date(
-          now.getFullYear(), now.getMonth(), now.getDate(),
-          startHour, startMinute, 0, 0
-        ).getTime()
-        const diffMin = (startMs - nowMs) / 60_000
-
-        // NOTIFY_BEFORE_MINS±0.5분 윈도우 안에 들어오는 이벤트
-        if (diffMin > 0 && diffMin <= NOTIFY_BEFORE_MINS && !notifiedIds.has(ev.id)) {
-          notifiedIds.add(ev.id)
-          const minutesLeft = Math.round(diffMin)
-          showNotification(
-            ev.summary ?? '이벤트',
-            `${minutesLeft}분 후에 시작됩니다`
-          )
-        }
+      for (const { ev, start, minutesLeft } of eventsStartingSoon(useCalendarEventStore.getState().eventsByDate, new Date())) {
+        const key = `${ev.id}|${start.getTime()}`
+        if (notifiedKeys.has(key)) continue
+        notifiedKeys.add(key)
+        void showNotification(ev.summary ?? '이벤트', `${minutesLeft}분 후에 시작됩니다`)
       }
     }
 
-    // 즉시 1번 체크 후 1분 주기
+    // 즉시 1번 체크 후 1분 주기 + 일정을 새로 불러오면 바로 한 번 더
     check()
     const id = setInterval(check, CHECK_INTERVAL_MS)
-    return () => clearInterval(id)
-  }, []) // eventsByDate는 ref로 추적 — 재등록 없이 최신값 사용
+    const unsub = useCalendarEventStore.subscribe((s, prev) => { if (s.eventsByDate !== prev.eventsByDate) check() })
+    return () => { clearInterval(id); unsub() }
+  }, []) // eventsByDate는 getState()로 최신값을 읽는다 — 재등록 없이
 }
