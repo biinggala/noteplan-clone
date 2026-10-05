@@ -10,12 +10,12 @@ import ThemeProvider from '@/components/ThemeProvider'
 import { createClient } from '@/lib/supabase/client'
 import { useAuthStore } from '@/lib/stores/authStore'
 import { useEventNotifications } from '@/lib/notifications/useEventNotifications'
-import { refreshGoogleAccessToken } from '@/lib/google/auth'
+import { refreshGoogleTokenNow, refreshGoogleTokenIfStale } from '@/lib/google/withToken'
 import { useIsMobile } from '@/lib/hooks/useIsMobile'
 
 export default function AppLayout({ children }: { children: React.ReactNode }) {
   const router = useRouter()
-  const { session, loading, setSession, setLoading, googleRefreshToken, setGoogleToken, setGoogleAuthError } = useAuthStore()
+  const { session, loading, setSession, setLoading, googleRefreshToken } = useAuthStore()
   const supabase = createClient()
   const isMobile = useIsMobile()
   useEventNotifications()  // 캘린더 이벤트 10분 전 알림
@@ -36,25 +36,25 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
     return () => subscription.unsubscribe()
   }, [])
 
-  // ── Google access token 자동 갱신 (시작 시 + 50분마다) ───────────────────
-  // access token은 ~1시간 만료 → refresh token으로 갱신해 재인증 없이 유지
+  // ── Google access token 자동 갱신 (시작 시 + 50분마다 + 앱이 다시 앞으로 올 때) ──
+  // access token은 ~1시간 만료 → refresh token으로 갱신해 재인증 없이 유지.
+  // 맥이 잠들어 있던 동안엔 interval 이 돌지 않아, 깨어난 직후엔 만료된 토큰으로
+  // 일정 추가가 실패했다 → 포커스/화면 복귀 때 오래된 토큰이면 바로 갱신.
   useEffect(() => {
     if (!googleRefreshToken) return
-    let cancelled = false
-    const doRefresh = async () => {
-      const { token, error } = await refreshGoogleAccessToken(googleRefreshToken)
-      if (cancelled) return
-      if (token) {
-        setGoogleToken(token)
-        setGoogleAuthError(null)   // 복구됨 → 에러 배너 제거
-      } else {
-        setGoogleAuthError(error ?? '구글 토큰 갱신 실패')
-      }
+    void refreshGoogleTokenNow()  // 시작 시 즉시 (만료된 토큰 교체)
+    const id = setInterval(() => { void refreshGoogleTokenNow() }, 50 * 60 * 1000)
+    const onWake = () => {
+      if (document.visibilityState === 'visible') refreshGoogleTokenIfStale(40 * 60 * 1000)
     }
-    doRefresh()  // 시작 시 즉시 (만료된 토큰 교체)
-    const id = setInterval(doRefresh, 50 * 60 * 1000)
-    return () => { cancelled = true; clearInterval(id) }
-  }, [googleRefreshToken, setGoogleToken, setGoogleAuthError])
+    window.addEventListener('focus', onWake)
+    document.addEventListener('visibilitychange', onWake)
+    return () => {
+      clearInterval(id)
+      window.removeEventListener('focus', onWake)
+      document.removeEventListener('visibilitychange', onWake)
+    }
+  }, [googleRefreshToken])
 
   // ── 클라이언트 인증 가드 (정적 export는 middleware 없음) ──────────────────
   useEffect(() => {
