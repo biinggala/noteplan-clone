@@ -149,16 +149,19 @@ function DailyNoteInner() {
     const used = new Set<number>()
     let changed = false
     for (const up of pendingUpdates) {
-      // 같은 내용의 줄이 여러 개일 수 있으므로 이미 쓴 줄은 건너뛴다
-      const idx = lines.findIndex((l, i) => !used.has(i) && l.trim() === up.find.trim())
+      // 다른 날짜 노트를 향한 요청(날짜를 옮기는 사이 쌓인 것 등)은 버린다
+      if (up.date !== dateStr) continue
+      // 같은 내용의 줄이 여러 개일 수 있으므로 이미 쓴 줄은 건너뛰고, 줄 번호를 알면 그 줄 우선
+      const fits = (i: number) => !used.has(i) && lines[i] !== undefined && lines[i].trim() === up.find.trim()
+      const idx = up.lineIndex !== undefined && fits(up.lineIndex) ? up.lineIndex : lines.findIndex((_, i) => fits(i))
       if (idx < 0) continue
       used.add(idx)
-      lines[idx] = up.replace
+      lines[idx] = (lines[idx].match(/^\s*/)?.[0] ?? '') + up.replace.trimStart()  // 들여쓰기 유지
       changed = true
     }
     if (changed) setDocContent(lines.join('\n'))
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [pendingUpdates])
+  }, [pendingUpdates, note?.id])
 
   if (!note) {
     return (

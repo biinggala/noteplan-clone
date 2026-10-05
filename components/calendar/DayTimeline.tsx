@@ -1,24 +1,33 @@
 'use client'
-import { useEffect, useMemo, useRef, useState, useCallback } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
-import { addDays, format, parseISO } from 'date-fns'
+import { usePathname, useSearchParams } from 'next/navigation'
+import { addDays, addMinutes, format, parseISO } from 'date-fns'
 import { useTimeBlockStore, type TimeBlock } from '@/lib/stores/timeBlockStore'
 import { useLineUpdateStore } from '@/lib/stores/lineUpdateStore'
-import { DRAG_TYPE, type LineDragData } from '@/components/editor/extensions/dragHandle'
 import { formatTimeRange } from '@/lib/parser/timeBlockParser'
 import { useAuthStore } from '@/lib/stores/authStore'
 import { useCalendarEventStore } from '@/lib/stores/calendarEventStore'
-import { useTimelineDragStore } from '@/lib/dnd/timelineDragStore'
+import { useTimelineDragStore, dailyNoteDateFrom } from '@/lib/dnd/timelineDragStore'
 import { openExternal } from '@/lib/openExternal'
-import { withGoogleToken, googleErrorMessage } from '@/lib/google/withToken'
+import {
+  withGoogleToken, googleErrorMessage, reportGoogleError, refreshGoogleTokenNow,
+} from '@/lib/google/withToken'
+import {
+  linkTimeblocks, desiredSummary, moveTimeblockEvent, syncTimeblockSummary,
+  deleteTimeblockEvent, blockStartMins,
+} from '@/lib/google/timeblockLink'
 import {
   fetchCalendarList,
   fetchAllCalendarEventsForRange,
+  CalendarFetchError,
   createCalendarEvent,
   createAllDayEvent,
   updateCalendarEvent,
   deleteCalendarEvent,
-  eventToTimeRange, type GoogleCalendarEvent,
+  eventSegmentForDay, eventInterval, isAllDayEvent, isDeclinedBySelf,
+  dateAtMinutes, eventTimeFor, toRfc3339,
+  type GoogleCalendar, type GoogleCalendarEvent, type DaySegment,
 } from '@/lib/google/calendar'
 
 interface DayTimelineProps {
@@ -32,14 +41,52 @@ const PX_PER_MIN = SLOT_H / 60
 const SNAP = 15
 const DEFAULT_DURATION = 30
 const TOTAL_H = HOURS.length * SLOT_H
-
-const getW = () => window as unknown as Record<string, unknown>
+const DAY_MINS = 24 * 60
+const BLOCK_MIN_H = 20
+const EVENT_MIN_H = 18
+const MOVE_THRESHOLD_PX = 4
 
 function snapTo15(m: number) { return Math.round(m / SNAP) * SNAP }
+const clamp = (v: number, lo: number, hi: number) => Math.max(lo, Math.min(hi, v))
+const hhmm = (mins: number) => `${String(Math.floor(mins / 60)).padStart(2, '0')}:${String(mins % 60).padStart(2, '0')}`
 
-// ── Day column header labels ───────────────────────────────────────────────
+/** 쓰기 권한 (owner/writer). accessRole 이 없으면 예전처럼 쓸 수 있다고 본다 */
+function calendarWritable(cal: GoogleCalendar | undefined) {
+  const role = cal?.accessRole
+  return !role || role === 'owner' || role === 'writer'
+}
 
-const DAY_FMT = ['EEE\nd', 'EEE d', 'EEE, MMM d']
+// ── 겹침 배치 (구글 캘린더식 lane packing) ────────────────────────────────────
+// 겹치는 항목끼리 묶고, 묶음 안에서 비어 있는 가장 왼쪽 열에 넣는다.
+// 폭 = 1/열 수, 왼쪽 = 열 번호 × 폭. 이벤트와 타임블록을 같이 배치한다.
+interface LaneItem { key: string; start: number; end: number }
+interface Lane { lane: number; lanes: number }
+
+function packLanes(items: LaneItem[]): Map<string, Lane> {
+  const sorted = [...items].sort((a, b) => a.start - b.start || (b.end - b.start) - (a.end - a.start))
+  const out = new Map<string, Lane>()
+  let cluster: { key: string; lane: number }[] = []
+  let laneEnds: number[] = []
+  let clusterEnd = -Infinity
+  const flush = () => {
+    for (const c of cluster) out.set(c.key, { lane: c.lane, lanes: laneEnds.length })
+    cluster = []; laneEnds = []; clusterEnd = -Infinity
+  }
+  for (const it of sorted) {
+    if (cluster.length && it.start >= clusterEnd) flush()
+    let lane = laneEnds.findIndex(e => e <= it.start)
+    if (lane < 0) { lane = laneEnds.length; laneEnds.push(it.end) } else laneEnds[lane] = it.end
+    cluster.push({ key: it.key, lane })
+    clusterEnd = Math.max(clusterEnd, it.end)
+  }
+  flush()
+  return out
+}
+
+function laneStyle(l: Lane | undefined): React.CSSProperties {
+  const lane = l?.lane ?? 0, lanes = l?.lanes ?? 1
+  return { left: `calc(${(lane * 100) / lanes}% + 2px)`, width: `calc(${100 / lanes}% - 4px)` }
+}
 
 export default function DayTimeline({ date, days = 1 }: DayTimelineProps) {
   // ── Time ─────────────────────────────────────────────────────────────────
@@ -62,34 +109,49 @@ export default function DayTimeline({ date, days = 1 }: DayTimelineProps) {
   const currentMinute = now?.getMinutes() ?? 0
   const todayStr      = now ? format(now, 'yyyy-MM-dd') : ''
 
+  // 지금 열려 있는 일간 노트 날짜 — 타임블록(그 노트의 줄)은 이 날짜 것만 고칠 수 있다
+  const pathname = usePathname()
+  const searchParams = useSearchParams()
+  const openDaily = dailyNoteDateFrom(pathname, searchParams?.get('date') ?? null)
+
   // ── Stores ────────────────────────────────────────────────────────────────
-  const { timeBlocks, addTimeBlock, removeTimeBlock, updateTimeBlock } = useTimeBlockStore()
+  const { timeBlocks, removeTimeBlock, updateTimeBlock } = useTimeBlockStore()
   const { requestUpdate } = useLineUpdateStore()
   const { googleAccessToken, setGoogleAuthError } = useAuthStore()
   const {
-    calendars, enabledCalendarIds,
-    setCalendars, eventsByDate, setFetching, fetchingDates,
-    mergeEvents, addEvent, removeEvent, patchEvent,
+    calendars, enabledCalendarIds, fetchGen,
+    setCalendars, eventsByDate, setFetching,
+    mergeEvents, addEvent, removeEvent, restoreEvent, updateEvent,
+    notice, setNotice,
   } = useCalendarEventStore()
 
   // pointer 드래그 미리보기 (pointerLineDrag → 슬롯 위 점선 블록)
   const dragPreview = useTimelineDragStore(s => s.preview)
 
-  // ── Local state ───────────────────────────────────────────────────────────
-  const [dragOverSlot, setDragOverSlot] = useState<{
-    date: string; hour: number; minute: number; duration: number
-  } | null>(null)
+  // 알림은 잠깐만
+  useEffect(() => {
+    if (!notice) return
+    const t = setTimeout(() => setNotice(null), 8000)
+    return () => clearTimeout(t)
+  }, [notice, setNotice])
 
-  // ev = 이 블록에 연결된 Google 이벤트. findTimeblockEvent가 '시작시각 + 내용'으로
-  // 찾기 때문에, 시작시각이 바뀌는 조작(위쪽 리사이즈·이동)에서는 변경 전에
-  // 미리 잡아두지 않으면 pointerup 시점엔 더 이상 못 찾는다.
+  // ── Local state ───────────────────────────────────────────────────────────
+  // ev = 이 블록에 연결된 Google 이벤트. 시작시각이 바뀌는 조작 중에는 연결이
+  // 잠깐 끊기므로 시작할 때 잡아둔다.
   const [resizing, setResizing] = useState<{
     blockId: string; startY: number; startDuration: number
     ev: GoogleCalendarEvent | null
   } | null>(null)
 
   const [resizingTop, setResizingTop] = useState<{
-    blockId: string; originalEndMins: number
+    blockId: string; originalEndMins: number; origStartMins: number
+    ev: GoogleCalendarEvent | null
+  } | null>(null)
+
+  // 타임블록 이동 (pointer — HTML5 draggable 은 WKWebView 에서 동작하지 않는다)
+  const [blockDrag, setBlockDrag] = useState<{
+    blockId: string; date: string; startY: number; grabOffsetMins: number
+    origMins: number; mins: number; duration: number; moved: boolean
     ev: GoogleCalendarEvent | null
   } | null>(null)
 
@@ -114,25 +176,24 @@ export default function DayTimeline({ date, days = 1 }: DayTimelineProps) {
   const newEventFormRef  = useRef<HTMLDivElement>(null)
   const allDayInputRef   = useRef<HTMLInputElement>(null)
 
+  function closeNewEventForm() {
+    setNewEventSlot(null)
+    setNewEventTitle('')
+    setCreateError(null)
+  }
+
   // Close new-event form on outside click
   useEffect(() => {
     if (!newEventSlot) return
     function onDown(e: MouseEvent) {
-      if (newEventFormRef.current && !newEventFormRef.current.contains(e.target as Node)) {
-        setNewEventSlot(null)
-        setNewEventTitle('')
-        setCreateError(null)
-      }
+      if (newEventFormRef.current && !newEventFormRef.current.contains(e.target as Node)) closeNewEventForm()
     }
     document.addEventListener('mousedown', onDown)
     return () => document.removeEventListener('mousedown', onDown)
   }, [newEventSlot])
 
   // Writable calendars: owner or writer access only
-  const writableCalendars = useMemo(
-    () => calendars.filter(c => !c.accessRole || c.accessRole === 'owner' || c.accessRole === 'writer'),
-    [calendars]
-  )
+  const writableCalendars = useMemo(() => calendars.filter(calendarWritable), [calendars])
 
   // Pick primary (or first writable) calendar when calendars load
   useEffect(() => {
@@ -146,31 +207,19 @@ export default function DayTimeline({ date, days = 1 }: DayTimelineProps) {
   }, [newEventSlot])
 
   // ── Google Calendar event drag/resize state ───────────────────────────────
-  const [gcalDrag, setGcalDrag] = useState<{
+  const [gcalOp, setGcalOp] = useState<{
+    kind: 'move' | 'resize' | 'resizeTop'
     ev: GoogleCalendarEvent
     date: string
-    startMins: number   // drag start absolute minutes
-    durMins: number
-    grabOffsetMins: number
-  } | null>(null)
-
-  const [gcalResizing, setGcalResizing] = useState<{
-    ev: GoogleCalendarEvent
-    date: string
+    seg: DaySegment        // 이 칸에서의 원래 구간
     startY: number
-    startDurMins: number
-    startStartMins: number
+    grabOffsetMins: number
+    moved: boolean
   } | null>(null)
 
-  const [gcalResizingTop, setGcalResizingTop] = useState<{
-    ev: GoogleCalendarEvent
-    date: string
-    originalEndMins: number
-  } | null>(null)
-
-  // Optimistic override while dragging/resizing a GCal event
+  // Optimistic override while dragging/resizing a GCal event (그 칸 기준 분)
   const [gcalOverride, setGcalOverride] = useState<{
-    id: string; startMins: number; durMins: number
+    id: string; date: string; startMins: number; endMins: number
   } | null>(null)
 
   // ── Event detail panel ────────────────────────────────────────────────────
@@ -178,38 +227,65 @@ export default function DayTimeline({ date, days = 1 }: DayTimelineProps) {
     ev: GoogleCalendarEvent
     date: string
     anchorRect: DOMRect
+    returnFocus?: HTMLElement | null
   } | null>(null)
   const panelRef = useRef<HTMLDivElement>(null)
   // 이벤트 패널 내 이름 변경
   const [renaming, setRenaming] = useState(false)
   const [renameText, setRenameText] = useState('')
+  const renamingRef = useRef(false)   // Enter 후 blur 로 한 번 더 들어오는 것 막기
 
-  // Close panel on outside click
+  function closePanel() {
+    const back = eventPanel?.returnFocus
+    setEventPanel(null)
+    back?.focus?.()
+  }
+
+  // Close panel on outside click / Escape
   useEffect(() => {
     if (!eventPanel) return
     function onDown(e: MouseEvent) {
-      if (panelRef.current && !panelRef.current.contains(e.target as Node)) {
-        setEventPanel(null)
-      }
+      if (panelRef.current && !panelRef.current.contains(e.target as Node)) setEventPanel(null)
+    }
+    function onKey(e: KeyboardEvent) {
+      if (e.key === 'Escape' && !renamingRef.current) closePanel()
     }
     document.addEventListener('mousedown', onDown)
-    return () => document.removeEventListener('mousedown', onDown)
+    document.addEventListener('keydown', onKey)
+    return () => {
+      document.removeEventListener('mousedown', onDown)
+      document.removeEventListener('keydown', onKey)
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [eventPanel])
 
   // 다른 이벤트 패널 열면 rename 모드 초기화
-  useEffect(() => { setRenaming(false) }, [eventPanel?.ev.id])
+  useEffect(() => { setRenaming(false); renamingRef.current = false }, [eventPanel?.ev.id])
+
+  // 이벤트 쓰기 권한: 캘린더 owner/writer + (남이 만든 초대 일정이면 손님 수정 허용일 때만)
+  function canDeleteEvent(ev: GoogleCalendarEvent) {
+    return calendarWritable(calendars.find(c => c.id === ev.calendarId))
+  }
+  function canEditEvent(ev: GoogleCalendarEvent) {
+    if (!canDeleteEvent(ev) || ev.locked) return false
+    if (ev.organizer && !ev.organizer.self && !ev.guestsCanModify) return false
+    return true
+  }
 
   // 이벤트 이름 변경 (Google 연동)
-  async function confirmRename(ev: GoogleCalendarEvent, evDate: string) {
+  async function confirmRename(ev: GoogleCalendarEvent) {
+    if (!renamingRef.current) return
+    renamingRef.current = false
     const title = renameText.trim()
     setRenaming(false)
-    if (!title || title === ev.summary || !googleAccessToken) return
-    patchEvent(evDate, evDate, ev.id, { summary: title })
+    if (!title || title === ev.summary || !googleAccessToken || !canEditEvent(ev)) return
+    const prev = ev.summary
+    updateEvent(ev.id, { summary: title })
     try {
-      await updateCalendarEvent(googleAccessToken, ev.calendarId, ev.id, { summary: title })
+      await withGoogleToken(token => updateCalendarEvent(token, ev.calendarId, ev.id, { summary: title }))
     } catch (err) {
-      console.error('[rename event]', err)
-      patchEvent(evDate, evDate, ev.id, { summary: ev.summary })
+      updateEvent(ev.id, { summary: prev })
+      reportGoogleError(err, 'rename event')
     }
   }
 
@@ -231,6 +307,22 @@ export default function DayTimeline({ date, days = 1 }: DayTimelineProps) {
   }, [timeBlocks, dates])
 
   const todayInView = dates.includes(todayStr)
+
+  // 타임블록 ↔ 이벤트 연결. 연결된 이벤트는 블록이 대표하므로 따로 그리지 않는다.
+  // 블록이 없는(노트에서 줄을 지웠거나 아직 그 날 노트를 안 연) 타임블록 이벤트는
+  // 일반 이벤트로 보인다 — 예전엔 항상 숨겨서 보이지 않는 고아가 생겼다.
+  const linkMap = useMemo(() => linkTimeblocks(timeBlocks, eventsByDate), [timeBlocks, eventsByDate])
+  const hiddenEventIds = useMemo(() => {
+    const s = new Set([...linkMap.values()].map(e => e.id))
+    // 블록을 끌거나 늘리는 동안은 연결이 잠깐 끊긴다 — 그 사이 이벤트가 튀어나오지 않게
+    for (const ev of [resizing?.ev, resizingTop?.ev, blockDrag?.ev]) if (ev) s.add(ev.id)
+    return s
+  }, [linkMap, resizing?.ev, resizingTop?.ev, blockDrag?.ev])
+
+  const blockEditable = (b: TimeBlock) =>
+    b.date === openDaily && !!b.noteLineText && b.originalContent !== undefined
+  // 노트 줄이 없는 블록(주간·일반 노트에서 끌어와 이번 세션에만 있는 것)은 지우기만
+  const blockDeletable = (b: TimeBlock) => blockEditable(b) || !b.noteLineText
 
   // ── Google Calendar: 캘린더 목록 fetch ───────────────────────────────────
   // accessToken 변경마다 항상 re-fetch (캐시 무효화 + accessRole 최신화)
@@ -254,12 +346,11 @@ export default function DayTimeline({ date, days = 1 }: DayTimelineProps) {
         // 결과: "연결은 했는데 일정이 아무것도 안 뜨고 에러도 없음".
         console.error('[CalendarList]', err)
         const msg = err instanceof Error ? err.message : String(err)
+        if (msg === 'GOOGLE_TOKEN_EXPIRED') { void refreshGoogleTokenNow(); return }
         setGoogleAuthError(
           msg === 'GOOGLE_CALENDAR_SCOPE_MISSING'
             ? '이 토큰에는 캘린더 권한이 없습니다. 톱니 → Google 캘린더 연결을 다시 해주세요.'
-            : msg === 'GOOGLE_TOKEN_EXPIRED'
-              ? '구글 토큰이 만료됐습니다. 재연결이 필요합니다.'
-              : `캘린더 목록을 불러오지 못했습니다: ${msg}`,
+            : `캘린더 목록을 불러오지 못했습니다: ${msg}`,
         )
       })
   }, [googleAccessToken, setCalendars, setGoogleAuthError])
@@ -268,74 +359,78 @@ export default function DayTimeline({ date, days = 1 }: DayTimelineProps) {
   const fetchedTokenRef = useRef<string | null>(null)
   useEffect(() => {
     if (!googleAccessToken || calendars.length === 0 || dates.length === 0) return
+    const st = useCalendarEventStore.getState()
     // 토큰이 바뀌었으면(재연결/자동갱신) 캐시 무시하고 전체 재fetch
     const tokenChanged = fetchedTokenRef.current !== googleAccessToken
     const unfetched = tokenChanged
       ? [...dates]
-      : dates.filter(d => eventsByDate[d] === undefined && !fetchingDates.has(d))
+      : dates.filter(d => st.needsFetch(d) && !st.fetchingDates.has(d))
     if (unfetched.length === 0) return
     fetchedTokenRef.current = googleAccessToken
+    // 출발 시점의 세대 — 그 사이 캘린더를 켜고 끄면 이 결과는 버린다
+    const gen = st.fetchGen
 
     const startDate = unfetched[0]
     const endDate   = unfetched[unfetched.length - 1]
     unfetched.forEach(d => setFetching(d, true))
 
-    fetchAllCalendarEventsForRange(googleAccessToken, calendars, enabledCalendarIds, startDate, endDate)
-      .then(grouped => {
-        // 이벤트 없는 날도 빈 배열로 표시해 중복 fetch 방지
-        const full: Record<string, GoogleCalendarEvent[]> = {}
-        unfetched.forEach(d => { full[d] = grouped[d] ?? [] })
-        mergeEvents(full)
-      })
-      .catch(err => {
-        if (err instanceof Error && err.message !== 'GOOGLE_TOKEN_EXPIRED')
-          console.error('[Timeline fetch]', err)
-      })
-      .finally(() => unfetched.forEach(d => setFetching(d, false)))
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [googleAccessToken, calendars, enabledCalendarIds, dates])
-
-  // 타임블록 ↔ Google 이벤트 재검색 (npTimeblock 마커 + 시각 + npContent).
-  // fetch된 eventsByDate 기반이라 재시작·기기 무관하게 링크됨.
-  function findTimeblockEvent(date: string, startHour: number, startMinute: number, content: string) {
-    return (eventsByDate[date] ?? []).find(ev => {
-      const p = ev.extendedProperties?.private
-      if (!p?.npTimeblock) return false
-      const t = eventToTimeRange(ev)
-      if (t.allDay) return false
-      return t.startHour === startHour && t.startMinute === startMinute
-        && (p.npContent ?? '') === content
-    })
-  }
-
-  // 타임블록 완료(체크) 전환 → 링크된 Google 이벤트 제목에 ✓ 추가/제거
-  const syncedDoneRef = useRef<Set<string>>(new Set())
-  useEffect(() => {
-    if (!googleAccessToken) return
-    for (const b of timeBlocks) {
-      const status = getTaskStatus(b.linePrefix)
-      const done = status === 'done' || status === 'cancelled'
-      const key = `${b.date}|${b.startHour}:${b.startMinute}|${b.content}`
-      const alreadyDone = syncedDoneRef.current.has(key)
-      if (done === alreadyDone) continue
-      const ev = findTimeblockEvent(b.date, b.startHour, b.startMinute, b.content)
-      if (!ev) continue
-      if (done) {
-        syncedDoneRef.current.add(key)
-        patchEvent(b.date, b.date, ev.id, { summary: `✓ ${b.content}` })
-        updateCalendarEvent(googleAccessToken, ev.calendarId, ev.id, { summary: `✓ ${b.content}` })
-          .catch(err => console.error('[done→gcal]', err))
-      } else {
-        syncedDoneRef.current.delete(key)
-        patchEvent(b.date, b.date, ev.id, { summary: b.content })
-        updateCalendarEvent(googleAccessToken, ev.calendarId, ev.id, { summary: b.content })
-          .catch(err => console.error('[undone→gcal]', err))
-      }
+    const fill = (grouped: Record<string, GoogleCalendarEvent[]>) => {
+      // 이벤트 없는 날도 빈 배열로 표시해 중복 fetch 방지
+      const full: Record<string, GoogleCalendarEvent[]> = {}
+      unfetched.forEach(d => { full[d] = grouped[d] ?? [] })
+      return full
     }
-  }, [timeBlocks, googleAccessToken, eventsByDate])
+    fetchAllCalendarEventsForRange(googleAccessToken, calendars, st.enabledCalendarIds, startDate, endDate)
+      .then(grouped => { mergeEvents(fill(grouped), { gen }) })
+      .catch(err => {
+        if (err instanceof CalendarFetchError) {
+          // 받은 만큼은 보여주되 '불러옴'으로 치지 않는다 → 다음에 다시 불러온다
+          mergeEvents(fill(err.partial), { gen, incomplete: true })
+          console.error('[Timeline fetch]', err)
+          setNotice(err.message)
+        } else if (err instanceof Error && err.message === 'GOOGLE_TOKEN_EXPIRED') {
+          // 갱신되면 토큰이 바뀌어 이 effect 가 다시 돈다. 갱신 실패는 배너로.
+          void refreshGoogleTokenNow()
+        } else {
+          console.error('[Timeline fetch]', err)
+        }
+      })
+      .finally(() => {
+        if (useCalendarEventStore.getState().fetchGen === gen) unfetched.forEach(d => setFetching(d, false))
+      })
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [googleAccessToken, calendars, enabledCalendarIds, dates, fetchGen])
+
+  // ── 타임블록 → 이벤트 제목 동기화 (완료 ✓ + 줄 내용 변경) ───────────────
+  // 원하는 제목과 실제 제목이 다를 때만 PATCH 한다. 예전엔 마운트할 때마다 완료된
+  // 블록마다 PATCH 를 다시 보냈고, 줄 내용을 고쳐도 이벤트 제목은 그대로였다.
+  // 열려 있는 일간 노트의 블록만 본다 (그게 막 읽은 '정답'이다 — 다른 날 블록은
+  // 예전에 읽어둔 것이라 다른 기기에서 고친 걸 되돌릴 수 있다).
+  const summaryTriedRef = useRef(new Map<string, string>())
+  useEffect(() => {
+    if (!googleAccessToken || !openDaily) return
+    const t = setTimeout(() => {
+      const dayBlocks = useTimeBlockStore.getState().timeBlocks.filter(b => b.date === openDaily)
+      const links = linkTimeblocks(dayBlocks, useCalendarEventStore.getState().eventsByDate)
+      for (const b of dayBlocks) {
+        const ev = links.get(b.id)
+        if (!ev || !canEditEvent(ev)) continue
+        const want = desiredSummary(b)
+        if (ev.summary === want && ev.extendedProperties?.private?.npContent === b.content) continue
+        // 같은 목표로는 한 번만 시도 (실패해도 렌더마다 다시 두드리지 않게)
+        const key = `${want}\u0000${b.content}`
+        if (summaryTriedRef.current.get(ev.id) === key) continue
+        summaryTriedRef.current.set(ev.id, key)
+        void syncTimeblockSummary(ev, want, b.content)
+      }
+    }, 800)  // 타이핑 중엔 기다렸다가 한 번
+    return () => clearTimeout(t)
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [timeBlocks, eventsByDate, googleAccessToken, openDaily, calendars])
 
   // gridRef is on the flex container (gutter + columns) — used for Y calculation
   const gridRef = useRef<HTMLDivElement>(null)
+  const gridTop = () => gridRef.current?.getBoundingClientRect().top ?? 0
 
   // ── 드래그 중 엣지 자동 스크롤 ────────────────────────────────────────────
   const autoScrollRef = useRef<number | null>(null)
@@ -380,16 +475,6 @@ export default function DayTimeline({ date, days = 1 }: DayTimelineProps) {
 
   // ── Helpers ───────────────────────────────────────────────────────────────
 
-  function getLineDragPayload(e: React.DragEvent): LineDragData | null {
-    const g = getW()['__npLineDrag'] as LineDragData | null
-    if (g?.type === 'line') return g
-    try {
-      const raw = e.dataTransfer.getData(DRAG_TYPE)
-      if (raw) return JSON.parse(raw) as LineDragData
-    } catch { /* ignore */ }
-    return null
-  }
-
   /** Snap minute from Y position within an hour-row div. */
   function minuteFromRowEvent(e: { clientY: number; currentTarget: EventTarget }): number {
     const rect = (e.currentTarget as HTMLElement).getBoundingClientRect()
@@ -397,146 +482,17 @@ export default function DayTimeline({ date, days = 1 }: DayTimelineProps) {
     return snapTo15((offsetY / SLOT_H) * 60) % 60
   }
 
-  function getDragDuration(): number {
-    const id = getW()['__npBlockDrag'] as string | null
-    if (id) {
-      const b = useTimeBlockStore.getState().timeBlocks.find(b => b.id === id)
-      if (b) return b.duration
-    }
-    return DEFAULT_DURATION
-  }
-
-  /** Y → { hour, minute } using the shared grid ref, applying grab-offset for blocks. */
-  function slotFromClientY(clientY: number): { hour: number; minute: number } {
-    const top = gridRef.current?.getBoundingClientRect().top ?? 0
-    const grabY = (getW()['__npBlockGrabY'] as number | null) ?? 0
-    const rawMins = Math.max(0, (clientY - grabY - top) / PX_PER_MIN)
-    const snapped = Math.min(23 * 60 + 45, snapTo15(rawMins))
-    return { hour: Math.floor(snapped / 60), minute: snapped % 60 }
-  }
-
   function minsFromClientY(clientY: number): number {
-    const top = gridRef.current?.getBoundingClientRect().top ?? 0
-    return Math.min(23 * 60 + 45, snapTo15(Math.max(0, (clientY - top) / PX_PER_MIN)))
+    return Math.min(23 * 60 + 45, snapTo15(Math.max(0, (clientY - gridTop()) / PX_PER_MIN)))
   }
 
-  // ── Drag-over / drop ──────────────────────────────────────────────────────
-
-  function handleDragOver(e: React.DragEvent, targetDate: string, hour: number) {
-    const hasLine  = document.body.getAttribute('data-np-dragging') === 'line' || !!getW()['__npLineDrag']
-    const hasBlock = !!getW()['__npBlockDrag']
-    if (!hasLine && !hasBlock) return
-    e.preventDefault()
-    e.dataTransfer.dropEffect = 'move'
-    startEdgeScroll(e.clientY)   // ← 엣지 자동 스크롤
-    const slot = hasBlock
-      ? slotFromClientY(e.clientY)
-      : { hour, minute: minuteFromRowEvent(e) }
-    const duration = getDragDuration()
-    setDragOverSlot(prev =>
-      prev?.date === targetDate && prev.hour === slot.hour &&
-      prev.minute === slot.minute && prev.duration === duration
-        ? prev : { date: targetDate, ...slot, duration }
-    )
+  /** 블록의 원래 노트 줄을 고쳐 달라는 요청 (그 날짜 일간 노트에만 적용된다) */
+  function requestBlockLine(b: TimeBlock, replace: string) {
+    if (!b.noteLineText) return
+    requestUpdate({ date: b.date, find: b.noteLineText, replace, lineIndex: b.lineIndex })
   }
-
-  function handleDragLeave(e: React.DragEvent) {
-    if (!(e.currentTarget as HTMLElement).contains(e.relatedTarget as Node)) {
-      setDragOverSlot(null)
-      stopEdgeScroll()   // ← 타임라인 영역 벗어나면 정지
-    }
-  }
-
-  function handleDrop(e: React.DragEvent, targetDate: string, hour: number) {
-    setDragOverSlot(null)
-    stopEdgeScroll()   // ← drop 시 정지
-
-    // ── Block-move ──────────────────────────────────────────────────────────
-    const movingId = getW()['__npBlockDrag'] as string | null
-    if (movingId) {
-      const { hour: tHour, minute: tMin } = slotFromClientY(e.clientY)
-      getW()['__npBlockDrag'] = null
-      getW()['__npBlockGrabY'] = null
-      e.preventDefault()
-      const block = useTimeBlockStore.getState().timeBlocks.find(b => b.id === movingId)
-      if (!block) return
-      if (block.date === targetDate && block.startHour === tHour && block.startMinute === tMin) return
-      const oldLine = block.noteLineText
-      // 시작시각이 바뀌면 더 이상 못 찾으므로 옮기기 전에 연결된 이벤트를 잡아둔다
-      const linkedEv = findTimeblockEvent(block.date, block.startHour, block.startMinute, block.content)
-      updateTimeBlock(movingId, { date: targetDate, startHour: tHour, startMinute: tMin })
-      void syncBlockTimesToGcal(linkedEv, block.date, targetDate, tHour, tMin, block.duration)
-      if (oldLine !== undefined && block.originalContent !== undefined) {
-        const prefix = block.linePrefix ?? ''
-        requestUpdate(oldLine, `${prefix}${formatTimeRange(tHour, tMin, block.duration)} ${block.originalContent}`)
-      }
-      return
-    }
-
-    // ── Line from editor ────────────────────────────────────────────────────
-    const payload = getLineDragPayload(e)
-    if (!payload) return
-    e.preventDefault()
-    const startMinute  = minuteFromRowEvent(e)
-    const rawLine      = payload.content.trim()
-    const markerMatch  = rawLine.match(/^(-\s*\[.?\]\s*|-\s+|\*\s+|\+\s+)/)
-    const linePrefix   = markerMatch ? markerMatch[0] : ''
-    const cleanContent = rawLine.slice(linePrefix.length).trim()
-    if (!cleanContent) return
-    const timeRange = formatTimeRange(hour, startMinute, DEFAULT_DURATION)
-    const newLine   = linePrefix
-      ? `${linePrefix.trimEnd()} ${timeRange} ${cleanContent}`
-      : `${timeRange} ${rawLine}`
-    addTimeBlock({ date: targetDate, startHour: hour, startMinute, duration: DEFAULT_DURATION, content: cleanContent })
-    requestUpdate(rawLine, newLine)
-  }
-
-  // ── Positioning ───────────────────────────────────────────────────────────
-
-  function blockStyle(block: TimeBlock) {
-    const startMins       = block.startHour * 60 + block.startMinute
-    const clampedDuration = Math.min(block.duration, 24 * 60 - startMins)
-    return {
-      top:    block.startHour * SLOT_H + block.startMinute * PX_PER_MIN,
-      height: Math.max(clampedDuration * PX_PER_MIN, 20),
-    }
-  }
-
-  function formatTime(h: number, m: number) {
-    return `${h}:${m.toString().padStart(2, '0')}`
-  }
-
-  function toISO(dateStr: string, h: number, m: number) {
-    return `${dateStr}T${String(h).padStart(2,'0')}:${String(m).padStart(2,'0')}:00`
-  }
-
-  /**
-   * 타임블록을 늘리거나 옮겼을 때 연결된 Google 이벤트 시각도 같이 옮긴다.
-   * 예전엔 노트 텍스트와 로컬 스토어만 갱신해서, 구글 캘린더에는 만들 때의
-   * 30분짜리가 그대로 남아 있었다.
-   */
-  async function syncBlockTimesToGcal(
-    ev: GoogleCalendarEvent | null | undefined,
-    fromDate: string, toDate: string,
-    startHour: number, startMinute: number, duration: number,
-  ) {
-    if (!ev || !googleAccessToken) return
-    const startMins = startHour * 60 + startMinute
-    // 24:00 은 잘못된 시각이라 자정까지 꽉 찬 블록은 23:59로 잘라 보낸다
-    const endMins = Math.min(startMins + duration, 24 * 60 - 1)
-    const startISO = toISO(toDate, startHour, startMinute)
-    const endISO   = toISO(toDate, Math.floor(endMins / 60), endMins % 60)
-    patchEvent(fromDate, toDate, ev.id, {
-      start: { dateTime: startISO, date: undefined },
-      end:   { dateTime: endISO,   date: undefined },
-    })
-    try {
-      await updateCalendarEvent(googleAccessToken, ev.calendarId, ev.id, {
-        startDateTime: startISO,
-        endDateTime:   endISO,
-      })
-    } catch (err) { console.error('[timeblock → gcal 시간 동기화]', err) }
-  }
+  const blockLineText = (b: TimeBlock, startMins: number, duration: number) =>
+    `${b.linePrefix ?? ''}${formatTimeRange(Math.floor(startMins / 60), startMins % 60, duration)} ${b.originalContent ?? b.content}`
 
   // ── Resize – bottom ───────────────────────────────────────────────────────
 
@@ -545,21 +501,23 @@ export default function DayTimeline({ date, days = 1 }: DayTimelineProps) {
     ;(e.currentTarget as HTMLElement).setPointerCapture(e.pointerId)
     setResizing({
       blockId: block.id, startY: e.clientY, startDuration: block.duration,
-      ev: findTimeblockEvent(block.date, block.startHour, block.startMinute, block.content) ?? null,
+      ev: linkMap.get(block.id) ?? null,
     })
   }
   function onResizeMv(e: React.PointerEvent, block: TimeBlock) {
     if (!resizing || resizing.blockId !== block.id) return
     const delta  = (e.clientY - resizing.startY) / PX_PER_MIN
-    const maxDur = 24 * 60 - (block.startHour * 60 + block.startMinute)
+    const maxDur = DAY_MINS - blockStartMins(block)
     updateTimeBlock(block.id, { duration: Math.min(maxDur, Math.max(SNAP, snapTo15(resizing.startDuration + delta))) })
   }
-  function onResizeUp() {
+  function onResizeUp(commit = true) {
     if (resizing) {
       const b = useTimeBlockStore.getState().timeBlocks.find(b => b.id === resizing.blockId)
-      if (b?.noteLineText && b.originalContent !== undefined)
-        requestUpdate(b.noteLineText, `${b.linePrefix ?? ''}${formatTimeRange(b.startHour, b.startMinute, b.duration)} ${b.originalContent}`)
-      if (b) void syncBlockTimesToGcal(resizing.ev, b.date, b.date, b.startHour, b.startMinute, b.duration)
+      if (b && !commit) updateTimeBlock(b.id, { duration: resizing.startDuration })
+      else if (b && b.duration !== resizing.startDuration) {
+        requestBlockLine(b, blockLineText(b, blockStartMins(b), b.duration))
+        void moveTimeblockEvent(resizing.ev, b.date, blockStartMins(b), b.duration)
+      }
     }
     setResizing(null)
   }
@@ -571,8 +529,9 @@ export default function DayTimeline({ date, days = 1 }: DayTimelineProps) {
     ;(e.currentTarget as HTMLElement).setPointerCapture(e.pointerId)
     setResizingTop({
       blockId: block.id,
-      originalEndMins: block.startHour * 60 + block.startMinute + block.duration,
-      ev: findTimeblockEvent(block.date, block.startHour, block.startMinute, block.content) ?? null,
+      originalEndMins: blockStartMins(block) + block.duration,
+      origStartMins: blockStartMins(block),
+      ev: linkMap.get(block.id) ?? null,
     })
   }
   function onResizeTopMv(e: React.PointerEvent, block: TimeBlock) {
@@ -584,14 +543,66 @@ export default function DayTimeline({ date, days = 1 }: DayTimelineProps) {
       duration:    resizingTop.originalEndMins - newStart,
     })
   }
-  function onResizeTopUp() {
+  function onResizeTopUp(commit = true) {
     if (resizingTop) {
       const b = useTimeBlockStore.getState().timeBlocks.find(b => b.id === resizingTop.blockId)
-      if (b?.noteLineText && b.originalContent !== undefined)
-        requestUpdate(b.noteLineText, `${b.linePrefix ?? ''}${formatTimeRange(b.startHour, b.startMinute, b.duration)} ${b.originalContent}`)
-      if (b) void syncBlockTimesToGcal(resizingTop.ev, b.date, b.date, b.startHour, b.startMinute, b.duration)
+      if (b && !commit) {
+        // 취소: 원래대로 (끝은 그대로였다)
+        const s0 = resizingTop.origStartMins
+        updateTimeBlock(b.id, { startHour: Math.floor(s0 / 60), startMinute: s0 % 60, duration: resizingTop.originalEndMins - s0 })
+      } else if (b && blockStartMins(b) !== resizingTop.origStartMins) {
+        requestBlockLine(b, blockLineText(b, blockStartMins(b), b.duration))
+        void moveTimeblockEvent(resizingTop.ev, b.date, blockStartMins(b), b.duration)
+      }
     }
     setResizingTop(null)
+  }
+
+  // ── Block move (pointer) ──────────────────────────────────────────────────
+
+  function onBlockDown(e: React.PointerEvent, block: TimeBlock) {
+    if (!blockEditable(block) || e.button !== 0) return
+    if ((e.target as HTMLElement).closest('[data-resize],button')) return
+    e.preventDefault(); e.stopPropagation()
+    ;(e.currentTarget as HTMLElement).setPointerCapture(e.pointerId)
+    const start = blockStartMins(block)
+    setBlockDrag({
+      blockId: block.id, date: block.date, startY: e.clientY,
+      grabOffsetMins: (e.clientY - gridTop()) / PX_PER_MIN - start,
+      origMins: start, mins: start, duration: block.duration, moved: false,
+      ev: linkMap.get(block.id) ?? null,
+    })
+  }
+  function onBlockMove(e: React.PointerEvent, block: TimeBlock) {
+    if (blockDrag?.blockId !== block.id) return
+    const moved = blockDrag.moved || Math.abs(e.clientY - blockDrag.startY) >= MOVE_THRESHOLD_PX
+    const raw = (e.clientY - gridTop()) / PX_PER_MIN - blockDrag.grabOffsetMins
+    const mins = clamp(snapTo15(raw), 0, DAY_MINS - SNAP)
+    if (moved) startEdgeScroll(e.clientY)
+    if (moved !== blockDrag.moved || mins !== blockDrag.mins) setBlockDrag({ ...blockDrag, moved, mins })
+  }
+  function finishBlockDrag(commit: boolean) {
+    const d = blockDrag
+    setBlockDrag(null)
+    stopEdgeScroll()
+    if (!d || !commit || !d.moved || d.mins === d.origMins) return
+    const b = useTimeBlockStore.getState().timeBlocks.find(x => x.id === d.blockId)
+    if (!b) return
+    // 같은 날짜 안에서만 옮긴다 — 블록은 그 날짜 일간 노트의 줄이라 다른 날로 옮기려면
+    // 줄을 다른 노트로 옮겨야 한다 (지원하지 않음)
+    updateTimeBlock(b.id, { startHour: Math.floor(d.mins / 60), startMinute: d.mins % 60 })
+    requestBlockLine(b, blockLineText(b, d.mins, b.duration))
+    void moveTimeblockEvent(d.ev, b.date, d.mins, b.duration)
+  }
+
+  function deleteBlock(block: TimeBlock) {
+    if (block.noteLineText) {
+      requestBlockLine(block, (block.linePrefix ?? '') + (block.originalContent ?? block.content))
+    }
+    const linked = linkMap.get(block.id)
+    removeTimeBlock(block.id)
+    // 연결된 Google Calendar 이벤트도 삭제 (실패하면 되돌리고 알림)
+    void deleteTimeblockEvent(linked)
   }
 
   // ── Create Google Calendar event ─────────────────────────────────────────
@@ -605,21 +616,21 @@ export default function DayTimeline({ date, days = 1 }: DayTimelineProps) {
     setSavingEvent(true)
     setCreateError(null)
     const { date: evDate, startHour, startMinute } = newEventSlot
-    const endMins = startHour * 60 + startMinute + DEFAULT_DURATION
-    const endH = Math.floor(endMins / 60), endM = endMins % 60
+    // 끝은 Date 로 계산 — 23:30 에 만들면 다음날 00:00 (예전엔 "T24:00:00" 으로 거절됐다)
+    const start = dateAtMinutes(evDate, startHour * 60 + startMinute)
+    const end = addMinutes(start, DEFAULT_DURATION)
     const cal = calendars.find(c => c.id === calId)
     try {
       const created = await withGoogleToken(token => createCalendarEvent(token, {
         calendarId:    calId,
         summary:       newEventTitle.trim(),
-        startDateTime: toISO(evDate, startHour, startMinute),
-        endDateTime:   toISO(evDate, endH, endM),
+        startDateTime: toRfc3339(start),
+        endDateTime:   toRfc3339(end),
       }))
       // Attach calendar color
       created.calendarColor = cal?.backgroundColor ?? '#4285f4'
       addEvent(evDate, created as GoogleCalendarEvent)
-      setNewEventSlot(null)
-      setNewEventTitle('')
+      closeNewEventForm()
     } catch (err) {
       // 폼은 열어 둔다 — 적은 제목이 날아가지 않고, 왜 안 됐는지 보인다
       console.error('[createCalendarEvent]', err)
@@ -651,8 +662,7 @@ export default function DayTimeline({ date, days = 1 }: DayTimelineProps) {
       created.calendarColor = cal?.backgroundColor ?? '#4285f4'
       addEvent(date, created as GoogleCalendarEvent)
     } catch (err) {
-      console.error('[createAllDayEvent]', err)
-      setGoogleAuthError(googleErrorMessage(err))
+      reportGoogleError(err, 'createAllDayEvent')
     } finally {
       creatingRef.current = false
       setSavingEvent(false)
@@ -661,118 +671,96 @@ export default function DayTimeline({ date, days = 1 }: DayTimelineProps) {
     }
   }
 
-  // ── GCal event move (pointer drag) ───────────────────────────────────────
+  // ── GCal event move / resize (pointer) ───────────────────────────────────
+  // 칸(날짜) 기준 구간으로 끌고, 놓을 때 실제 Date 로 계산한다 — 여러 날에 걸친
+  // 일정도 시작·끝을 같은 만큼 옮기거나, 그 칸에 있는 쪽 끝만 늘인다.
 
-  function onGcalDragStart(e: React.PointerEvent, ev: GoogleCalendarEvent, date: string) {
+  function onGcalDown(e: React.PointerEvent, ev: GoogleCalendarEvent, colDate: string, kind: 'move' | 'resize' | 'resizeTop') {
+    if (e.button !== 0) return
+    const seg = eventSegmentForDay(ev, colDate)
+    if (!seg) return
     e.preventDefault(); e.stopPropagation()
     ;(e.currentTarget as HTMLElement).setPointerCapture(e.pointerId)
-    const { startHour, startMinute, endHour, endMinute } = eventToTimeRange(ev)
-    const startMins = startHour * 60 + startMinute
-    const durMins   = endHour * 60 + endMinute - startMins
-    const top = gridRef.current?.getBoundingClientRect().top ?? 0
-    const grabOffsetMins = Math.max(0, (e.clientY - top) / PX_PER_MIN - startMins)
-    setGcalDrag({ ev, date, startMins, durMins, grabOffsetMins })
-    setGcalOverride({ id: ev.id, startMins, durMins })
+    setGcalOp({
+      kind, ev, date: colDate, seg, startY: e.clientY,
+      grabOffsetMins: (e.clientY - gridTop()) / PX_PER_MIN - seg.startMins, moved: false,
+    })
+    setGcalOverride({ id: ev.id, date: colDate, startMins: seg.startMins, endMins: seg.endMins })
   }
 
-  function onGcalDragMove(e: React.PointerEvent) {
-    if (!gcalDrag) return
-    const top = gridRef.current?.getBoundingClientRect().top ?? 0
-    const rawMins = (e.clientY - top) / PX_PER_MIN - gcalDrag.grabOffsetMins
-    const snapped = Math.min(23 * 60 + 45 - gcalDrag.durMins, Math.max(0, snapTo15(rawMins)))
-    setGcalOverride({ id: gcalDrag.ev.id, startMins: snapped, durMins: gcalDrag.durMins })
+  function onGcalMove(e: React.PointerEvent) {
+    if (!gcalOp) return
+    const { kind, seg } = gcalOp
+    const moved = gcalOp.moved || Math.abs(e.clientY - gcalOp.startY) >= MOVE_THRESHOLD_PX
+    if (moved !== gcalOp.moved) setGcalOp({ ...gcalOp, moved })
+    if (!moved) return
+    let s = seg.startMins, en = seg.endMins
+    if (kind === 'move') {
+      const len = en - s
+      s = clamp(snapTo15((e.clientY - gridTop()) / PX_PER_MIN - gcalOp.grabOffsetMins), 0, DAY_MINS - SNAP)
+      en = s + len
+    } else if (kind === 'resize') {
+      const delta = (e.clientY - gcalOp.startY) / PX_PER_MIN
+      en = clamp(snapTo15(seg.endMins + delta), s + SNAP, DAY_MINS)
+    } else {
+      s = clamp(minsFromClientY(e.clientY), 0, en - SNAP)
+    }
+    startEdgeScroll(e.clientY)
+    if (gcalOverride?.startMins !== s || gcalOverride?.endMins !== en) {
+      setGcalOverride({ id: gcalOp.ev.id, date: gcalOp.date, startMins: s, endMins: en })
+    }
   }
 
-  async function onGcalDragEnd() {
-    if (!gcalDrag || !gcalOverride || !googleAccessToken) { setGcalDrag(null); setGcalOverride(null); return }
-    const { ev, date } = gcalDrag
-    const { startMins, durMins } = gcalOverride
-    const newStartH = Math.floor(startMins / 60), newStartM = startMins % 60
-    const newEndMins = startMins + durMins
-    const newEndH = Math.floor(newEndMins / 60), newEndM = newEndMins % 60
-    // Optimistic update in store
-    const updatedStart = { dateTime: toISO(date, newStartH, newStartM), date: undefined }
-    const updatedEnd   = { dateTime: toISO(date, newEndH,   newEndM),   date: undefined }
-    patchEvent(date, date, ev.id, { start: updatedStart, end: updatedEnd })
-    setGcalDrag(null); setGcalOverride(null)
+  async function commitEventTimes(ev: GoogleCalendarEvent, start: Date, end: Date) {
+    const prev = { start: ev.start, end: ev.end }
+    updateEvent(ev.id, { start: eventTimeFor(start, ev.start.timeZone), end: eventTimeFor(end, ev.end.timeZone) })
     try {
-      await updateCalendarEvent(googleAccessToken, ev.calendarId, ev.id, {
-        startDateTime: toISO(date, newStartH, newStartM),
-        endDateTime:   toISO(date, newEndH, newEndM),
-      })
-    } catch (err) { console.error('[updateCalendarEvent move]', err) }
+      await withGoogleToken(token => updateCalendarEvent(token, ev.calendarId, ev.id, {
+        start, end, startTimeZone: ev.start.timeZone, endTimeZone: ev.end.timeZone,
+      }))
+    } catch (err) {
+      // 옮긴 자리에 그대로 남아 '된 것처럼' 보이지 않게 되돌린다
+      updateEvent(ev.id, prev)
+      reportGoogleError(err, 'updateCalendarEvent')
+    }
   }
 
-  // ── GCal event resize – bottom ────────────────────────────────────────────
-
-  function onGcalResizeDn(e: React.PointerEvent, ev: GoogleCalendarEvent, date: string) {
-    e.preventDefault(); e.stopPropagation()
-    ;(e.currentTarget as HTMLElement).setPointerCapture(e.pointerId)
-    const { startHour, startMinute, endHour, endMinute } = eventToTimeRange(ev)
-    const startMins = startHour * 60 + startMinute
-    const durMins   = endHour * 60 + endMinute - startMins
-    setGcalResizing({ ev, date, startY: e.clientY, startDurMins: durMins, startStartMins: startMins })
-    setGcalOverride({ id: ev.id, startMins, durMins })
+  function onGcalUp(e: React.PointerEvent) {
+    const op = gcalOp, ov = gcalOverride
+    setGcalOp(null); setGcalOverride(null); stopEdgeScroll()
+    if (!op) return
+    if (!op.moved) {
+      // 짧은 탭 → 상세 패널
+      if (op.kind === 'move') togglePanel(op.ev, op.date, e.currentTarget as HTMLElement)
+      return
+    }
+    const iv = eventInterval(op.ev)
+    if (!ov || !iv) return
+    let start = iv.start, end = iv.end
+    if (op.kind === 'move') {
+      const delta = ov.startMins - op.seg.startMins
+      if (delta === 0) return
+      start = addMinutes(iv.start, delta); end = addMinutes(iv.end, delta)
+    } else if (op.kind === 'resize') {
+      if (ov.endMins === op.seg.endMins) return
+      end = dateAtMinutes(op.date, ov.endMins)
+    } else {
+      if (ov.startMins === op.seg.startMins) return
+      start = dateAtMinutes(op.date, ov.startMins)
+    }
+    void commitEventTimes(op.ev, start, end)
   }
 
-  function onGcalResizeMv(e: React.PointerEvent) {
-    if (!gcalResizing || !gcalOverride) return
-    const { startStartMins, startDurMins } = gcalResizing
-    const delta = (e.clientY - gcalResizing.startY) / PX_PER_MIN
-    const newDur = Math.max(SNAP, Math.min(24 * 60 - startStartMins, snapTo15(startDurMins + delta)))
-    setGcalOverride({ id: gcalResizing.ev.id, startMins: startStartMins, durMins: newDur })
+  function onGcalCancel() {
+    setGcalOp(null); setGcalOverride(null); stopEdgeScroll()
   }
 
-  async function onGcalResizeUp() {
-    if (!gcalResizing || !gcalOverride || !googleAccessToken) { setGcalResizing(null); setGcalOverride(null); return }
-    const { ev, date } = gcalResizing
-    const { startMins, durMins } = gcalOverride
-    const startH = Math.floor(startMins / 60), startM = startMins % 60
-    const endMins = startMins + durMins
-    const endH = Math.floor(endMins / 60), endM = endMins % 60
-    const updatedEnd = { dateTime: toISO(date, endH, endM), date: undefined }
-    patchEvent(date, date, ev.id, { end: updatedEnd })
-    setGcalResizing(null); setGcalOverride(null)
-    try {
-      await updateCalendarEvent(googleAccessToken, ev.calendarId, ev.id, {
-        startDateTime: toISO(date, startH, startM),
-        endDateTime:   toISO(date, endH, endM),
-      })
-    } catch (err) { console.error('[updateCalendarEvent resize]', err) }
-  }
-
-  // ── GCal event resize – top ───────────────────────────────────────────────
-
-  function onGcalResizeTopDn(e: React.PointerEvent, ev: GoogleCalendarEvent, date: string) {
-    e.preventDefault(); e.stopPropagation()
-    ;(e.currentTarget as HTMLElement).setPointerCapture(e.pointerId)
-    const { startHour, startMinute, endHour, endMinute } = eventToTimeRange(ev)
-    const originalEndMins = endHour * 60 + endMinute
-    setGcalResizingTop({ ev, date, originalEndMins })
-    setGcalOverride({ id: ev.id, startMins: startHour * 60 + startMinute, durMins: endHour * 60 + endMinute - startHour * 60 - startMinute })
-  }
-
-  function onGcalResizeTopMv(e: React.PointerEvent) {
-    if (!gcalResizingTop || !gcalOverride) return
-    const newStart = Math.min(gcalResizingTop.originalEndMins - SNAP, minsFromClientY(e.clientY))
-    setGcalOverride({ id: gcalResizingTop.ev.id, startMins: newStart, durMins: gcalResizingTop.originalEndMins - newStart })
-  }
-
-  async function onGcalResizeTopUp() {
-    if (!gcalResizingTop || !gcalOverride || !googleAccessToken) { setGcalResizingTop(null); setGcalOverride(null); return }
-    const { ev, date, originalEndMins } = gcalResizingTop
-    const { startMins } = gcalOverride
-    const startH = Math.floor(startMins / 60), startM = startMins % 60
-    const endH = Math.floor(originalEndMins / 60), endM = originalEndMins % 60
-    const updatedStart = { dateTime: toISO(date, startH, startM), date: undefined }
-    patchEvent(date, date, ev.id, { start: updatedStart })
-    setGcalResizingTop(null); setGcalOverride(null)
-    try {
-      await updateCalendarEvent(googleAccessToken, ev.calendarId, ev.id, {
-        startDateTime: toISO(date, startH, startM),
-        endDateTime:   toISO(date, endH, endM),
-      })
-    } catch (err) { console.error('[updateCalendarEvent resizeTop]', err) }
+  function togglePanel(ev: GoogleCalendarEvent, colDate: string, el: HTMLElement) {
+    const rect = el.getBoundingClientRect()
+    setEventPanel(prev =>
+      prev?.ev.id === ev.id ? null  // toggle off
+        : { ev, date: colDate, anchorRect: rect, returnFocus: el }
+    )
   }
 
   // ── Task status ───────────────────────────────────────────────────────────
@@ -785,68 +773,81 @@ export default function DayTimeline({ date, days = 1 }: DayTimelineProps) {
     return null
   }
 
+  // ── Column layout (overlap lanes) ─────────────────────────────────────────
+
+  interface ColEvent { ev: GoogleCalendarEvent; seg: DaySegment; start: number; end: number }
+
+  function columnItems(d: string) {
+    const evs: ColEvent[] = []
+    for (const ev of eventsByDate[d] ?? []) {
+      if (isAllDayEvent(ev) || hiddenEventIds.has(ev.id)) continue
+      const seg = eventSegmentForDay(ev, d)
+      if (!seg) continue
+      let start = seg.startMins, end = seg.endMins
+      if (gcalOverride?.id === ev.id && gcalOverride.date === d) { start = gcalOverride.startMins; end = gcalOverride.endMins }
+      evs.push({ ev, seg, start, end: Math.min(end, DAY_MINS) })
+    }
+    const blocks = blocksByDate[d] ?? []
+    const items: LaneItem[] = [
+      ...evs.map(c => ({ key: `e:${c.ev.id}`, start: c.start, end: Math.max(c.end, c.start + EVENT_MIN_H / PX_PER_MIN) })),
+      ...blocks.map(b => {
+        const s = blockStartMins(b)
+        return { key: `b:${b.id}`, start: s, end: Math.max(Math.min(s + b.duration, DAY_MINS), s + BLOCK_MIN_H / PX_PER_MIN) }
+      }),
+    ]
+    return { evs, blocks, lanes: packLanes(items) }
+  }
+
   // ── Block renderer ────────────────────────────────────────────────────────
 
-  function renderBlock(block: TimeBlock) {
-    const { top, height }   = blockStyle(block)
-    const isResizingThis    = resizing?.blockId === block.id || resizingTop?.blockId === block.id
-    const taskStatus        = getTaskStatus(block.linePrefix)
-    const isDone            = taskStatus === 'done'
-    const isCancelled       = taskStatus === 'cancelled'
-    const isCompleted       = isDone || isCancelled
+  function renderBlock(block: TimeBlock, lane: Lane | undefined) {
+    const startMins       = blockStartMins(block)
+    const clampedDuration = Math.min(block.duration, DAY_MINS - startMins)
+    const top             = startMins * PX_PER_MIN
+    const height          = Math.max(clampedDuration * PX_PER_MIN, BLOCK_MIN_H)
+    const isResizingThis  = resizing?.blockId === block.id || resizingTop?.blockId === block.id
+    const isDraggingThis  = blockDrag?.blockId === block.id && blockDrag.moved
+    const taskStatus      = getTaskStatus(block.linePrefix)
+    const isDone          = taskStatus === 'done'
+    const isCancelled     = taskStatus === 'cancelled'
+    const isCompleted     = isDone || isCancelled
+    const editable        = blockEditable(block)
+    const deletable       = blockDeletable(block)
 
     return (
       <div
         key={block.id}
-        draggable
-        onDragStart={e => {
-          e.stopPropagation()
-          getW()['__npBlockDrag'] = block.id
-          e.dataTransfer.effectAllowed = 'move'
-          getW()['__npBlockGrabY'] = e.clientY - (e.currentTarget as HTMLElement).getBoundingClientRect().top
-        }}
-        onDragEnd={() => {
-          getW()['__npBlockDrag'] = null
-          getW()['__npBlockGrabY'] = null
-          setDragOverSlot(null)
-        }}
-        onDragOver={e => {
-          const hasLine  = document.body.getAttribute('data-np-dragging') === 'line' || !!getW()['__npLineDrag']
-          const hasBlock = !!getW()['__npBlockDrag']
-          if (!hasLine && !hasBlock) return
-          e.preventDefault(); e.stopPropagation()
-          e.dataTransfer.dropEffect = 'move'
-          const slot     = slotFromClientY(e.clientY)
-          const duration = getDragDuration()
-          setDragOverSlot(prev =>
-            prev?.date === block.date && prev.hour === slot.hour &&
-            prev.minute === slot.minute && prev.duration === duration
-              ? prev : { date: block.date, ...slot, duration }
-          )
-        }}
-        onDrop={e => { e.stopPropagation(); handleDrop(e, block.date, block.startHour) }}
-        className="absolute left-1 right-1 rounded px-2 py-1 text-xs text-white
+        data-tl-block={block.id}
+        onPointerDown={e => onBlockDown(e, block)}
+        onPointerMove={e => onBlockMove(e, block)}
+        onPointerUp={() => finishBlockDrag(true)}
+        onPointerCancel={() => finishBlockDrag(false)}
+        className="absolute rounded px-2 py-1 text-xs text-white
                    pointer-events-auto select-none flex flex-col overflow-hidden"
         style={{
-          top, height,
+          top, height, ...laneStyle(lane),
           backgroundColor: block.color,
-          opacity:  isCompleted ? 0.45 : 0.9,
-          zIndex:   isResizingThis ? 20 : 10,
-          cursor:   'grab',
+          opacity:  isDraggingThis ? 0.4 : isCompleted ? 0.45 : 0.9,
+          zIndex:   isResizingThis || isDraggingThis ? 20 : 10,
+          cursor:   editable ? (isDraggingThis ? 'grabbing' : 'grab') : 'default',
+          touchAction: editable ? 'none' : undefined,
         }}
-        title={block.content}
+        title={editable ? block.content : `${block.content}\n(이 날짜의 일간 노트를 열면 옮기거나 늘릴 수 있습니다)`}
       >
         {/* Top resize */}
-        <div
-          className="absolute top-0 left-0 right-0 flex items-center justify-center"
-          style={{ height: 8, cursor: 'ns-resize', zIndex: 5 }}
-          onPointerDown={ev => onResizeTopDn(ev, block)}
-          onPointerMove={ev => onResizeTopMv(ev, block)}
-          onPointerUp={onResizeTopUp}
-          onPointerCancel={onResizeTopUp}
-        >
-          <div className="w-8 h-[2px] rounded-full bg-white/30" />
-        </div>
+        {editable && (
+          <div
+            data-resize="top"
+            className="absolute top-0 left-0 right-0 flex items-center justify-center"
+            style={{ height: 8, cursor: 'ns-resize', zIndex: 5 }}
+            onPointerDown={ev => onResizeTopDn(ev, block)}
+            onPointerMove={ev => onResizeTopMv(ev, block)}
+            onPointerUp={() => onResizeTopUp(true)}
+            onPointerCancel={() => onResizeTopUp(false)}
+          >
+            <div className="w-8 h-[2px] rounded-full bg-white/30" />
+          </div>
+        )}
 
         {/* Content */}
         <div className="flex items-center gap-1 overflow-hidden flex-1 min-h-0 mt-1">
@@ -874,126 +875,105 @@ export default function DayTimeline({ date, days = 1 }: DayTimelineProps) {
             {block.content}
           </span>
           <span className="opacity-60 text-[10px] flex-shrink-0">
-            {formatTime(block.startHour, block.startMinute)}
+            {`${block.startHour}:${String(block.startMinute).padStart(2, '0')}`}
           </span>
-          <button
-            className="opacity-60 hover:opacity-100 flex-shrink-0 leading-none"
-            onClick={ev => {
-              ev.stopPropagation()
-              if (block.noteLineText) {
-                requestUpdate(block.noteLineText, (block.linePrefix ?? '') + (block.originalContent ?? block.content))
-              }
-              removeTimeBlock(block.id)
-              // 연결된 Google Calendar 이벤트도 삭제 (마커 재검색)
-              const linked = findTimeblockEvent(block.date, block.startHour, block.startMinute, block.content)
-              if (linked && googleAccessToken) {
-                removeEvent(block.date, linked.id)
-                deleteCalendarEvent(googleAccessToken, linked.calendarId, linked.id)
-                  .catch(err => console.error('[timeblock 삭제 → gcal]', err))
-              }
-            }}
-          >×</button>
+          {deletable && (
+            <button
+              className="opacity-60 hover:opacity-100 flex-shrink-0 leading-none"
+              aria-label={`${block.content} 타임블록 삭제`}
+              onClick={ev => { ev.stopPropagation(); deleteBlock(block) }}
+            >×</button>
+          )}
         </div>
 
         {/* Bottom resize */}
-        <div
-          className="absolute bottom-0 left-0 right-0 flex items-center justify-center"
-          style={{ height: 8, cursor: 'ns-resize' }}
-          onPointerDown={ev => onResizeDn(ev, block)}
-          onPointerMove={ev => onResizeMv(ev, block)}
-          onPointerUp={onResizeUp}
-          onPointerCancel={onResizeUp}
-        >
-          <div className="w-8 h-[2px] rounded-full bg-white/30" />
-        </div>
+        {editable && (
+          <div
+            data-resize="bottom"
+            className="absolute bottom-0 left-0 right-0 flex items-center justify-center"
+            style={{ height: 8, cursor: 'ns-resize' }}
+            onPointerDown={ev => onResizeDn(ev, block)}
+            onPointerMove={ev => onResizeMv(ev, block)}
+            onPointerUp={() => onResizeUp(true)}
+            onPointerCancel={() => onResizeUp(false)}
+          >
+            <div className="w-8 h-[2px] rounded-full bg-white/30" />
+          </div>
+        )}
       </div>
     )
   }
 
-  function renderCalendarEvent(ev: GoogleCalendarEvent, colDate: string) {
-    const base = eventToTimeRange(ev)
-    if (base.allDay) return null
-    // 타임블록으로 생성한 이벤트는 로컬 타임블록이 대표 → 중복 방지 위해 스킵
-    if (ev.extendedProperties?.private?.npTimeblock) return null
-
-    // Apply optimistic override while dragging/resizing
-    let startH = base.startHour, startM = base.startMinute
-    let endH   = base.endHour,   endM   = base.endMinute
-    if (gcalOverride?.id === ev.id) {
-      const { startMins, durMins } = gcalOverride
-      startH = Math.floor(startMins / 60); startM = startMins % 60
-      const em = startMins + durMins
-      endH = Math.floor(em / 60); endM = em % 60
-    }
-
-    const top      = startH * SLOT_H + startM * PX_PER_MIN
-    const durMins  = endH * 60 + endM - startH * 60 - startM
-    const height   = Math.max(durMins * PX_PER_MIN, 18)
+  function renderCalendarEvent(item: ColEvent, colDate: string, lane: Lane | undefined) {
+    const { ev, seg } = item
+    const startM   = item.start, endM = item.end
+    const top      = startM * PX_PER_MIN
+    const height   = Math.max((endM - startM) * PX_PER_MIN, EVENT_MIN_H)
     const color    = ev.calendarColor ?? '#4285f4'
-    const startStr = `${String(startH).padStart(2,'0')}:${String(startM).padStart(2,'0')}`
-    const endStr   = `${String(endH).padStart(2,'0')}:${String(endM).padStart(2,'0')}`
-    const isActive = gcalDrag?.ev.id === ev.id || gcalResizing?.ev.id === ev.id || gcalResizingTop?.ev.id === ev.id
+    const iv       = eventInterval(ev)
+    const isActive = gcalOp?.ev.id === ev.id
+    const editable = !!googleAccessToken && canEditEvent(ev)
+    const declined = isDeclinedBySelf(ev)
+    // 표시 시각: 끌고 있으면 칸 기준, 아니면 실제 시작/끝 (전날·다음날로 이어지면 날짜 표시)
+    const startStr = isActive || !iv ? hhmm(startM) : format(iv.start, seg.startsBefore ? 'M/d HH:mm' : 'HH:mm')
+    const endStr   = isActive || !iv ? hhmm(endM) : format(iv.end, seg.endsAfter ? 'M/d HH:mm' : 'HH:mm')
 
     return (
       <div
         key={`gcal-${ev.id}`}
-        className="absolute left-1 right-1 rounded overflow-hidden pointer-events-auto select-none group"
-        style={{ top, height, zIndex: isActive ? 20 : 8, cursor: 'grab' }}
-        title={`${ev.summary}\n${startStr} – ${endStr}`}
-        // pointer drag to move; short tap (< 5px) → open detail panel
-        onPointerDown={e => {
+        data-tl-event={ev.id}
+        role="button"
+        tabIndex={0}
+        aria-label={`${ev.summary ?? '일정'} ${startStr}–${endStr}${declined ? ' (거절함)' : ''}${editable ? '' : ' (읽기 전용)'}`}
+        className="absolute rounded overflow-hidden pointer-events-auto select-none group
+                   focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-400"
+        style={{
+          top, height, ...laneStyle(lane),
+          zIndex: isActive ? 20 : 8,
+          cursor: editable ? 'grab' : 'pointer',
+          opacity: declined ? 0.5 : 1,
+          touchAction: editable ? 'none' : undefined,
+        }}
+        title={`${ev.summary}\n${startStr} – ${endStr}${declined ? '\n(거절함)' : ''}${editable ? '' : '\n(읽기 전용)'}`}
+        // pointer drag to move; short tap (< 4px) → open detail panel
+        onPointerDown={editable ? (e => {
           if ((e.target as HTMLElement).closest('[data-resize]')) return
-          onGcalDragStart(e, ev, colDate)
-        }}
-        onPointerMove={e => {
-          if (gcalDrag?.ev.id === ev.id) onGcalDragMove(e)
-        }}
-        onPointerUp={e => {
-          const isDraggingThis   = gcalDrag?.ev.id === ev.id
-          const isResizingThis   = gcalResizing?.ev.id === ev.id
-          const isResizeTopThis  = gcalResizingTop?.ev.id === ev.id
-
-          // Measure movement to distinguish tap from drag
-          const moved = isDraggingThis && gcalOverride
-            ? Math.abs(gcalOverride.startMins - (eventToTimeRange(ev).startHour * 60 + eventToTimeRange(ev).startMinute)) >= SNAP
-            : false
-
-          if (isDraggingThis) onGcalDragEnd()
-          if (isResizingThis) onGcalResizeUp()
-          if (isResizeTopThis) onGcalResizeTopUp()
-
-          // Open panel only on tap (no real movement, no resize)
-          if (!moved && !isResizingThis && !isResizeTopThis) {
-            const rect = (e.currentTarget as HTMLElement).getBoundingClientRect()
-            setEventPanel(prev =>
-              prev?.ev.id === ev.id ? null  // toggle off
-                : { ev, date: colDate, anchorRect: rect }
-            )
+          onGcalDown(e, ev, colDate, 'move')
+        }) : undefined}
+        onPointerMove={editable ? onGcalMove : undefined}
+        onPointerUp={editable ? onGcalUp : undefined}
+        onPointerCancel={editable ? onGcalCancel : undefined}
+        onClick={editable ? undefined : (e => togglePanel(ev, colDate, e.currentTarget as HTMLElement))}
+        onKeyDown={e => {
+          if (e.key === 'Enter' || e.key === ' ') {
+            e.preventDefault()
+            togglePanel(ev, colDate, e.currentTarget as HTMLElement)
           }
         }}
-        onPointerCancel={() => { setGcalDrag(null); setGcalResizing(null); setGcalResizingTop(null); setGcalOverride(null) }}
       >
-        {/* Top resize handle */}
-        <div
-          data-resize="top"
-          className="absolute top-0 left-0 right-0 flex items-center justify-center"
-          style={{ height: 8, cursor: 'ns-resize', zIndex: 5 }}
-          onPointerDown={e => { e.stopPropagation(); onGcalResizeTopDn(e, ev, colDate) }}
-          onPointerMove={e => { if (gcalResizingTop?.ev.id === ev.id) onGcalResizeTopMv(e) }}
-          onPointerUp={() => onGcalResizeTopUp()}
-          onPointerCancel={() => { setGcalResizingTop(null); setGcalOverride(null) }}
-        >
-          <div className="w-8 h-[2px] rounded-full bg-white/20 group-hover:bg-white/40 transition-opacity" />
-        </div>
+        {/* Top resize handle — 이 칸에서 시작하는 일정만 */}
+        {editable && !seg.startsBefore && (
+          <div
+            data-resize="top"
+            className="absolute top-0 left-0 right-0 flex items-center justify-center"
+            style={{ height: 8, cursor: 'ns-resize', zIndex: 5 }}
+            onPointerDown={e => onGcalDown(e, ev, colDate, 'resizeTop')}
+          >
+            <div className="w-8 h-[2px] rounded-full bg-white/20 group-hover:bg-white/40 transition-opacity" />
+          </div>
+        )}
 
         {/* 반투명 배경 */}
         <div className="absolute inset-0 rounded" style={{ backgroundColor: color, opacity: 0.15 }} />
         {/* 왼쪽 컬러 바 */}
-        <div className="absolute left-0 top-0 bottom-0 w-[3px] rounded-l" style={{ backgroundColor: color }} />
+        <div className="absolute left-0 top-0 bottom-0 w-[3px] rounded-l" style={{ backgroundColor: color, opacity: declined ? 0.5 : 1 }} />
 
         {/* 텍스트 */}
         <div className="relative pl-2 pr-1 py-0.5 h-full flex flex-col justify-center overflow-hidden">
-          <div className="text-[11px] font-medium leading-tight truncate" style={{ color }}>
+          <div
+            className="text-[11px] font-medium leading-tight truncate"
+            style={{ color, textDecoration: declined ? 'line-through' : undefined }}
+          >
             {ev.summary}
           </div>
           {height >= 34 && (
@@ -1003,18 +983,17 @@ export default function DayTimeline({ date, days = 1 }: DayTimelineProps) {
           )}
         </div>
 
-        {/* Bottom resize handle */}
-        <div
-          data-resize="bottom"
-          className="absolute bottom-0 left-0 right-0 flex items-center justify-center"
-          style={{ height: 8, cursor: 'ns-resize', zIndex: 5 }}
-          onPointerDown={e => { e.stopPropagation(); onGcalResizeDn(e, ev, colDate) }}
-          onPointerMove={e => { if (gcalResizing?.ev.id === ev.id) onGcalResizeMv(e) }}
-          onPointerUp={() => onGcalResizeUp()}
-          onPointerCancel={() => { setGcalResizing(null); setGcalOverride(null) }}
-        >
-          <div className="w-8 h-[2px] rounded-full bg-white/20 group-hover:bg-white/40 transition-opacity" />
-        </div>
+        {/* Bottom resize handle — 이 칸에서 끝나는 일정만 */}
+        {editable && !seg.endsAfter && (
+          <div
+            data-resize="bottom"
+            className="absolute bottom-0 left-0 right-0 flex items-center justify-center"
+            style={{ height: 8, cursor: 'ns-resize', zIndex: 5 }}
+            onPointerDown={e => onGcalDown(e, ev, colDate, 'resize')}
+          >
+            <div className="w-8 h-[2px] rounded-full bg-white/20 group-hover:bg-white/40 transition-opacity" />
+          </div>
+        )}
       </div>
     )
   }
@@ -1023,10 +1002,15 @@ export default function DayTimeline({ date, days = 1 }: DayTimelineProps) {
 
   function renderEventPanel() {
     if (!eventPanel || typeof window === 'undefined') return null
-    const { ev, date: evDate, anchorRect } = eventPanel
-    const { startHour, startMinute, endHour, endMinute, allDay } = eventToTimeRange(ev)
+    const { date: evDate, anchorRect } = eventPanel
+    // 이름을 바꾸는 등 스토어가 바뀌면 최신 값으로 보여준다
+    const ev = useCalendarEventStore.getState().findEvent(eventPanel.ev.id) ?? eventPanel.ev
+    const iv    = eventInterval(ev)
     const color = ev.calendarColor ?? '#4285f4'
     const cal   = calendars.find(c => c.id === ev.calendarId)
+    const editable  = !!googleAccessToken && canEditEvent(ev)
+    const deletable = !!googleAccessToken && canDeleteEvent(ev)
+    const declined  = isDeclinedBySelf(ev)
 
     // Position: prefer right of block, fall back to left if near right edge
     const PANEL_W = 256
@@ -1041,12 +1025,23 @@ export default function DayTimeline({ date, days = 1 }: DayTimelineProps) {
       window.innerHeight - 220
     )
 
-    const startFmt = allDay ? 'All day' : `${String(startHour).padStart(2,'0')}:${String(startMinute).padStart(2,'0')}`
-    const endFmt   = allDay ? '' : `${String(endHour).padStart(2,'0')}:${String(endMinute).padStart(2,'0')}`
+    let timeLabel = 'All day'
+    if (iv) {
+      const sameDay = format(iv.start, 'yyyy-MM-dd') === format(iv.end, 'yyyy-MM-dd')
+        || (iv.end.getHours() === 0 && iv.end.getMinutes() === 0 && iv.end.getTime() - iv.start.getTime() <= DAY_MINS * 60_000
+            && format(addMinutes(iv.end, -1), 'yyyy-MM-dd') === format(iv.start, 'yyyy-MM-dd'))
+      timeLabel = sameDay
+        ? `${format(iv.start, 'HH:mm')} – ${format(iv.end, 'HH:mm')} · ${format(iv.start, 'MMM d, yyyy')}`
+        : `${format(iv.start, 'MMM d HH:mm')} – ${format(iv.end, 'MMM d HH:mm')}`
+    } else {
+      timeLabel = `All day · ${format(parseISO(evDate), 'MMM d, yyyy')}`
+    }
 
     return createPortal(
       <div
         ref={panelRef}
+        role="dialog"
+        aria-label={ev.summary ?? '일정'}
         className="fixed z-[200] w-64 rounded-xl shadow-2xl overflow-hidden
                    border border-white/10"
         style={{ top, left, backdropFilter: 'blur(20px)', backgroundColor: 'rgba(28,28,40,0.92)' }}
@@ -1062,15 +1057,21 @@ export default function DayTimeline({ date, days = 1 }: DayTimelineProps) {
               value={renameText}
               onChange={(e) => setRenameText(e.target.value)}
               onKeyDown={(e) => {
-                if (e.key === 'Enter') confirmRename(ev, evDate)
-                else if (e.key === 'Escape') setRenaming(false)
+                if (e.nativeEvent.isComposing || e.keyCode === 229) return
+                if (e.key === 'Enter') confirmRename(ev)
+                else if (e.key === 'Escape') { e.stopPropagation(); renamingRef.current = false; setRenaming(false) }
               }}
-              onBlur={() => confirmRename(ev, evDate)}
+              onBlur={() => confirmRename(ev)}
               className="w-full text-sm font-semibold px-2 py-1 rounded bg-white/10
                          border border-blue-400/60 outline-none text-white"
             />
           ) : (
-            <div className="text-sm font-semibold text-white leading-snug">{ev.summary}</div>
+            <div
+              className="text-sm font-semibold text-white leading-snug"
+              style={declined ? { textDecoration: 'line-through', opacity: 0.7 } : undefined}
+            >
+              {ev.summary}
+            </div>
           )}
         </div>
 
@@ -1082,20 +1083,17 @@ export default function DayTimeline({ date, days = 1 }: DayTimelineProps) {
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5}
                 d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
             </svg>
-            <span>
-              {allDay ? 'All day' : `${startFmt} – ${endFmt}`}
-              {' · '}
-              {format(parseISO(evDate), 'MMM d, yyyy')}
-            </span>
+            <span>{timeLabel}</span>
           </div>
 
           {/* Calendar */}
           {cal && (
             <div className="flex items-center gap-2">
               <div className="w-3.5 h-3.5 rounded-full flex-shrink-0" style={{ backgroundColor: color }} />
-              <span className="truncate">{cal.summary}</span>
+              <span className="truncate">{cal.summary}{editable ? '' : ' · 읽기 전용'}</span>
             </div>
           )}
+          {declined && <div className="text-white/50">거절한 일정</div>}
 
           {/* Description */}
           {ev.description && (
@@ -1115,17 +1113,19 @@ export default function DayTimeline({ date, days = 1 }: DayTimelineProps) {
         {/* Actions */}
         <div className="flex flex-col py-1">
           {/* 이름 변경 */}
-          <button
-            onClick={() => { setRenameText(ev.summary ?? ''); setRenaming(true) }}
-            className="flex items-center gap-3 px-4 py-2.5 text-sm text-white/80
-                       hover:bg-white/8 transition-colors text-left"
-          >
-            <svg className="w-4 h-4 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5}
-                d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
-            </svg>
-            이름 변경
-          </button>
+          {editable && (
+            <button
+              onClick={() => { setRenameText(ev.summary ?? ''); renamingRef.current = true; setRenaming(true) }}
+              className="flex items-center gap-3 px-4 py-2.5 text-sm text-white/80
+                         hover:bg-white/8 transition-colors text-left"
+            >
+              <svg className="w-4 h-4 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5}
+                  d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
+              </svg>
+              이름 변경
+            </button>
+          )}
           {ev.htmlLink && (
             <button
               onClick={() => { void openExternal(ev.htmlLink); setEventPanel(null) }}
@@ -1140,27 +1140,29 @@ export default function DayTimeline({ date, days = 1 }: DayTimelineProps) {
             </button>
           )}
 
-          <button
-            onClick={async () => {
-              if (!googleAccessToken) return
-              setEventPanel(null)
-              removeEvent(evDate, ev.id)
-              try {
-                await deleteCalendarEvent(googleAccessToken, ev.calendarId, ev.id)
-              } catch (err) {
-                console.error('[deleteCalendarEvent]', err)
-                addEvent(evDate, ev)
-              }
-            }}
-            className="flex items-center gap-3 px-4 py-2.5 text-sm text-red-400
-                       hover:bg-red-500/10 transition-colors text-left"
-          >
-            <svg className="w-4 h-4 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5}
-                d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
-            </svg>
-            Delete Event
-          </button>
+          {deletable && (
+            <button
+              onClick={async () => {
+                setEventPanel(null)
+                removeEvent(evDate, ev.id)
+                try {
+                  await withGoogleToken(token => deleteCalendarEvent(token, ev.calendarId, ev.id))
+                } catch (err) {
+                  // 되돌리기 — addEvent 는 '방금 만든 일정'으로 등록해 2분간 재조회를 이겨버린다
+                  restoreEvent(ev)
+                  reportGoogleError(err, 'deleteCalendarEvent')
+                }
+              }}
+              className="flex items-center gap-3 px-4 py-2.5 text-sm text-red-400
+                         hover:bg-red-500/10 transition-colors text-left"
+            >
+              <svg className="w-4 h-4 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5}
+                  d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+              </svg>
+              Delete Event
+            </button>
+          )}
         </div>
       </div>,
       document.body
@@ -1176,6 +1178,23 @@ export default function DayTimeline({ date, days = 1 }: DayTimelineProps) {
 
       {/* 상단 고정 헤더: 날짜/요일 + all-day (하나의 sticky 컨테이너 → 겹침 방지) */}
       <div className="sticky top-0 z-20 bg-[var(--bg-primary)]">
+        {/* 쓰기 실패 알림 (권한 없음 등) */}
+        {notice && (
+          <div
+            role="alert"
+            data-tl-notice=""
+            className="mx-1 mb-1 flex items-start gap-2 rounded-md bg-red-500/15 border border-red-500/30
+                       px-2 py-1.5 text-[11px] leading-snug text-red-300"
+          >
+            <span className="flex-1 break-words">{notice}</span>
+            <button
+              onClick={() => setNotice(null)}
+              aria-label="알림 닫기"
+              className="opacity-70 hover:opacity-100 leading-none"
+            >×</button>
+          </div>
+        )}
+
         {/* Multi-day column headers */}
         {days > 1 && (
           <div className="flex border-b border-[var(--border)]">
@@ -1211,7 +1230,7 @@ export default function DayTimeline({ date, days = 1 }: DayTimelineProps) {
             all-day
           </div>
           {dates.map(d => {
-            const allDayEvs = (eventsByDate[d] ?? []).filter(ev => eventToTimeRange(ev).allDay)
+            const allDayEvs = (eventsByDate[d] ?? []).filter(isAllDayEvent)
             const adding = newAllDayDate === d
             return (
               <div
@@ -1227,16 +1246,28 @@ export default function DayTimeline({ date, days = 1 }: DayTimelineProps) {
               >
                 {allDayEvs.map(ev => {
                   const color = ev.calendarColor ?? '#4285f4'
+                  const declined = isDeclinedBySelf(ev)
                   return (
                     <div
                       key={`ad-${ev.id}`}
+                      role="button"
+                      tabIndex={0}
                       className="text-[11px] font-medium px-1.5 py-0.5 rounded truncate
-                                 cursor-pointer select-none"
-                      style={{ backgroundColor: color + '30', color }}
+                                 cursor-pointer select-none focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-400"
+                      style={{
+                        backgroundColor: color + '30', color,
+                        opacity: declined ? 0.5 : 1,
+                        textDecoration: declined ? 'line-through' : undefined,
+                      }}
                       onClick={(e) => {
                         e.stopPropagation()
-                        const rect = (e.currentTarget as HTMLElement).getBoundingClientRect()
-                        setEventPanel({ ev, date: d, anchorRect: rect })
+                        togglePanel(ev, d, e.currentTarget as HTMLElement)
+                      }}
+                      onKeyDown={(e) => {
+                        if (e.key === 'Enter' || e.key === ' ') {
+                          e.preventDefault(); e.stopPropagation()
+                          togglePanel(ev, d, e.currentTarget as HTMLElement)
+                        }
                       }}
                       title={ev.summary}
                     >
@@ -1293,35 +1324,48 @@ export default function DayTimeline({ date, days = 1 }: DayTimelineProps) {
 
         {/* Day columns */}
         {dates.map(d => {
-          const colBlocks = blocksByDate[d] ?? []
+          const { evs, blocks, lanes } = columnItems(d)
 
           return (
             <div
               key={d}
+              data-tl-col={d}
               className="flex-1 relative border-l border-[var(--border)]"
               style={{ height: TOTAL_H }}
             >
-              {/* Hour rows — drop targets + click-to-create */}
+              {/* Hour rows — drop targets + click/Enter-to-create */}
               {HOURS.map(hour => (
                 <div
                   key={hour}
                   data-tl-slot=""
                   data-tl-date={d}
                   data-tl-hour={hour}
-                  className="absolute left-0 right-0 border-t border-[var(--border)]"
+                  tabIndex={0}
+                  role="button"
+                  aria-label={`${d} ${hour}:00 새 일정`}
+                  className="absolute left-0 right-0 border-t border-[var(--border)]
+                             focus:outline-none focus-visible:bg-blue-500/10"
                   style={{ top: hour * SLOT_H, height: SLOT_H, zIndex: 1 }}
-                  onDragOver={e => handleDragOver(e, d, hour)}
-                  onDragLeave={handleDragLeave}
-                  onDrop={e => handleDrop(e, d, hour)}
                   onClick={e => {
                     // Don't open form if a GCal drag just ended
-                    if (gcalDrag || gcalResizing || gcalResizingTop) return
+                    if (gcalOp || blockDrag) return
                     // Only open if clicking directly on the row (not a block)
                     if ((e.target as HTMLElement) !== e.currentTarget) return
                     const minute = minuteFromRowEvent(e)
                     setNewEventSlot({ date: d, startHour: hour, startMinute: minute })
                     setNewEventTitle('')
                     setCreateError(null)
+                  }}
+                  onKeyDown={e => {
+                    if (e.target !== e.currentTarget) return
+                    if (e.key === 'Enter' || e.key === ' ') {
+                      e.preventDefault()
+                      setNewEventSlot({ date: d, startHour: hour, startMinute: 0 })
+                      setNewEventTitle('')
+                      setCreateError(null)
+                    } else if (e.key === 'Escape' && newEventSlot) {
+                      closeNewEventForm()
+                    }
                   }}
                 />
               ))}
@@ -1338,32 +1382,34 @@ export default function DayTimeline({ date, days = 1 }: DayTimelineProps) {
                 />
               )}
 
-              {/* Drag-over indicator (HTML5 dragOverSlot 또는 pointer dragPreview) */}
+              {/* Drag-over indicator (줄 드래그 미리보기 또는 블록 이동 미리보기) */}
               {(() => {
-                const over = dragOverSlot?.date === d ? dragOverSlot
-                           : dragPreview?.date === d ? dragPreview : null
+                const over = blockDrag?.moved && blockDrag.date === d
+                  ? { hour: Math.floor(blockDrag.mins / 60), minute: blockDrag.mins % 60, duration: blockDrag.duration, disabled: false, reason: undefined }
+                  : dragPreview?.date === d ? dragPreview : null
                 if (!over) return null
+                const dis = !!over.disabled
                 return (
                   <div
-                    className="absolute left-1 right-1 rounded-md border border-dashed
-                               border-blue-400/80 text-[10px] font-medium text-blue-300 px-2 pt-0.5 pointer-events-none
-                               flex items-start"
+                    data-tl-preview={dis ? 'disabled' : 'ok'}
+                    className={`absolute left-1 right-1 rounded-md border border-dashed text-[10px] font-medium px-2 pt-0.5
+                               pointer-events-none flex items-start gap-1 ${dis ? 'border-red-400/80 text-red-300' : 'border-blue-400/80 text-blue-300'}`}
                     style={{
-                      top:        over.hour * SLOT_H + over.minute * PX_PER_MIN,
-                      height:     over.duration * PX_PER_MIN,
-                      background: 'rgba(59,130,246,0.14)',
-                      boxShadow:  '0 0 0 1px rgba(59,130,246,0.25)',
+                      top:        (over.hour * 60 + over.minute) * PX_PER_MIN,
+                      height:     Math.min(over.duration, DAY_MINS - over.hour * 60 - over.minute) * PX_PER_MIN,
+                      background: dis ? 'rgba(239,68,68,0.12)' : 'rgba(59,130,246,0.14)',
+                      boxShadow:  dis ? '0 0 0 1px rgba(239,68,68,0.25)' : '0 0 0 1px rgba(59,130,246,0.25)',
                       transition: 'top 60ms ease, height 60ms ease',
                       zIndex:     30,
                     }}
                   >
-                    {formatTimeRange(over.hour, over.minute, over.duration)}
+                    {dis ? `⊘ ${over.reason ?? '여기에 놓을 수 없음'}` : formatTimeRange(over.hour, over.minute, over.duration)}
                   </div>
                 )
               })()}
 
               {/* Google Calendar 이벤트 */}
-              {(eventsByDate[d] ?? []).map(ev => renderCalendarEvent(ev, d))}
+              {evs.map(item => renderCalendarEvent(item, d, lanes.get(`e:${item.ev.id}`)))}
 
               {/* New-event ghost + inline form */}
               {newEventSlot?.date === d && (() => {
@@ -1377,6 +1423,7 @@ export default function DayTimeline({ date, days = 1 }: DayTimelineProps) {
                     className="absolute left-1 right-1 rounded overflow-hidden pointer-events-auto"
                     // 실패 사유가 있으면 그만큼 늘어난다
                     style={{ top, height: createError ? undefined : DEFAULT_DURATION * PX_PER_MIN, minHeight: DEFAULT_DURATION * PX_PER_MIN, zIndex: 40 }}
+                    onKeyDown={e => { if (e.key === 'Escape') closeNewEventForm() }}
                   >
                     {/* colored left bar */}
                     <div className="absolute left-0 top-0 bottom-0 w-[3px] rounded-l" style={{ backgroundColor: formColor }} />
@@ -1390,9 +1437,9 @@ export default function DayTimeline({ date, days = 1 }: DayTimelineProps) {
                           // 한글 IME는 조합 확정 Enter와 실제 Enter가 각각 들어온다
                           if (e.nativeEvent.isComposing || e.keyCode === 229) return
                           if (e.key === 'Enter') handleCreateEvent()
-                          if (e.key === 'Escape') { setNewEventSlot(null); setNewEventTitle(''); setCreateError(null) }
                         }}
                         placeholder="Event title..."
+                        aria-label="새 일정 제목"
                         className="w-full bg-transparent text-[11px] font-medium outline-none placeholder-white/40"
                         style={{ color: formColor }}
                       />
@@ -1421,7 +1468,8 @@ export default function DayTimeline({ date, days = 1 }: DayTimelineProps) {
                         </button>
                         <button
                           onPointerDown={e => e.stopPropagation()}
-                          onClick={() => { setNewEventSlot(null); setNewEventTitle(''); setCreateError(null) }}
+                          onClick={closeNewEventForm}
+                          aria-label="닫기"
                           className="text-[10px] opacity-60 hover:opacity-100"
                           style={{ color: formColor }}
                         >×</button>
@@ -1437,7 +1485,7 @@ export default function DayTimeline({ date, days = 1 }: DayTimelineProps) {
               })()}
 
               {/* Time blocks */}
-              {colBlocks.map(renderBlock)}
+              {blocks.map(b => renderBlock(b, lanes.get(`b:${b.id}`)))}
             </div>
           )
         })}

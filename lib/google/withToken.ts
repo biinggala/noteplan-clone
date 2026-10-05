@@ -1,5 +1,6 @@
 import { useAuthStore } from '@/lib/stores/authStore'
 import { refreshGoogleAccessToken } from '@/lib/google/auth'
+import { useCalendarEventStore } from '@/lib/stores/calendarEventStore'
 
 // 구글 캘린더 쓰기(일정 추가·타임블록 → 이벤트)는 토큰이 죽어 있으면 401로 실패한다.
 // 예전엔 앱 시작 때와 50분마다만 갱신해서, 맥이 잠들었다 깨면 다음 갱신 전까지
@@ -70,6 +71,22 @@ export function googleErrorMessage(err: unknown): string {
   const msg = err instanceof Error ? err.message : String(err)
   if (msg === 'GOOGLE_NOT_CONNECTED') return '구글 캘린더가 연결돼 있지 않습니다. 톱니 → Google 캘린더 연결을 해주세요.'
   if (msg === 'GOOGLE_TOKEN_EXPIRED') return '구글 토큰이 만료됐고 갱신에도 실패했습니다. 재연결이 필요합니다.'
-  if (/ 403: /.test(msg)) return '이 캘린더에 일정을 만들 권한이 없습니다. 다른 캘린더를 고르거나 재연결해 주세요.'
+  if (/ 403: /.test(msg)) return '이 캘린더의 일정을 만들거나 고칠 권한이 없습니다. 다른 캘린더를 고르거나 재연결해 주세요.'
+  if (/ 404: /.test(msg)) return '구글 캘린더에서 이 일정을 찾지 못했습니다 (이미 지워졌을 수 있습니다).'
   return `구글 캘린더에 저장하지 못했습니다: ${msg.slice(0, 200)}`
+}
+
+/**
+ * 캘린더 쓰기 실패를 사용자에게 알린다.
+ * 토큰 문제(재연결 필요)는 미니 캘린더의 '연결 만료' 배너로, 그 밖의 실패(권한 없음 등)는
+ * 타임라인 위 짧은 알림으로 — 403 을 '연결 만료'라고 띄우면 엉뚱한 안내가 된다.
+ */
+export function reportGoogleError(err: unknown, where: string) {
+  console.error(`[${where}]`, err)
+  const msg = err instanceof Error ? err.message : String(err)
+  if (msg === 'GOOGLE_TOKEN_EXPIRED' || msg === 'GOOGLE_NOT_CONNECTED') {
+    useAuthStore.getState().setGoogleAuthError(googleErrorMessage(err))
+  } else {
+    useCalendarEventStore.getState().setNotice(googleErrorMessage(err))
+  }
 }
