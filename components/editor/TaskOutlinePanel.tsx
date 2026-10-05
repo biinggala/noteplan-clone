@@ -1,5 +1,5 @@
 'use client'
-import { useMemo, useState } from 'react'
+import { useMemo, useState, memo } from 'react'
 import { parseTaskOutline, type TaskOutlineTask, type TaskOutlineType } from '@/lib/parser/taskOutline'
 import { useUIStore } from '@/lib/stores/uiStore'
 
@@ -55,7 +55,7 @@ function TaskIcon({ type, text, onClick }: { type: TaskOutlineType; text: string
   )
 }
 
-export default function TaskOutlinePanel({ content, title = '할 일 요약', onToggleTask }: TaskOutlinePanelProps) {
+function TaskOutlinePanel({ content, title = '할 일 요약', onToggleTask }: TaskOutlinePanelProps) {
   const sections = useMemo(() => parseTaskOutline(content), [content])
   // 날짜를 이동해도(daily 페이지가 note===null인 순간 이 컴포넌트가 잠깐
   // 언마운트됐다 다시 마운트됨) 접힘 상태가 유지되도록 전역 store 사용
@@ -131,3 +131,6 @@ export default function TaskOutlinePanel({ content, title = '할 일 요약', on
     </div>
   )
 }
+
+// 본문을 칠 때마다 페이지가 다시 그려져도, 받는 값(제목 등)이 그대로면 다시 그리지 않는다
+export default memo(TaskOutlinePanel)

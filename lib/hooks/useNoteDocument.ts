@@ -117,13 +117,24 @@ export function useNoteDocument(
   loadRef.current = load
 
   /** doc 의 현재 note 를 화면·전역 스토어에 반영 (살아 있는 doc 만) */
-  const publish = useCallback((doc: Doc) => {
-    if (!doc.alive || docRef.current !== doc) return
-    setNote(doc.note)
+  // 전역 노트 스토어(사이드바 태그 목록·검색 등이 구독)는 타자가 잠깐 멈췄을 때만
+  // 갱신한다. 매 글자마다 갱신하면 사이드바가 전체 노트의 태그를 다시 훑어,
+  // 노트가 많을 때 한 글자에 100ms 넘게 걸려 한글 입력이 끊겼다.
+  const storeTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const pushToStore = (doc: Doc) => {
     const store = useNoteStore.getState()
     store.setActiveNote(doc.note)
     const { content, tags, mentions, backlinks, supersedes } = doc.note
     store.updateNote(doc.id, { content, tags, mentions, backlinks, supersedes })
+  }
+  const publish = useCallback((doc: Doc, opts: { immediate?: boolean } = {}) => {
+    if (!doc.alive || docRef.current !== doc) return
+    setNote(doc.note)
+    if (storeTimer.current) clearTimeout(storeTimer.current)
+    if (opts.immediate) { pushToStore(doc); return }
+    storeTimer.current = setTimeout(() => {
+      if (docRef.current === doc) pushToStore(doc)
+    }, 400)
   }, [])
 
   const setDocStatus = useCallback((doc: Doc, s: SaveStatus, err: string | null = null) => {
@@ -252,7 +263,7 @@ export function useNoteDocument(
         clearDraft(loaded.id)
       }
       docRef.current = doc
-      publish(doc)
+      publish(doc, { immediate: true })
       setLoading(false)
       if (doc.note.content !== doc.base.content || doc.base.updatedAt == null) {
         setStatus('dirty')

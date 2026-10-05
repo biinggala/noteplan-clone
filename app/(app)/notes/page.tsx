@@ -83,12 +83,10 @@ function NoteInner() {
   return (
     <div className="flex flex-col h-full">
       <PageHeader
-        actions={<>
-          <SaveStatusBadge status={doc.status} error={doc.error} typingAuthor={doc.typingAuthor} />
-          <IconButton label="이전 버전 보기" onClick={() => setShowHistory(true)}>
+        status={<SaveStatusBadge status={doc.status} error={doc.error} typingAuthor={doc.typingAuthor} />}
+        actions={<IconButton label="이전 버전 보기" onClick={() => setShowHistory(true)}>
             <HistoryIcon className="w-4 h-4" />
-          </IconButton>
-        </>}
+          </IconButton>}
       >
         <NoteBreadcrumb title={note.title} folder={note.folder} />
       </PageHeader>

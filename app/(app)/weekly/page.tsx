@@ -1,5 +1,5 @@
 'use client'
-import { Suspense, useEffect, useRef, useCallback } from 'react'
+import { Suspense, useEffect, useRef, useCallback, useState } from 'react'
 import { useSearchParams, useRouter } from 'next/navigation'
 import { format, addDays, startOfWeek, endOfWeek, getWeek, getWeekYear } from 'date-fns'
 import { useCalendarStore } from '@/lib/stores/calendarStore'
@@ -10,10 +10,13 @@ import { usePromoteToAtom } from '@/lib/hooks/usePromoteToAtom'
 import { useWikiLink } from '@/lib/hooks/useWikiLink'
 import BacklinksPanel from '@/components/editor/BacklinksPanel'
 import SupersededBanner from '@/components/editor/SupersededBanner'
-import PageHeader from '@/components/layout/PageHeader'
+import PageHeader, { IconButton } from '@/components/layout/PageHeader'
+import HistoryIcon from '@/components/icons/HistoryIcon'
+import type { NoteRevision } from '@/lib/db/noteRepository'
 import dynamic from 'next/dynamic'
 
 const NoteEditor = dynamic(() => import('@/components/editor/NoteEditor'), { ssr: false })
+const NoteHistoryPanel = dynamic(() => import('@/components/editor/NoteHistoryPanel'), { ssr: false })
 
 // 미니 캘린더와 동일: 일요일 시작 주 + CW 규칙 (firstWeekContainsDate:4)
 const WK = { weekStartsOn: 0 as const, firstWeekContainsDate: 4 as const }
@@ -70,6 +73,13 @@ function WeeklyNoteInner() {
   const note = doc.note
   const { promote, dialog: promoteDialog } = usePromoteToAtom(note?.title)
 
+  // 버전 기록 (데일리·노트와 같은 '타임머신')
+  const [showHistory, setShowHistory] = useState(false)
+  const handleRestore = useCallback((revision: NoteRevision) => {
+    doc.setContent(revision.content)
+    setShowHistory(false)
+  }, [doc])
+
   const fixedFor = useRef<string | null>(null)
   useEffect(() => {
     if (!note || note.date !== week || fixedFor.current === note.id) return
@@ -102,7 +112,10 @@ function WeeklyNoteInner() {
           isCurrent: week === weekKeyOf(new Date()),
           prevLabel: '지난주 (⌥⌘←)', nextLabel: '다음 주 (⌥⌘→)', todayLabel: 'This week',
         }}
-        actions={<SaveStatusBadge status={doc.status} error={doc.error} typingAuthor={doc.typingAuthor} />}
+        status={<SaveStatusBadge status={doc.status} error={doc.error} typingAuthor={doc.typingAuthor} />}
+        actions={<IconButton label="이전 버전 보기" onClick={() => setShowHistory(true)}>
+            <HistoryIcon className="w-4 h-4" />
+          </IconButton>}
       />
 
       {doc.notice && <NoticeBar text={doc.notice} onClose={doc.dismissNotice} />}
@@ -128,6 +141,14 @@ function WeeklyNoteInner() {
       {promoteDialog}
 
       <BacklinksPanel title={note.title} noteId={note.id} />
+
+      {showHistory && (
+        <NoteHistoryPanel
+          noteId={note.id}
+          onRestore={handleRestore}
+          onClose={() => setShowHistory(false)}
+        />
+      )}
     </div>
   )
 }

@@ -23,8 +23,10 @@ export interface PageNav {
 }
 
 export default function PageHeader({
-  kicker, title, subtitle, nav, actions, children,
+  kicker, title, subtitle, nav, actions, status, children,
 }: {
+  /** 저장 상태 등 — 제목 바로 옆에 작게 (오른쪽 버튼들이 밀리지 않게) */
+  status?: React.ReactNode
   /** 제목 앞의 작은 표식 (예: 'CW 41', '오늘') */
   kicker?: React.ReactNode
   title?: React.ReactNode
@@ -88,6 +90,7 @@ export default function PageHeader({
             {subtitle && <span className="text-[13px] text-[var(--text-muted)] truncate tabular hidden sm:inline">{subtitle}</span>}
           </>
         )}
+        {status && <span className="flex-shrink-0 self-center">{status}</span>}
       </div>
 
       <div className="flex items-center gap-1 titlebar-no-drag">

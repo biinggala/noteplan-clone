@@ -1,5 +1,5 @@
 'use client'
-import { useEffect, useState } from 'react'
+import { useEffect, useState, memo } from 'react'
 import { getSupersededBy } from '@/lib/db/noteRepository'
 import type { Note } from '@/types/note'
 
@@ -9,7 +9,7 @@ import type { Note } from '@/types/note'
  * 노트의 시효성을 눈에 보이게 만드는 장치. 옛 노트를 열었을 때 그게 이미
  * 갈아치워졌다는 걸 모르면, 지난 판단을 현재 근거로 쓰게 된다.
  */
-export default function SupersededBanner({
+function SupersededBanner({
   title,
   onOpen,
 }: {
@@ -53,3 +53,6 @@ export default function SupersededBanner({
     </div>
   )
 }
+
+// 본문을 칠 때마다 페이지가 다시 그려져도, 받는 값(제목 등)이 그대로면 다시 그리지 않는다
+export default memo(SupersededBanner)
