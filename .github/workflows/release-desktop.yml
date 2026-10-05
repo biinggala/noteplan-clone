@@ -1,0 +1,60 @@
+# 맥 데스크톱 앱 빌드 + 서명 + GitHub Release(자동 업데이트 latest.json 포함)
+#
+# 쓰는 법: Actions 탭 → "Release desktop app" → Run workflow
+#          (또는 v* 태그를 push)
+# 앱의 자동 업데이트(tauri updater)가 releases/latest 의 latest.json 을 보고
+# 새 버전을 받아 설치한다. 버전은 src-tauri/tauri.conf.json 의 version.
+#
+# 한 번만 등록할 저장소 Secrets (Settings → Secrets and variables → Actions):
+#   TAURI_SIGNING_PRIVATE_KEY           맥의 ~/.tauri/*.key 내용 (업데이트 서명 키)
+#   TAURI_SIGNING_PRIVATE_KEY_PASSWORD  그 키의 비밀번호 (없으면 빈 값)
+#   NEXT_PUBLIC_SUPABASE_URL            .env.local 과 같은 값
+#   NEXT_PUBLIC_SUPABASE_ANON_KEY       .env.local 과 같은 값 (공개 키)
+name: Release desktop app
+
+on:
+  workflow_dispatch:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: write
+
+jobs:
+  macos:
+    runs-on: macos-latest   # Apple Silicon (aarch64) — 지금 쓰는 맥과 같은 아키텍처
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+
+      - run: npm ci
+
+      - name: Read version
+        id: ver
+        run: echo "version=$(node -p "require('./src-tauri/tauri.conf.json').version")" >> "$GITHUB_OUTPUT"
+
+      - uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+          NEXT_PUBLIC_SUPABASE_URL: ${{ secrets.NEXT_PUBLIC_SUPABASE_URL }}
+          NEXT_PUBLIC_SUPABASE_ANON_KEY: ${{ secrets.NEXT_PUBLIC_SUPABASE_ANON_KEY }}
+        with:
+          tagName: v${{ steps.ver.outputs.version }}
+          releaseName: v${{ steps.ver.outputs.version }}
+          releaseBody: 'docs/RELEASE-2.0.md 참고'
+          releaseDraft: false
+          prerelease: false
+          includeUpdaterJson: true
+          args: --target aarch64-apple-darwin
