@@ -20,6 +20,7 @@ import {
   type FacetKind, type FacetGroup,
 } from '@/lib/search/facetSearch'
 import type { Note, NoteType } from '@/types/note'
+import PageHeader from '@/components/layout/PageHeader'
 
 export default function SearchPage() {
   return (
@@ -41,7 +42,8 @@ function SearchInner() {
   const folder  = params.get('folder')  ?? undefined
 
   const kind: FacetKind | null = tag ? 'tag' : mention ? 'mention' : null
-  const value = tag ?? mention
+  // 주소에 '#work' 처럼 기호까지 들어와도 같은 결과 (머리줄에 '##work' 로 보이던 것)
+  const value = (tag ?? mention)?.replace(/^[#@]+/, '')
 
   const groups = useMemo(() => {
     if (!kind || !value) return []
@@ -67,10 +69,24 @@ function SearchInner() {
   return (
     <div className="flex flex-col h-full">
       {/* ── 헤더 ── */}
-      <div data-tauri-drag-region
-        className="electron-drag px-5 md:px-12 py-3 border-b border-[var(--border)] flex-shrink-0
-                   flex items-center justify-between gap-4">
-        <h1 className="text-lg font-semibold text-[var(--text-primary)] flex items-baseline gap-1.5 min-w-0">
+      <PageHeader
+        actions={<>
+          <span className="text-xs text-[var(--text-muted)] tabular hidden sm:inline">
+            {isFolderView ? `노트 ${total}개` : `${total}개 결과 · 노트 ${groups.length}개`}
+          </span>
+          <select
+            value={sort}
+            onChange={e => setSort(e.target.value as SortKey)}
+            aria-label="정렬"
+            className="h-7 text-xs bg-transparent text-[var(--text-secondary)]
+                       border border-[var(--border)] rounded-md px-1.5 outline-none hover:bg-[var(--hover-bg)]"
+          >
+            <option value="recent">최신순</option>
+            <option value="oldest">오래된순</option>
+          </select>
+        </>}
+      >
+        <h1 className="text-[15px] font-semibold text-[var(--text-primary)] flex items-baseline gap-1.5 min-w-0 pl-1">
           {isFolderView ? (
             heading!.map((seg, i) => (
               <span key={i} className="flex items-baseline gap-1.5 min-w-0">
@@ -86,22 +102,7 @@ function SearchInner() {
             </span>
           )}
         </h1>
-
-        <div className="flex items-center gap-3 flex-shrink-0">
-          <span className="text-xs text-[var(--text-muted)]">
-            {isFolderView ? `노트 ${total}개` : `${total}개 결과 · 노트 ${groups.length}개`}
-          </span>
-          <select
-            value={sort}
-            onChange={e => setSort(e.target.value as SortKey)}
-            className="text-xs bg-[var(--bg-tertiary)] text-[var(--text-secondary)]
-                       border border-[var(--border)] rounded px-1.5 py-1 outline-none"
-          >
-            <option value="recent">최신순</option>
-            <option value="oldest">오래된순</option>
-          </select>
-        </div>
-      </div>
+      </PageHeader>
 
       {/* ── 결과 ── */}
       <div className="flex-1 overflow-y-auto px-5 md:px-12 py-4">

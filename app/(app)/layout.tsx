@@ -12,6 +12,7 @@ import { useAuthStore } from '@/lib/stores/authStore'
 import { useEventNotifications } from '@/lib/notifications/useEventNotifications'
 import { refreshGoogleTokenNow, refreshGoogleTokenIfStale } from '@/lib/google/withToken'
 import { useIsMobile } from '@/lib/hooks/useIsMobile'
+import { useUIStore } from '@/lib/stores/uiStore'
 
 export default function AppLayout({ children }: { children: React.ReactNode }) {
   const router = useRouter()
@@ -61,6 +62,24 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
       document.removeEventListener('visibilitychange', onWake)
     }
   }, [canRefresh, !!session])
+
+  // ── ⌘\ 왼쪽 사이드바, ⌘⇧\ 오른쪽(캘린더) 패널 ─────────────────────────────
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if ((e.metaKey || e.ctrlKey) && !e.altKey && !e.shiftKey && e.code === 'KeyN') {
+        e.preventDefault()
+        window.dispatchEvent(new Event('np:new-note'))
+        return
+      }
+      if (!(e.metaKey || e.ctrlKey) || e.altKey || e.code !== 'Backslash') return
+      e.preventDefault()
+      const ui = useUIStore.getState()
+      if (e.shiftKey) ui.toggleRightSidebar()
+      else ui.toggleLeftSidebar()
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [])
 
   // ── 클라이언트 인증 가드 (정적 export는 middleware 없음) ──────────────────
   useEffect(() => {

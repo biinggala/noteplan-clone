@@ -34,7 +34,12 @@ export default function RootLayout({
   children: React.ReactNode;
 }>) {
   return (
-    <html lang="en" suppressHydrationWarning>
+    <html lang="ko" suppressHydrationWarning>
+      <head>
+        {/* Pretendard (SIL OFL 1.1) — 글자 범위별로 나눠 필요한 조각만 받는다. 앱에 번들돼 오프라인에서도 동작 */}
+        {/* eslint-disable-next-line @next/next/no-css-tags */}
+        <link rel="stylesheet" href="/fonts/pretendard/pretendardvariable-dynamic-subset.css" />
+      </head>
       <body suppressHydrationWarning>
         <TauriTitlebarDrag />
         <TauriAuthDeepLink />

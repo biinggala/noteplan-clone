@@ -70,7 +70,9 @@ export const noteplanTheme = [
 
     '.cm-hr': { color: 'var(--cm-formatting)', letterSpacing: '4px' },
 
-    '.cm-scroller': { overflow: 'auto', justifyContent: 'center' },
+    // CodeMirror 기본 테마가 .cm-scroller 에 monospace 를 박아 둬서, 테마의
+    // --font-editor 가 한 번도 적용되지 않고 본문이 늘 고정폭 글꼴로 나왔다.
+    '.cm-scroller': { overflow: 'auto', justifyContent: 'center', fontFamily: 'var(--font-editor)' },
 
     // ── 모바일 (<768px) ─────────────────────────────────────────────────────
     // 데스크톱 값(15px, 좌우 6/48px + 드래그 거터)을 좁은 화면에 그대로 쓰면

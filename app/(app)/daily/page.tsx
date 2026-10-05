@@ -1,7 +1,7 @@
 'use client'
 import { Suspense, useEffect, useState, useCallback } from 'react'
-import { useSearchParams } from 'next/navigation'
-import { format, parseISO, isValid, getWeek, getWeekYear } from 'date-fns'
+import { useSearchParams, useRouter } from 'next/navigation'
+import { format, parseISO, isValid, getWeek, getWeekYear, addDays, differenceInCalendarDays } from 'date-fns'
 import { useCalendarStore } from '@/lib/stores/calendarStore'
 import { getOrCreateDailyNote, getOrCreateWeeklyNote, updateNoteContentSafely } from '@/lib/db/noteRepository'
 import { parseTimeBlockLines } from '@/lib/parser/timeBlockParser'
@@ -19,6 +19,7 @@ import TaskOutlinePanel from '@/components/editor/TaskOutlinePanel'
 import BacklinksPanel from '@/components/editor/BacklinksPanel'
 import SupersededBanner from '@/components/editor/SupersededBanner'
 import SaveStatusBadge, { NoticeBar } from '@/components/editor/SaveStatusBadge'
+import PageHeader, { IconButton } from '@/components/layout/PageHeader'
 import dynamic from 'next/dynamic'
 
 const NoteEditor = dynamic(() => import('@/components/editor/NoteEditor'), { ssr: false })
@@ -38,7 +39,8 @@ export default function DailyNotePage() {
 function DailyNoteInner() {
   const searchParams = useSearchParams()
   const date = searchParams.get('date') ?? format(new Date(), 'yyyy-MM-dd')
-  const { setSelectedDate } = useCalendarStore()
+  const router = useRouter()
+  const { setSelectedDate, today } = useCalendarStore()
   const { syncTimeBlocks, timeBlocks, updateTimeBlock } = useTimeBlockStore()
   const { pending: pendingUpdates, clearUpdates } = useLineUpdateStore()
   const { setTaskDate } = useTaskDotStore()
@@ -54,6 +56,9 @@ function DailyNoteInner() {
   const weekKey = `${getWeekYear(validDate, WK)}-W${weekNum.toString().padStart(2, '0')}`
 
   useEffect(() => { setSelectedDate(dateStr) }, [dateStr, setSelectedDate])
+
+  const offset = differenceInCalendarDays(validDate, parseISO(today))
+  const relativeDay = offset === 0 ? 'Today' : offset === -1 ? 'Yesterday' : offset === 1 ? 'Tomorrow' : undefined
 
   // ── 노트 편집 세션 (불러오기·저장·충돌 합치기·실시간 반영) ─────────────────
   const loadDaily = useCallback(async (d: string) => ({ note: await getOrCreateDailyNote(d) }), [])
@@ -165,27 +170,24 @@ function DailyNoteInner() {
 
   return (
     <div className="flex flex-col h-full">
-      {/* Header */}
-      <div data-tauri-drag-region className="electron-drag flex items-center justify-between px-5 md:px-12 py-3 border-b border-[var(--border)] flex-shrink-0">
-        <div>
-          <h1 className="text-lg font-semibold text-[var(--text-primary)]">
-            {format(validDate, 'EEEE')}
-          </h1>
-          <div className="text-sm text-[var(--text-muted)]">
-            {format(validDate, 'MMMM d, yyyy')}
-          </div>
-        </div>
-        <div className="flex items-center gap-2">
+      <PageHeader
+        kicker={relativeDay}
+        title={format(validDate, 'EEEE')}
+        subtitle={`CW ${weekNum.toString().padStart(2, '0')}`}
+        nav={{
+          onPrev: () => router.push(`/daily?date=${format(addDays(validDate, -1), 'yyyy-MM-dd')}`),
+          onNext: () => router.push(`/daily?date=${format(addDays(validDate, 1), 'yyyy-MM-dd')}`),
+          onToday: () => router.push(`/daily?date=${today}`),
+          isCurrent: dateStr === today,
+          prevLabel: '전날 (⌥⌘←)', nextLabel: '다음 날 (⌥⌘→)', todayLabel: 'Today',
+        }}
+        actions={<>
           <SaveStatusBadge status={doc.status} error={doc.error} typingAuthor={doc.typingAuthor} />
-          <button
-            onClick={() => setShowHistory(true)}
-            title="이전 버전 보기"
-            className="p-1.5 rounded text-[var(--accent)] hover:bg-white/5 transition-colors"
-          >
-            <HistoryIcon className="w-[18px] h-[18px]" />
-          </button>
-        </div>
-      </div>
+          <IconButton label="이전 버전 보기" onClick={() => setShowHistory(true)}>
+            <HistoryIcon className="w-4 h-4" />
+          </IconButton>
+        </>}
+      />
 
       {doc.notice && <NoticeBar text={doc.notice} onClose={doc.dismissNotice} />}
 

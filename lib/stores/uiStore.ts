@@ -1,5 +1,6 @@
 'use client'
 import { create } from 'zustand'
+import { persist } from 'zustand/middleware'
 
 interface UIStore {
   leftSidebarWidth: number
@@ -10,6 +11,9 @@ interface UIStore {
   activeTab: 'notes' | 'tags' | 'review'
   expandedFolders: string[]
   weeklyOutlineCollapsed: boolean
+  /** 모바일 서랍 (저장하지 않음) */
+  mobileDrawer: 'left' | 'right' | null
+  setMobileDrawer: (d: 'left' | 'right' | null) => void
   setLeftSidebarWidth: (w: number) => void
   setRightSidebarWidth: (w: number) => void
   toggleLeftSidebar: () => void
@@ -21,7 +25,8 @@ interface UIStore {
   toggleWeeklyOutlineCollapsed: () => void
 }
 
-export const useUIStore = create<UIStore>((set) => ({
+// 사이드바 너비·표시 여부·탭·펼친 폴더는 다음 실행에도 그대로 (예전엔 매번 초기화)
+export const useUIStore = create<UIStore>()(persist((set) => ({
   leftSidebarWidth: 240,
   rightSidebarWidth: 260,
   leftSidebarVisible: true,
@@ -30,6 +35,8 @@ export const useUIStore = create<UIStore>((set) => ({
   activeTab: 'notes',
   expandedFolders: [],
   weeklyOutlineCollapsed: false,
+  mobileDrawer: null,
+  setMobileDrawer: (d) => set({ mobileDrawer: d }),
   setLeftSidebarWidth: (w) => set({ leftSidebarWidth: w }),
   setRightSidebarWidth: (w) => set({ rightSidebarWidth: w }),
   toggleLeftSidebar: () => set((s) => ({ leftSidebarVisible: !s.leftSidebarVisible })),
@@ -45,4 +52,15 @@ export const useUIStore = create<UIStore>((set) => ({
     expandedFolders: s.expandedFolders.includes(id) ? s.expandedFolders : [...s.expandedFolders, id],
   })),
   toggleWeeklyOutlineCollapsed: () => set((s) => ({ weeklyOutlineCollapsed: !s.weeklyOutlineCollapsed })),
+}), {
+  name: 'np-ui',
+  partialize: (s) => ({
+    leftSidebarWidth: s.leftSidebarWidth,
+    rightSidebarWidth: s.rightSidebarWidth,
+    leftSidebarVisible: s.leftSidebarVisible,
+    rightSidebarVisible: s.rightSidebarVisible,
+    activeTab: s.activeTab,
+    expandedFolders: s.expandedFolders,
+    weeklyOutlineCollapsed: s.weeklyOutlineCollapsed,
+  }),
 }))

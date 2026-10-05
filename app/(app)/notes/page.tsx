@@ -13,6 +13,7 @@ import HistoryIcon from '@/components/icons/HistoryIcon'
 import BacklinksPanel from '@/components/editor/BacklinksPanel'
 import SupersededBanner from '@/components/editor/SupersededBanner'
 import NoteBreadcrumb from '@/components/editor/NoteBreadcrumb'
+import PageHeader, { IconButton } from '@/components/layout/PageHeader'
 import dynamic from 'next/dynamic'
 
 const NoteEditor = dynamic(() => import('@/components/editor/NoteEditor'), { ssr: false })
@@ -81,19 +82,16 @@ function NoteInner() {
 
   return (
     <div className="flex flex-col h-full">
-      <div data-tauri-drag-region className="electron-drag px-5 md:px-12 py-3 border-b border-[var(--border)] flex-shrink-0 flex items-center justify-between">
-        <NoteBreadcrumb title={note.title} folder={note.folder} />
-        <div className="flex items-center gap-2">
+      <PageHeader
+        actions={<>
           <SaveStatusBadge status={doc.status} error={doc.error} typingAuthor={doc.typingAuthor} />
-          <button
-            onClick={() => setShowHistory(true)}
-            title="이전 버전 보기"
-            className="p-1.5 rounded text-[var(--accent)] hover:bg-white/5 transition-colors"
-          >
-            <HistoryIcon className="w-[18px] h-[18px]" />
-          </button>
-        </div>
-      </div>
+          <IconButton label="이전 버전 보기" onClick={() => setShowHistory(true)}>
+            <HistoryIcon className="w-4 h-4" />
+          </IconButton>
+        </>}
+      >
+        <NoteBreadcrumb title={note.title} folder={note.folder} />
+      </PageHeader>
       {doc.notice && <NoticeBar text={doc.notice} onClose={doc.dismissNotice} />}
       <SupersededBanner title={note.title} onOpen={openWikiLink} />
       <div className="flex-1 overflow-hidden">
