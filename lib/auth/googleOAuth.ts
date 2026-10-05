@@ -106,6 +106,11 @@ export async function startGoogleOAuth(
 
   // 콜백에서 "이번 토큰이 캘린더용인지" 판단할 수 있게 표시해둔다
   markCalendarFlow(withCalendar)
+  // 사용자가 새로 누른 연결이면 '자동 재시도 1회' 표식을 지운다. 예전엔 이전 시도
+  // (예: 회사 계정이 차단돼 끝난 시도)가 남긴 표식 때문에, 로그인 계정 그대로 캘린더를
+  // 붙이는 정상 경로(already linked → 같은 계정으로 재인증)가 곧바로 '자동 재인증도
+  // 실패'로 끝났다.
+  if (!forceSignIn) clearRetried()
 
   // 이미 로그인한 상태에서 캘린더를 붙이는 경우엔 linkIdentity를 쓴다.
   // signInWithOAuth는 말 그대로 '로그인'이라, 회사 계정으로 캘린더를 연결하면
