@@ -1,5 +1,7 @@
-import { EditorView, Decoration, DecorationSet, ViewPlugin, ViewUpdate, WidgetType } from '@codemirror/view'
-import { RangeSetBuilder } from '@codemirror/state'
+import { EditorView, Decoration, DecorationSet, ViewPlugin, ViewUpdate, WidgetType, keymap } from '@codemirror/view'
+import { RangeSetBuilder, Prec } from '@codemirror/state'
+import type { Extension } from '@codemirror/state'
+import { classifyTaskLine, splitTimePrefix, toggleTaskLine } from '@/lib/parser/taskOutline'
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 
@@ -7,27 +9,44 @@ type TaskType = 'open' | 'done' | 'cancelled' | 'scheduled' | 'checklist' | 'che
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
-// Optional time-block prefix: "2:30 PM - 3:00 PM " at the start of a line
-const TIME_PREFIX_RE = /^\d{1,2}:\d{2}\s*(?:AM|PM)\s*[-–]\s*\d{1,2}:\d{2}\s*(?:AM|PM)\s+/i
-
 /** Strip optional time-block prefix so task detection works for both formats */
 function stripTimePrefix(lineText: string): { text: string; offset: number } {
-  const m = TIME_PREFIX_RE.exec(lineText)
-  return m
-    ? { text: lineText.slice(m[0].length), offset: m[0].length }
-    : { text: lineText, offset: 0 }
+  const { prefix, text } = splitTimePrefix(lineText)
+  return { text, offset: prefix.length }
 }
 
+// 판별·토글 규칙은 lib/parser/taskOutline.ts 하나만 쓴다 (요약 패널과 동일해야 함)
 function getTaskType(lineText: string): TaskType | null {
-  const { text } = stripTimePrefix(lineText)
-  if (/^\s*- \[ \]\s/.test(text)) return 'open'
-  if (/^\s*- \[x\]\s/i.test(text)) return 'done'
-  if (/^\s*- \[-\]\s/.test(text)) return 'cancelled'
-  if (/^\s*- \[>\]\s/.test(text)) return 'scheduled'
-  if (/^\s*\* \S/.test(text)) return 'open'   // * task (NotePlan style)
-  if (/^\s*\+ \[x\]\s/i.test(text)) return 'checklist-done' // + [x] checklist done
-  if (/^\s*\+ \S/.test(text)) return 'checklist' // + checklist (open)
-  return null
+  return classifyTaskLine(lineText)?.type ?? null
+}
+
+const isMac = typeof navigator !== 'undefined' && /Mac|iP(hone|ad)/.test(navigator.platform)
+
+const TOGGLEABLE: ReadonlySet<TaskType> = new Set<TaskType>(['open', 'done', 'checklist', 'checklist-done'])
+
+const STATE_LABEL: Record<TaskType, string> = {
+  open: '할 일',
+  done: '완료한 할 일',
+  cancelled: '취소한 할 일',
+  scheduled: '미룬 할 일',
+  checklist: '체크리스트',
+  'checklist-done': '완료한 체크리스트',
+}
+
+/** 해당 줄의 태스크를 토글하는 변경. 태스크가 아니거나 토글 불가면 null */
+function toggleLineChange(view: EditorView, lineFrom: number) {
+  const line = view.state.doc.lineAt(lineFrom)
+  const type = getTaskType(line.text)
+  if (!type) return null
+  const next = toggleTaskLine(line.text, type)
+  if (next == null || next === line.text) return null
+  // 바뀐 부분(마커)만 교체한다 — 줄 전체를 바꾸면 커서가 줄 맨 앞으로 튄다
+  const old = line.text
+  let a = 0
+  while (a < old.length && a < next.length && old[a] === next[a]) a++
+  let z = 0
+  while (z < old.length - a && z < next.length - a && old[old.length - 1 - z] === next[next.length - 1 - z]) z++
+  return { from: line.from + a, to: line.to - z, insert: next.slice(a, next.length - z) }
 }
 
 /** Position range of the marker/checkbox token to replace with a widget */
@@ -50,8 +69,8 @@ function getMarkerRange(
     const start = lineFrom + offset + star[1].length
     return { from: start, to: start + 2 }
   }
-  // "+ [x] " (checklist done) — 마커 전체 교체
-  const plusDone = text.match(/^(\s*)(\+ \[x\] )/i)
+  // "+ [x] " (checklist done) / "+ [ ] " — 마커 전체 교체
+  const plusDone = text.match(/^(\s*)(\+ \[[x ]\] )/i)
   if (plusDone) {
     const start = lineFrom + offset + plusDone[1].length
     return { from: start, to: start + plusDone[2].length }
@@ -161,37 +180,47 @@ class CheckboxWidget extends WidgetType {
       'display:inline-flex;align-items:center;margin-right:5px;vertical-align:middle;' +
       'cursor:pointer;position:relative;top:-0.5px;'
 
+    // 스크린리더용: 체크박스 역할 + 상태. 에디터 안에서는 Tab 순서에 넣지 않는다
+    // (Tab은 들여쓰기) — 키보드 토글은 커서 줄에서 Mod-Enter.
+    const toggleable = TOGGLEABLE.has(this.taskType)
+    wrap.setAttribute('role', 'checkbox')
+    wrap.setAttribute('aria-checked',
+      this.taskType === 'done' || this.taskType === 'checklist-done' ? 'true'
+      : this.taskType === 'cancelled' ? 'mixed' : 'false')
+    wrap.setAttribute('aria-label', STATE_LABEL[this.taskType])
+    if (!toggleable) wrap.setAttribute('aria-disabled', 'true')
+    wrap.title = toggleable ? `${STATE_LABEL[this.taskType]} — 클릭하거나 ${isMac ? '⌘' : 'Ctrl+'}Enter로 전환` : STATE_LABEL[this.taskType]
+
     const icon = buildIcon(this.taskType)
+    icon.setAttribute('aria-hidden', 'true')
 
     // Hover effect for toggle targets
-    if (this.taskType === 'open' || this.taskType === 'done'
-        || this.taskType === 'checklist' || this.taskType === 'checklist-done') {
+    if (toggleable) {
       wrap.style.opacity = '1'
       wrap.addEventListener('mouseenter', () => { wrap.style.opacity = '0.75' })
       wrap.addEventListener('mouseleave', () => { wrap.style.opacity = '1' })
     }
 
+    const toggle = () => {
+      // 위치는 지금 DOM 기준으로 다시 잡는다 (만든 뒤 위쪽이 바뀌었을 수 있음)
+      let pos = this.lineFrom
+      try { pos = view.posAtDOM(wrap) } catch { /* 위젯이 이미 빠졌으면 생성 시 위치 */ }
+      if (pos > view.state.doc.length) return
+      const change = toggleLineChange(view, pos)
+      if (change) view.dispatch({ changes: change, userEvent: 'input.toggle' })
+    }
+
     wrap.addEventListener('mousedown', (e) => e.preventDefault())
     wrap.addEventListener('click', (e) => {
       e.preventDefault()
-      const line = view.state.doc.lineAt(this.lineFrom)
-      let newText = line.text
-      if (this.taskType === 'done') {
-        newText = newText.replace(/- \[x\]/i, '- [ ]')
-      } else if (this.taskType === 'open') {
-        newText = newText
-          .replace('- [ ]', '- [x]')
-          .replace(/^(\s*)\* /, '$1- [x] ')
-      } else if (this.taskType === 'checklist') {
-        // + content → + [x] content (체크)
-        newText = newText.replace(/^(\s*)\+ /, '$1+ [x] ')
-      } else if (this.taskType === 'checklist-done') {
-        // + [x] content → + content (해제)
-        newText = newText.replace(/^(\s*)\+ \[x\] /i, '$1+ ')
-      }
-      if (newText !== line.text) {
-        view.dispatch({ changes: { from: line.from, to: line.to, insert: newText } })
-      }
+      toggle()
+    })
+    // 보조기술이 이 요소에 포커스를 준 경우 Space/Enter로 토글
+    wrap.addEventListener('keydown', (e) => {
+      if (e.target !== wrap || (e.key !== ' ' && e.key !== 'Enter')) return
+      e.preventDefault()
+      e.stopPropagation()
+      toggle()
     })
 
     wrap.appendChild(icon)
@@ -202,6 +231,31 @@ class CheckboxWidget extends WidgetType {
     return other.taskType === this.taskType && other.lineFrom === this.lineFrom
   }
   ignoreEvent(): boolean { return false }
+}
+
+/**
+ * Mod-Enter: 커서(선택 영역)가 걸친 줄의 태스크를 토글. 토글할 태스크 줄이 하나도
+ * 없으면 false → 기본 Mod-Enter(insertBlankLine)로 넘어간다.
+ */
+export function toggleTasksAtSelection(view: EditorView): boolean {
+  const { state } = view
+  const seen = new Set<number>()
+  const changes: { from: number; to: number; insert: string }[] = []
+  for (const r of state.selection.ranges) {
+    const first = state.doc.lineAt(r.from).number
+    let last = state.doc.lineAt(r.to).number
+    // 다음 줄 맨 앞까지 잡힌 선택은 그 줄을 빼고 센다
+    if (!r.empty && last > first && state.doc.line(last).from === r.to) last--
+    for (let n = first; n <= last; n++) {
+      if (seen.has(n)) continue
+      seen.add(n)
+      const c = toggleLineChange(view, state.doc.line(n).from)
+      if (c) changes.push(c)
+    }
+  }
+  if (!changes.length) return false
+  view.dispatch({ changes, userEvent: 'input.toggle', scrollIntoView: true })
+  return true
 }
 
 // ─── Plugin 1: Line-level class decorations ───────────────────────────────────
@@ -275,15 +329,19 @@ function buildWidgetDecorations(view: EditorView): DecorationSet {
   return builder.finish()
 }
 
-export function taskCheckboxExtension() {
-  return ViewPlugin.fromClass(
-    class {
-      decorations: DecorationSet
-      constructor(view: EditorView) { this.decorations = buildWidgetDecorations(view) }
-      update(u: ViewUpdate) {
-        if (u.docChanged || u.viewportChanged) this.decorations = buildWidgetDecorations(u.view)
-      }
-    },
-    { decorations: (v) => v.decorations },
-  )
+export function taskCheckboxExtension(): Extension {
+  return [
+    ViewPlugin.fromClass(
+      class {
+        decorations: DecorationSet
+        constructor(view: EditorView) { this.decorations = buildWidgetDecorations(view) }
+        update(u: ViewUpdate) {
+          if (u.docChanged || u.viewportChanged) this.decorations = buildWidgetDecorations(u.view)
+        }
+      },
+      { decorations: (v) => v.decorations },
+    ),
+    // defaultKeymap의 Mod-Enter(insertBlankLine)보다 먼저 — 태스크 줄이 아니면 그쪽으로 넘어감
+    Prec.high(keymap.of([{ key: 'Mod-Enter', run: toggleTasksAtSelection }])),
+  ]
 }
