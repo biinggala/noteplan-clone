@@ -1,4 +1,5 @@
 'use client'
+import Portal from '@/components/ui/Portal'
 import { useEffect, useState } from 'react'
 import { format, formatDistanceToNow } from 'date-fns'
 import { getNoteRevisions, type NoteRevision } from '@/lib/db/noteRepository'
@@ -23,6 +24,7 @@ export default function NoteHistoryPanel({ noteId, onRestore, onClose }: NoteHis
   }, [noteId])
 
   return (
+    <Portal>
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40" onClick={onClose}>
       <div
         className="w-[720px] max-w-[90vw] h-[70vh] max-h-[640px] bg-[var(--bg-primary)] border border-[var(--border)] rounded-xl shadow-2xl flex overflow-hidden"
@@ -86,5 +88,6 @@ export default function NoteHistoryPanel({ noteId, onRestore, onClose }: NoteHis
         </div>
       </div>
     </div>
+    </Portal>
   )
 }

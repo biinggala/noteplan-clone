@@ -1,4 +1,5 @@
 'use client'
+import Portal from '@/components/ui/Portal'
 import { useRef, useState, useCallback, useEffect } from 'react'
 import type { Note } from '@/types/note'
 import { readFilesAsNotes, countByType } from '@/lib/import/noteplanImport'
@@ -81,6 +82,7 @@ export default function ImportModal({ onClose }: ImportModalProps) {
   const counts = countByType(parsedNotes)
 
   return (
+    <Portal>
     <div className="fixed inset-0 z-[200] flex items-center justify-center">
       {/* Backdrop */}
       <div className="absolute inset-0 bg-black/60 backdrop-blur-sm" onClick={onClose} />
@@ -283,5 +285,6 @@ export default function ImportModal({ onClose }: ImportModalProps) {
         </div>
       </div>
     </div>
+    </Portal>
   )
 }

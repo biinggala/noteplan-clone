@@ -1,4 +1,5 @@
 'use client'
+import Portal from '@/components/ui/Portal'
 import { useState, useEffect, useCallback, useRef, useMemo } from 'react'
 import { createPortal } from 'react-dom'
 import { useRouter, useSearchParams } from 'next/navigation'
@@ -135,6 +136,7 @@ function InlineDialog({ dialog }: { dialog: Dialog }) {
   }
 
   return (
+    <Portal>
     <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/50"
       onClick={dialog.onCancel}
     >
@@ -173,6 +175,7 @@ function InlineDialog({ dialog }: { dialog: Dialog }) {
         </div>
       </div>
     </div>
+    </Portal>
   )
 }
 
